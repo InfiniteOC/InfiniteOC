@@ -24,7 +24,7 @@ running tasks**. Reopen saved sessions with `/sessions`.
 
 ## Efficient workflow
 
-Three locally authored skills are available in `/home/rize/.config/opencode/skill-library` and registered with the auto-router:
+Three locally authored skills are available in `skills/` and registered with the auto-router:
 
 - `infiniteoc-mod-development`: the actual mod API, safe source patches/hooks, disposable checker, regression tests, rebuilds, and rollback.
 - `plain-human-writing`: direct, short replies based on the user's preference and a reviewed Wikipedia writing-pattern guide; no detector-evasion claims.

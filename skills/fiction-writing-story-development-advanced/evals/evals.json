@@ -1,0 +1,23 @@
+{
+  "skill_name": "fiction-writing-story-development-advanced",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I'm developing the antagonist for a literary thriller. My protagonist is a whistleblower at a pharmaceutical company — she's discovered they're suppressing data about a drug's side effects. My antagonist is the CEO. Right now he feels like a cartoon villain — he's just greedy and doesn't care about people dying. How do I make him genuinely compelling? I want readers to understand his perspective even while disagreeing with it. Give me specific techniques for designing an antagonist who is the hero of his own story, and help me build the conflict between them as a genuine moral argument rather than just good vs. evil.",
+      "expected_output": "Detailed antagonist design guidance grounded in craft theory — the opponent as counter-argument (Truby), making the opponent right about something (McKee), the dialectical method (Egri), targeted opposition that attacks the protagonist's specific weakness. Should redesign the CEO as morally complex, not just more sympathetic. Should address the moral argument between them.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "I have a complete first draft of a novel (90,000 words) and something is wrong with the structure but I can't figure out what. Here's the shape: Act I works well — strong setup, clear inciting incident, protagonist is a recently divorced architect who takes a commission to restore a historic building. Act II is where it falls apart — there are complications but they don't feel like they're building. The midpoint is supposed to be a discovery about the building's history, but my beta readers say it doesn't land. Act III has a confrontation with the building's owner who wants to demolish rather than restore, and then a resolution where she finishes the restoration but decides to leave architecture. Beta readers say the ending feels unearned. Diagnose the structural problems and give me a specific repair plan using advanced story development principles.",
+      "expected_output": "Structural diagnosis using advanced frameworks — gap analysis (are gaps widening?), value progression audit (what value is being tracked and has it reached the negation of negation?), crisis architecture analysis (is the crisis a genuine dilemma?), character web audit. Should identify specific structural causes for the 'doesn't land' midpoint and 'unearned' ending. Should NOT be generic advice.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "I want to write a novel about a family that runs a small-town funeral home, spanning three generations. The themes are duty vs. freedom, how family obligations shape identity, and what we inherit from the dead. I have characters and setting but no structure yet. Help me identify the genre type(s) this story belongs to, design the structural architecture, and build the thematic argument into the plot structure. I want the structure itself to carry the meaning, not just the events.",
+      "expected_output": "Genre type identification (likely Institutionalized + Rites of Passage), structural design that embeds the thematic argument into architecture, moral argument construction (Truby), symbol web suggestions, value progression planning, subplot as thematic counterpoint. Should demonstrate how form carries meaning.",
+      "files": []
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 ## Disposable application checker
 
 ```sh
-node /home/rize/.config/opencode/skill-library/infiniteoc-mod-development/scripts/check-mod.mjs /home/rize/InfiniteOC/mods/example/index.mjs /home/rize/InfiniteOC
+node skills/infiniteoc-mod-development/scripts/check-mod.mjs mods/example/index.mjs .
 ```
 
 This syntax-checks the mod, copies pinned source without `.git`/`node_modules` to a temporary directory, and applies currently enabled mods followed by the candidate if not already enabled. It does not register the candidate, rebuild the application, launch it, or invoke hooks. It deletes the temporary copy in `finally`.
