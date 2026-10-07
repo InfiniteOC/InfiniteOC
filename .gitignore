@@ -4,3 +4,7 @@
 .tools/
 node_modules/
 *.log
+backups/
+*.bak*
+*.backup*
+**/.*-backup-*/
