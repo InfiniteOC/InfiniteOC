@@ -7,15 +7,15 @@ source transformations through `api.patch`, and launch/exit hooks through `api.o
 Mods are trusted code, not sandboxed. Source changes require build/restart; this
 does **not** hot-patch an already running executable. The new `opendaemon` path
 can reload declared ctx-only TUI commands without restarting the UI/backend;
-see `/home/rize/InfiniteOC/OPENDAEMON.md` for supported live changes and limits.
+see `$HOME/InfiniteOC/OPENDAEMON.md` for supported live changes and limits.
 
 ## Start with a working feature
 
 ```sh
-node /home/rize/InfiniteOC/bin/infiniteoc.mjs feature new hello-ai
+node $HOME/InfiniteOC/bin/infiniteoc.mjs feature new hello-ai
 ```
 
-This creates `/home/rize/InfiniteOC/mods/hello-ai/index.mjs`, `command.tsx`, and a
+This creates `$HOME/InfiniteOC/mods/hello-ai/index.mjs`, `command.tsx`, and a
 README. It does not enable the mod or replace existing files. Edit `command.tsx`
 instead of finding and patching a command registry. The initial `/hello-ai` handler
 already shows a toast with the open-tab count.
@@ -72,27 +72,27 @@ checked manually. Handler errors go to the normal toast error path.
 ## Check, enable, build, verify
 
 ```sh
-node /home/rize/InfiniteOC/bin/infiniteoc.mjs feature check hello-ai
-node --test /home/rize/InfiniteOC/test/tui-features.test.mjs
+node $HOME/InfiniteOC/bin/infiniteoc.mjs feature check hello-ai
+node --test $HOME/InfiniteOC/test/tui-features.test.mjs
 ```
 
 `feature check` validates declarations and pinned integration anchors in a small
 disposable tree, without editing upstream/config/runtime. It is **not** a compiler
 or runtime test and does not apply arbitrary source patches. For mixed source mods,
-use `/home/rize/InfiniteOC/skills/infiniteoc-mod-development/scripts/check-mod.mjs`
+use `$HOME/InfiniteOC/skills/infiniteoc-mod-development/scripts/check-mod.mjs`
 for a full disposable ordered application.
 
-After inspecting the code, back up `/home/rize/InfiniteOC/infiniteoc.json` and
+After inspecting the code, back up `$HOME/InfiniteOC/infiniteoc.json` and
 append `./mods/hello-ai/index.mjs` to its `mods` array. Preserve other mods/options.
 Then run:
 
 ```sh
-node /home/rize/InfiniteOC/bin/infiniteoc.mjs rebuild
+node $HOME/InfiniteOC/bin/infiniteoc.mjs rebuild
 ```
 
 Restart InfiniteOC and execute `/hello-ai`. Test actual behavior; do not call a
 source-text assertion functional proof. Generated files are recorded in
-`/home/rize/InfiniteOC/.runtime/opencode/infiniteoc-features.json`. The launcher
+`$HOME/InfiniteOC/.runtime/opencode/infiniteoc-features.json`. The launcher
 fingerprints the framework and mod files, so later launches rebuild changed code.
 Never edit `.runtime` or `.upstream` to implement persistent features.
 

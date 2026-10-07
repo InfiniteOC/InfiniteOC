@@ -1,6 +1,6 @@
 # opendaemon live development and temporary testing
 
-Authority: `/home/rize/InfiniteOC/OPENDAEMON.md`, `src/opendaemon.mjs`,
+Authority: `$HOME/InfiniteOC/OPENDAEMON.md`, `src/opendaemon.mjs`,
 `src/live-runtime.ts`, `src/live-build.mjs`, `src/opendaemon-tool.mjs`,
 and `bin/opendaemon.mjs`. Inspect them before relying on behavior.
 
@@ -27,8 +27,8 @@ it if written badly. Keep tests small, bounded and non-destructive.
 
 ```sh
 opendaemon status
-opendaemon script UI_ID /home/rize/InfiniteOC/examples/opendaemon/test-notification.ts
-opendaemon temporary UI_ID /home/rize/InfiniteOC/examples/opendaemon/temporary-command.json
+opendaemon script UI_ID $HOME/InfiniteOC/examples/opendaemon/test-notification.ts
+opendaemon temporary UI_ID $HOME/InfiniteOC/examples/opendaemon/temporary-command.json
 opendaemon temporary-clear UI_ID
 opendaemon reload
 opendaemon watch

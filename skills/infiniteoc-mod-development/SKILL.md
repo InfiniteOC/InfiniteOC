@@ -9,7 +9,7 @@ Build the requested mod, not just a proposal. Respect explicit plan-only request
 
 ## Locate and inspect
 
-The current installation is `/home/rize/InfiniteOC`. If moved, locate its `infiniteoc.json`, `src/mod-loader.mjs`, and `bin/infiniteoc.mjs`; do not assume the current working directory is the launcher root.
+The current installation is `$HOME/InfiniteOC`. If moved, locate its `infiniteoc.json`, `src/mod-loader.mjs`, and `bin/infiniteoc.mjs`; do not assume the current working directory is the launcher root.
 
 Read these together, using targeted ranges where possible:
 
@@ -27,7 +27,7 @@ Read these together, using targeted ranges where possible:
 
 1. Use an existing OpenCode configuration option when it fully solves the request; distinguish configuration from a source mod.
 2. Use a launch hook for launcher args/environment changes.
-3. For local TUI slash commands use `api.tui.command` and typed `FeatureContext`; read `/home/rize/InfiniteOC/FEATURES.md`. Scaffold with `infiniteoc feature new ID`. Tabs are client UI state, not stored sessions: close/hide must not interrupt tasks, delete sessions or submit prompts.
+3. For local TUI slash commands use `api.tui.command` and typed `FeatureContext`; read `$HOME/InfiniteOC/FEATURES.md`. Scaffold with `infiniteoc feature new ID`. Tabs are client UI state, not stored sessions: close/hide must not interrupt tasks, delete sessions or submit prompts.
 4. For live testing use `opendaemon script` (one invocation) or `temporary` (per-UI command overlay). For permanent ctx-only command updates use daemon reload/auto watching. Read [references/live-development.md](references/live-development.md) first.
 5. For configuration UI use the existing settings integration and shared stores; read [references/settings.md](references/settings.md). Traffic/launcher changes require restart.
 6. Use `api.patchExact` for unique-anchor internal changes, `api.patch` for transforms, or `api.write` for new source/assets.
@@ -55,7 +55,7 @@ Batch independent reads/searches; delegate bounded implementation or tests with 
 1. Add Node `node:test` regression tests using disposable source copies. Cover successful change, missing/duplicate anchors, preservation of unrelated configuration, and hooks on cached launches where relevant.
 2. Run syntax checks and disposable application, then the existing test suite. Never test patches against the live pristine checkout.
 3. If authorized, enable the mod by appending its relative path after backing up `infiniteoc.json`. Never enable the example smoke fixture.
-4. For supported live commands, reload and wait for the target UI acknowledgement. For compiled changes, run `node /home/rize/InfiniteOC/bin/infiniteoc.mjs rebuild` only at a safe boundary: it replaces the generated tree and is not guaranteed safe during active agent work. Wait for exit and inspect the build log and `.runtime/build.json`. Do not delete an active `prepare.lock`; first determine whether its process is alive.
+4. For supported live commands, reload and wait for the target UI acknowledgement. For compiled changes, run `node $HOME/InfiniteOC/bin/infiniteoc.mjs rebuild` only at a safe boundary: it replaces the generated tree and is not guaranteed safe during active agent work. Wait for exit and inspect the build log and `.runtime/build.json`. Do not delete an active `prepare.lock`; first determine whether its process is alive.
 5. Smoke-test the actual changed behavior: render/interact with TUI changes in a terminal; check server APIs for registry/config changes; check args/environment via an isolated child for hooks. A clean build alone is not functional proof. Do not send paid model requests or change credentials just to test UI.
 6. Explain what changed, installed mod path/order, verified checks, limitations, and restart requirements. Rollback: restore the backed-up mods list or remove only the added entry, then rebuild. Generated runtime files are disposable; user configuration is not.
 

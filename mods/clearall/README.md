@@ -13,10 +13,10 @@ they cannot resurrect the just-closed tabs. Storage failures produce an error,
 not a false success toast.
 
 The enabled mod replaces the broken version after rebuild/restart. It is also
-the reference for `/home/rize/InfiniteOC/FEATURES.md` and the AI feature scaffold.
+the reference for `$HOME/InfiniteOC/FEATURES.md` and the AI feature scaffold.
 
-Tests: `node --test /home/rize/InfiniteOC/test/tui-features.test.mjs
-/home/rize/InfiniteOC/mods/clearall/test.mjs` (put both paths on the same shell line).
+Tests: `node --test $HOME/InfiniteOC/test/tui-features.test.mjs
+$HOME/InfiniteOC/mods/clearall/test.mjs` (put both paths on the same shell line).
 Live verification used an isolated XDG directory and loopback server: three
 created sessions, three persisted tabs, actual terminal entry of `/clearall`,
 empty current-scope tab list afterwards, all three session API reads successful,

@@ -1,6 +1,6 @@
 # Actual local mod API
 
-Authority: `/home/rize/InfiniteOC/src/mod-loader.mjs` and `/home/rize/InfiniteOC/src/launcher.mjs`. Re-read when implementation changes.
+Authority: `$HOME/InfiniteOC/src/mod-loader.mjs` and `$HOME/InfiniteOC/src/launcher.mjs`. Re-read when implementation changes.
 
 ## Loading and order
 
@@ -26,7 +26,7 @@ Paths cannot be absolute, escape the root, or use symlinks into external trees. 
 
 ## Declarative TUI features
 
-Scaffold with `node /home/rize/InfiniteOC/bin/infiniteoc.mjs feature new hello-ai`.
+Scaffold with `node $HOME/InfiniteOC/bin/infiniteoc.mjs feature new hello-ai`.
 It creates an unenabled mod; `feature check hello-ai` validates declarations and
 pinned anchors, not compilation or runtime behavior.
 

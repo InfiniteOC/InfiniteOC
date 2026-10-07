@@ -1,6 +1,6 @@
 # Shared settings, providers and traffic
 
-Authority: `/home/rize/InfiniteOC/mods/infiniteoc/settings/index.mjs`,
+Authority: `$HOME/InfiniteOC/mods/infiniteoc/settings/index.mjs`,
 `settings-store.mjs`, `settings-store.ts`, `dialog-infiniteoc.tsx`,
 `src/traffic.mjs` and the pinned core config/SDK code.
 

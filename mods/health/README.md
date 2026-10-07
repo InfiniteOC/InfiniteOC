@@ -25,6 +25,6 @@ The command supports ctx-only live publication with opendaemon. Source files bel
 here, not in generated trees. Test:
 
 ```sh
-node --test /home/rize/InfiniteOC/mods/health/test.mjs
-node /home/rize/InfiniteOC/bin/infiniteoc.mjs feature check health
+node --test $HOME/InfiniteOC/mods/health/test.mjs
+node $HOME/InfiniteOC/bin/infiniteoc.mjs feature check health
 ```

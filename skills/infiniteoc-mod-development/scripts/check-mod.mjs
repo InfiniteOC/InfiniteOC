@@ -5,7 +5,7 @@ import { resolve, join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { execFileSync } from "node:child_process"
 
-export async function checkMod(candidate, launcher = "/home/rize/InfiniteOC") {
+export async function checkMod(candidate, launcher = "$HOME/InfiniteOC") {
   const base = resolve(launcher)
   const filename = resolve(candidate)
   execFileSync(process.execPath, ["--check", filename], { stdio: "pipe" })

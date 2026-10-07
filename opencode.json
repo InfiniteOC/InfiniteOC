@@ -7,14 +7,14 @@
           "uv",
           "run",
           "--directory",
-          "/home/rize/InfiniteOC/.tools/gimp-mcp",
+          "$HOME/InfiniteOC/.tools/gimp-mcp",
           "gimp_mcp_server.py"
         ]
       },
       "Roblox_Studio": {
         "type": "local",
         "command": [
-          "/home/rize/InfiniteOC/.tools/roblox-mcp/roblox-mcp.sh"
+          "$HOME/InfiniteOC/.tools/roblox-mcp/roblox-mcp.sh"
         ],
         "timeout": {
           "startup": 60000

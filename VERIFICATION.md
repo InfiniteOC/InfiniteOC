@@ -13,7 +13,7 @@
 - Evidence: `/tmp/iod-live-proof.log`; daemon tests `/tmp/iod-final-tests.log`.
 - This did not send a paid model prompt: active token-stream continuity was not
   exercised. Daemon operations contain no agent interrupt/restart mechanism.
-- `opendaemon` is installed at `/home/rize/.local/bin/opendaemon`; launcher starts
+- `opendaemon` is installed at `$HOME/.local/bin/opendaemon`; launcher starts
   and connects it automatically. Initial restart is needed to gain the loader.
 - Live support is ctx-only TUI command updates. Compiled backend/source patches
   still need a safe rebuild/restart. Remote Git/package auto-update is not enabled.
@@ -60,9 +60,9 @@
 Reproduce automated checks:
 
 ```sh
-cd /home/rize/InfiniteOC
+cd $HOME/InfiniteOC
 npm test
-node --test /home/rize/InfiniteOC/mods/infiniteoc/test.mjs
-/home/rize/.local/bin/infiniteoc -- --version
-/home/rize/.local/bin/infiniteoc debug agents
+node --test $HOME/InfiniteOC/mods/infiniteoc/test.mjs
+$HOME/.local/bin/infiniteoc -- --version
+$HOME/.local/bin/infiniteoc debug agents
 ```

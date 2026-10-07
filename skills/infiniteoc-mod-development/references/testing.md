@@ -42,11 +42,11 @@ Add missing-anchor and duplicate-anchor cases. Hook mods should test event order
 ## Project checks
 
 ```sh
-node --check /home/rize/InfiniteOC/mods/example/index.mjs
-node --test /home/rize/InfiniteOC/test/*.test.mjs /home/rize/InfiniteOC/mods/infiniteoc/test.mjs
-node --test /home/rize/InfiniteOC/mods/example/test.mjs
-node /home/rize/InfiniteOC/bin/infiniteoc.mjs rebuild
-node /home/rize/InfiniteOC/bin/infiniteoc.mjs -- --version
+node --check $HOME/InfiniteOC/mods/example/index.mjs
+node --test $HOME/InfiniteOC/test/*.test.mjs $HOME/InfiniteOC/mods/infiniteoc/test.mjs
+node --test $HOME/InfiniteOC/mods/example/test.mjs
+node $HOME/InfiniteOC/bin/infiniteoc.mjs rebuild
+node $HOME/InfiniteOC/bin/infiniteoc.mjs -- --version
 ```
 
 Use real mod paths, not the example name. Independent syntax checks/tests may run together. Rebuild must not race another rebuild or tests reading the generated tree, and must not replace an active agent's runtime tree. Run compiled checks only at a safe boundary. Run feature smoke checks after rebuild, inspect logs, and wait for background builds before declaring completion. Native terminal validation differs from browser validation; use a PTY or real terminal for Solid/OpenTUI.
@@ -54,8 +54,8 @@ Use real mod paths, not the example name. Independent syntax checks/tests may ru
 ## Live features, temporary scripts and settings
 
 ```sh
-node --test /home/rize/InfiniteOC/test/*.test.mjs /home/rize/InfiniteOC/mods/clearall/test.mjs
-node /home/rize/InfiniteOC/bin/infiniteoc.mjs feature check clearall
+node --test $HOME/InfiniteOC/test/*.test.mjs $HOME/InfiniteOC/mods/clearall/test.mjs
+node $HOME/InfiniteOC/bin/infiniteoc.mjs feature check clearall
 ```
 
 For daemon work, use an isolated installation/config, Unix socket and UI client.

@@ -18,8 +18,8 @@ opendaemon auto off
 opendaemon auto on
 ```
 
-The executable is `/home/rize/InfiniteOC/bin/opendaemon.mjs`, linked from
-`/home/rize/.local/bin/opendaemon`. `start` starts the daemon explicitly; `serve`
+The executable is `$HOME/InfiniteOC/bin/opendaemon.mjs`, linked from
+`$HOME/.local/bin/opendaemon`. `start` starts the daemon explicitly; `serve`
 runs it in the foreground for diagnostics/service managers. `--home PATH`
 selects another installation. It does not automatically install a systemd unit.
 

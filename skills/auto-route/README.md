@@ -1,7 +1,7 @@
 # Local auto-route reliability update
 
-Maintained source: `/home/rize/InfiniteOC/skills/auto-route/`.
-Active OpenCode library: `/home/rize/.config/opencode/skill-library/auto-route/`.
+Maintained source: `$HOME/InfiniteOC/skills/auto-route/`.
+Active OpenCode library: `$HOME/.config/opencode/skill-library/auto-route/`.
 
 This improves the existing general-purpose router, not model choice or permissions.
 The main skill keeps all domain routes. Software reliability, state recovery, and
@@ -20,8 +20,8 @@ remote skill packages are installed.
 ## Validate
 
 ```sh
-node --test /home/rize/InfiniteOC/test/auto-route-*.test.mjs
-node --test /home/rize/InfiniteOC/test/*.test.mjs
+node --test $HOME/InfiniteOC/test/auto-route-*.test.mjs
+node --test $HOME/InfiniteOC/test/*.test.mjs
 ```
 
 The routing tests check decisions and invalid inputs; search tests check real CLI
@@ -31,7 +31,7 @@ model follows the skill or that the user's book app is fixed.
 ## Installation and rollback
 
 Before installing, back up the active auto-route directory and the global
-`/home/rize/.config/opencode/AGENTS.md`. Update only this skill's owned files;
+`$HOME/.config/opencode/AGENTS.md`. Update only this skill's owned files;
 preserve catalog entries and unrelated instructions/configuration. Publish helpers
 and references first, then `SKILL.md`, using atomic file replacement. Do not modify
 the separate Claude skill mirror: it has its own tool conventions and additions.
