@@ -1,0 +1,6 @@
+{
+  "id": "temporary-demo",
+  "title": "Temporary live demo",
+  "slash": "tempdemo",
+  "source": "export function run(ctx) { ctx.toast.show({ variant: 'info', message: 'This command disappears when this UI restarts.' }) }"
+}

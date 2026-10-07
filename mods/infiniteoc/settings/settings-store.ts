@@ -1,0 +1,2 @@
+// Node-compatible helper is shared with the launcher, not duplicated in the TUI.
+export { settingsFile, providerConfigFile, loadSettings, saveSettings, validateTraffic, providerProtocols, validateProvider, buildProvider, saveProvider, deleteProvider } from "./settings-store.mjs"

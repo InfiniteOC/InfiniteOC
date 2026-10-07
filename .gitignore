@@ -1,0 +1,6 @@
+.upstream/
+.runtime/
+.opendaemon/
+.tools/
+node_modules/
+*.log
