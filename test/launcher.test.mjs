@@ -177,6 +177,11 @@ test("uninstall, upgrade and update are refused before anything is prepared", as
     assert.ok(result.stderr.includes("refused: it would act on your stock OpenCode install"), result.stderr)
   }
   await assert.rejects(stat(path.join(base, ".runtime")), { code: "ENOENT" })
+  // Bare "infiniteoc update" is InfiniteOC's own self-update (git), never OpenCode's; this home is not a checkout.
+  const self = cli(base, ["update"])
+  assert.equal(self.status, 1)
+  assert.match(self.stderr, /git not found on PATH|not a git checkout/)
+  assert.ok(!self.stderr.includes("refused"), self.stderr)
   // Only the subcommand position counts, and a root flag's value is not one; these launches get as far as bootstrap (no npm on the fake PATH).
   for (const args of [["--print-logs", "run", "update"], ["--prompt", "update"]]) {
     const run = cli(base, args)

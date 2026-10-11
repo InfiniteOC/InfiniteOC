@@ -11,7 +11,7 @@ import { Spinner } from "./spinner"
 import { loadSettings, saveSettings, saveProvider, deleteProvider, validateProvider, validateTraffic } from "./settings-store"
 
 type Traffic = { mode: string; proxyURL: string; socksHost: string; socksPort: number; noProxy: string }
-type Settings = { traffic: Traffic; providers: Record<string, { protocol: string; models: string[] }> }
+type Settings = { traffic: Traffic; providers: Record<string, { protocol: string; models: string[] }>; updates?: { mode?: string } }
 
 // One save at a time across every settings view: provider save, traffic save and delete all
 // read-modify-write the same files, and a double Enter must not race past the duplicate-ID check.
@@ -110,6 +110,15 @@ export function DialogInfiniteOC(props: { notice?: string }) {
     await saveSettings({ ...current, traffic: validateTraffic(traffic) })
     home("Traffic saved · restart InfiniteOC to apply")
   }
+  // The launcher reads this when it starts (src/updater.mjs); unknown values mean "auto".
+  function updates() {
+    const labels: Record<string, string> = { auto: "Install updates at launch after a 5 second countdown (s skips)", ask: "Ask at launch before installing", off: "Never check; run infiniteoc update yourself" }
+    choose("InfiniteOC updates", Object.entries(labels).map(([value, description]) => ({ title: value, value, description })), async (mode) => {
+      const current = await loadSettings()
+      await saveSettings({ ...current, updates: { mode } })
+      home(`Updates: ${mode} · applies at the next launch`)
+    }, state()?.updates?.mode ?? "auto")
+  }
   function traffic() {
     const draft = { ...state()!.traffic }
     const bypass = () => prompt("No-proxy hosts (comma-separated)", draft.noProxy, "Local control traffic is always bypassed. Subprocesses may ignore proxies; Tor does not guarantee anonymity.", (noProxy) => saveTraffic({ ...draft, noProxy }))
@@ -186,6 +195,7 @@ export function DialogInfiniteOC(props: { notice?: string }) {
       { title: "Traffic", value: "traffic", description: "Proxy or Tor routing", footer: t.mode === "tor" ? `tor · ${t.socksHost}:${t.socksPort}` : t.mode === "proxy" ? `proxy · ${new URL(t.proxyURL).host}` : t.mode },
       { title: "Providers", value: "provider", description: "Add a custom Anthropic or OpenAI endpoint", footer: `${ids.length} custom`, details: ids.map((id) => `${id} · ${summary(id)}`) },
       ...(ids.length ? [{ title: "Delete provider", value: "remove", description: "Remove its config entry and key file" }] : []),
+      { title: "Updates", value: "updates", description: "How InfiniteOC updates itself from its git remote", footer: current.updates?.mode ?? "auto" },
       { title: "Close", value: "close" },
     ]
   }
@@ -194,6 +204,7 @@ export function DialogInfiniteOC(props: { notice?: string }) {
     if (option.value === "traffic") traffic()
     if (option.value === "provider") provider()
     if (option.value === "remove") removeProvider()
+    if (option.value === "updates") updates()
     if (option.value === "close") dialog.clear()
   }} />
 }

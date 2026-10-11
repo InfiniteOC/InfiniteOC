@@ -7,7 +7,7 @@ import mod from "./index.mjs"
 import { guidance } from "./workflow.mjs"
 
 test("build guidance keeps delegation bounded and never grants permissions", () => {
-  for (const phrase of ["nothing here grants tool access", "never on overlapping files", "keep dependent steps sequential", "re-run the checks yourself", "a subagent's claim is not proof", "Ask before destructive"]) {
+  for (const phrase of ["nothing here grants tool access", "never two writers on the same file", "keep dependent steps sequential", "re-run the checks yourself", "a subagent's claim is not proof", "Ask before destructive"]) {
     assert.ok(guidance.build.includes(phrase), `Missing workflow guard: ${phrase}`)
   }
 })
@@ -28,7 +28,7 @@ async function apply(reducedMotion = false, files = new Map()) {
 
 test("applies against local source, preserving all permission-rule code", async () => {
   const files = await apply()
-  assert.equal(files.size, 31)
+  assert.equal(files.size, 38)
   const file = "packages/core/src/plugin/agent.ts"
   const original = await readFile(path.join(root, file), "utf8")
   const rules = (source) => source.split("\n").filter((line) => /\.permissions|action:|resource:|effect:|Permission\.merge/.test(line))
@@ -55,7 +55,12 @@ test("applies against local source, preserving all permission-rule code", async 
   assert.match(context, /import \{ infiniteocGuidance \} from "\.\.\/infiniteoc\/guidance\.js"/)
   assert.match(context, /Instructions\.Key\.make\("infiniteoc\/guidance"\)[\s\S]*infiniteocGuidance\[agent\.id\]/)
   assert.match(files.get("packages/core/src/config/plugin/skill.ts"), /if \(process\.env\.INFINITEOC_SKILLS\) add\(Skill\.DirectorySource\.make/)
-  assert.match(files.get("packages/core/src/plugin/internal.ts"), /import \* as InfiniteocGoal from "\.\/infiniteoc-goal\.js"[\s\S]*PlanPlugin\.Plugin,\n  InfiniteocGoal\.Plugin,\n  InfiniteocFrontend\.Plugin,/)
+  assert.match(files.get("packages/core/src/plugin/internal.ts"), /import \* as InfiniteocGoal from "\.\/infiniteoc-goal\.js"[\s\S]*PlanPlugin\.Plugin,\n  InfiniteocGoal\.Plugin,\n  InfiniteocFrontend\.Plugin,\n  InfiniteocPonytail\.Plugin,/)
+  assert.match(files.get("packages/core/src/config/plugin/instruction.ts"), /targets: \["AGENTS\.md", "CLAUDE\.md"\][\s\S]*!found\.includes\(join\(dirname\(file\), "AGENTS\.md"\)\)/)
+  assert.match(files.get("packages/core/src/instructions/builtins.ts"), /OS: \$\{osType\(\)\} \$\{release\(\)\}/)
+  assert.match(files.get("packages/core/src/tool/plugin/subagent.ts"), /agent\.id === "explore"[\s\S]*models\.small\(parent\.model\.providerID\)[\s\S]*const model = override \?\? agent\.model \?\? fast \?\? parent\.model/)
+  assert.match(files.get("packages/core/src/plugin/agent.ts"), /Agent\.ID\.make\("explore"\), \(item\) => \{\n        item\.steps = 30/)
+  assert.match(files.get("packages/tui/src/plugin/builtins.ts"), /  PromptBtw,\n  PromptGoal,/)
   assert.match(config, /agent\.hidden = true/)
   assert.match(config, /editor.default\(Agent.defaultID\)/)
   assert.match(config, /current.id !== Agent.defaultID && current.mode !== "subagent"/)
@@ -221,4 +226,60 @@ test("every agent's guidance requires the frontend-design skill for UI work", ()
   assert.match(guidance.build, /\[Frontend\][\s\S]*loading the frontend-design skill[\s\S]*render and inspect/)
   assert.match(guidance.general, /load the frontend-design skill first/)
   assert.match(guidance.reviewer, /load the frontend-design skill and review/)
+})
+
+test("ponytail applies to coding turns only, honors levels and per-session stop", async (t) => {
+  const source = await readFile(new URL("./ponytail.ts", import.meta.url), "utf8")
+  const skill = await readFile(new URL("../../skills/ponytail/SKILL.md", import.meta.url), "utf8")
+  const dir = await mkdtemp(path.join(tmpdir(), "ponytail-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(path.join(dir, "ponytail.ts"), source.split("export const Plugin")[0].replace(/^import .*$/gm, "").replace('"__PONYTAIL_SKILL__"', JSON.stringify(skill)))
+  const { decide, rules, parseMode } = await import(path.join(dir, "ponytail.ts"))
+  const user = (text) => ({ role: "user", content: [{ type: "text", text }] })
+  const edit = { role: "assistant", content: [{ type: "tool-call", id: "1", name: "edit", input: {} }] }
+  const read = { role: "assistant", content: [{ type: "tool-call", id: "2", name: "read", input: {} }] }
+  assert.equal(decide("auto", "build", [user("add a retry to the fetch helper")]), "full")
+  assert.equal(decide("auto", "build", [user("what does this function do?")]), undefined)
+  assert.equal(decide("auto", "build", [user("explain how to fix the build")]), undefined)
+  assert.equal(decide("auto", "build", [user("look into the flaky test"), read]), undefined)
+  assert.equal(decide("auto", "build", [user("look into the flaky test"), edit]), "full")
+  assert.equal(decide("auto", "build", [user("keep it simplest please")]), "full")
+  assert.equal(decide("auto", "general", [user("anything")]), "full")
+  for (const agent of ["explore", "researcher", "reviewer", "title"]) assert.equal(decide("full", agent, [user("add x")]), undefined)
+  assert.equal(decide("ultra", "build", [user("hello")]), "ultra")
+  assert.equal(decide("off", "build", [user("add x")]), undefined)
+  assert.equal(decide("full", "build", [user("add x"), user("stop ponytail")]), undefined)
+  assert.equal(decide("auto", "build", [user("normal mode."), user("add a flag")]), undefined)
+  assert.equal(decide("auto", "build", [user("stop ponytail"), user("/ponytail"), user("add a flag")]), "full")
+  assert.equal(parseMode(" Lite\n"), "lite")
+  assert.equal(parseMode("bogus"), undefined)
+  const lite = rules("lite")
+  assert.match(lite, /^PONYTAIL MODE ACTIVE \(level: lite\)/)
+  assert.match(lite, /\*\*lite\*\*/)
+  assert.doesNotMatch(lite, /\*\*ultra\*\*|^name: ponytail/m)
+  assert.match(lite, /Never cut: validation at trust boundaries/)
+  assert.ok(lite.length < 5000)
+})
+
+test("goal indicator reads the active goal from the transcript", async (t) => {
+  const source = await readFile(new URL("./tui/goal-status.tsx", import.meta.url), "utf8")
+  const dir = await mkdtemp(path.join(tmpdir(), "goal-status-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(path.join(dir, "goal.ts"), source.split("export default")[0].replace(/^import .*$/gm, ""))
+  const { goalState } = await import(path.join(dir, "goal.ts"))
+  const user = (text) => ({ type: "user", text })
+  const synthetic = (text, description) => ({ type: "synthetic", text, description })
+  assert.equal(goalState([user("hi")]), undefined)
+  assert.deepEqual(goalState([user("[InfiniteOC goal]\nGoal: ship it\n\nrules")]), { goal: "ship it", step: "on" })
+  assert.deepEqual(goalState([user("[InfiniteOC goal]\nGoal: ship it"), synthetic("[InfiniteOC goal: continue]\nGoal: ship it\n\nContinuation 3 of 20.")]), { goal: "ship it", step: "3/20" })
+  assert.deepEqual(goalState([user("[InfiniteOC goal]\nGoal: ship it"), synthetic("[InfiniteOC goal: verify]\nGoal: ship it")]), { goal: "ship it", step: "verify" })
+  assert.equal(goalState([user("[InfiniteOC goal]\nGoal: ship it"), synthetic("[InfiniteOC goal: finished]\nGoal finished.")]), undefined)
+  assert.equal(goalState([user("[InfiniteOC goal]\nGoal: ship it"), synthetic("[InfiniteOC goal: stopped]\nGoal stopped."), user("thanks")]), undefined)
+})
+
+test("the goal word animation matches only a leading /goal command", async () => {
+  const source = await readFile(new URL("./tui/goal-word.ts", import.meta.url), "utf8")
+  const pattern = new RegExp(/export const GOAL_WORD = \/(.+)\/\n/.exec(source)[1])
+  for (const text of ["/goal", "/goal make it", "/goal\nnext"]) assert.ok(pattern.test(text), text)
+  for (const text of ["/goals", " /goal", "my /goal", "/goalkeeper x"]) assert.ok(!pattern.test(text), text)
 })

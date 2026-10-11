@@ -87,6 +87,35 @@ export default {
       return replace(source, '      editor.update(Agent.ID.make("compaction"), (item) => {', `${subagents}
       editor.update(Agent.ID.make("compaction"), (item) => {`)
     })
+    // Awareness: project instructions also come from CLAUDE.md in directories without an AGENTS.md
+    // (many repos only have CLAUDE.md), and the environment block names the OS release and shell.
+    await api.patch("packages/core/src/config/plugin/instruction.ts", (source) => {
+      source = replace(source, '              .map((directory) => join(directory, "AGENTS.md"))', '              .flatMap((directory) => [join(directory, "AGENTS.md"), join(directory, "CLAUDE.md")])')
+      return replace(source, '        const walked = yield* Effect.forEach(yield* fs.up({ targets: ["AGENTS.md"], start, stop }), fs.resolve)\n', `        const found = yield* Effect.forEach(yield* fs.up({ targets: ["AGENTS.md", "CLAUDE.md"], start, stop }), fs.resolve)
+        // InfiniteOC: CLAUDE.md only where the same directory has no AGENTS.md.
+        const walked = found.filter((file) => !file.endsWith("/CLAUDE.md") || !found.includes(join(dirname(file), "AGENTS.md")))
+`)
+    })
+    await api.patch("packages/core/src/instructions/builtins.ts", (source) => {
+      source = replace(source, 'import { Global } from "@opencode/util/global"', 'import { Global } from "@opencode/util/global"\nimport { release, type as osType } from "os"')
+      return replace(source, "                  `  Platform: ${process.platform}`,\n", "                  `  Platform: ${process.platform}`,\n                  `  OS: ${osType()} ${release()} (${process.arch})${process.env.SHELL ? `, shell ${process.env.SHELL}` : \"\"}`,\n")
+    })
+    // Explore runs on the provider's small model (Haiku, Flash, Luna) at minimal reasoning unless the
+    // caller or config picks a model; it only searches, so speed matters more than depth there.
+    await api.patch("packages/core/src/tool/plugin/subagent.ts", (source) =>
+      replace(source, "              const model = override ?? agent.model ?? parent.model\n", `              const fast =
+                !override && !agent.model && parent.model && agent.id === "explore" && process.env.INFINITEOC_FAST_EXPLORE !== "0"
+                  ? yield* models.small(parent.model.providerID).pipe(
+                      Effect.map((info) => {
+                        if (!info) return undefined
+                        const variant = ["none", "minimal", "low"].find((id) => info.variants.some((item) => item.id === id))
+                        return Model.Ref.make({ providerID: info.providerID, id: info.id, ...(variant ? { variant: Model.VariantID.make(variant) } : {}) })
+                      }),
+                      Effect.orElseSucceed(() => undefined),
+                    )
+                  : undefined
+              const model = override ?? agent.model ?? fast ?? parent.model
+`))
     // Per-agent guidance becomes an instruction block in every session's context, after upstream's
     // base/model prompt. Other mods append through the extension marker.
     await api.write("packages/core/src/infiniteoc/guidance.ts", guidanceSource())
@@ -115,10 +144,31 @@ export default {
     await api.write("packages/core/src/plugin/infiniteoc-goal.ts", await readFile(new URL("./goal.ts", import.meta.url), "utf8"))
     // Frontend gate: UI-file edits are refused until the session has loaded the frontend-design skill.
     await api.write("packages/core/src/plugin/infiniteoc-frontend.ts", await readFile(new URL("./frontend.ts", import.meta.url), "utf8"))
+    // Ponytail: the bundled lazy-senior-dev ruleset, inlined and applied to turns that write code.
+    const ponytail = await readFile(new URL("../../skills/ponytail/SKILL.md", import.meta.url), "utf8")
+    await api.write("packages/core/src/plugin/infiniteoc-ponytail.ts",
+      (await readFile(new URL("./ponytail.ts", import.meta.url), "utf8")).replace('"__PONYTAIL_SKILL__"', () => JSON.stringify(ponytail)))
     await api.patch("packages/core/src/plugin/internal.ts", (source) => {
-      source = replace(source, 'import { PlanPlugin } from "./plan.js"', 'import { PlanPlugin } from "./plan.js"\nimport * as InfiniteocGoal from "./infiniteoc-goal.js"\nimport * as InfiniteocFrontend from "./infiniteoc-frontend.js"')
-      return replace(source, "  PlanPlugin.Plugin,\n", "  PlanPlugin.Plugin,\n  InfiniteocGoal.Plugin,\n  InfiniteocFrontend.Plugin,\n")
+      source = replace(source, 'import { PlanPlugin } from "./plan.js"', 'import { PlanPlugin } from "./plan.js"\nimport * as InfiniteocGoal from "./infiniteoc-goal.js"\nimport * as InfiniteocFrontend from "./infiniteoc-frontend.js"\nimport * as InfiniteocPonytail from "./infiniteoc-ponytail.js"')
+      return replace(source, "  PlanPlugin.Plugin,\n", "  PlanPlugin.Plugin,\n  InfiniteocGoal.Plugin,\n  InfiniteocFrontend.Plugin,\n  InfiniteocPonytail.Plugin,\n")
     })
+    // /goal in the TUI: the word glows while typed, an indicator shows the active goal under the
+    // prompt, and the start message is shown as "/goal <text>" instead of the full protocol.
+    const tui = (name) => readFile(new URL(`./tui/${name}`, import.meta.url), "utf8")
+    await api.write("packages/tui/src/component/prompt/goal-word.ts", await tui("goal-word.ts"))
+    await api.write("packages/tui/src/feature-plugins/prompt/goal.tsx", await tui("goal-status.tsx"))
+    await api.patch("packages/tui/src/component/prompt/index.tsx", (source) => {
+      source = replace(source, 'import { useTheme, useThemes } from "../../context/theme"', 'import { useTheme, useThemes } from "../../context/theme"\nimport { createGoalWord } from "./goal-word"')
+      // After the store is declared: the memos inside run immediately.
+      return replace(source, "  function syncExtmarksWithPromptParts() {\n", "  createGoalWord(() => input, () => store.prompt.text, syntax, theme, animationsEnabled)\n\n  function syncExtmarksWithPromptParts() {\n")
+    })
+    await api.patch("packages/tui/src/plugin/builtins.ts", (source) => {
+      source = replace(source, 'import PromptBtw from "../feature-plugins/prompt/btw"', 'import PromptBtw from "../feature-plugins/prompt/btw"\nimport PromptGoal from "../feature-plugins/prompt/goal"')
+      return replace(source, "  PromptBtw,\n", "  PromptBtw,\n  PromptGoal,\n")
+    })
+    await api.patch("packages/tui/src/routes/session/index.tsx", (source) =>
+      replace(source, "<text fg={theme.text.base}>{props.message.text}</text>",
+        '<text fg={theme.text.base}>{props.message.text.startsWith("[InfiniteOC goal]\\nGoal: ") ? `/goal ${props.message.text.split("\\n")[1].slice(6)}` : props.message.text}</text>'))
     await api.patch("packages/tui/src/component/prompt/index.tsx", (source) =>
       replace(source, 'agentLabel: agent ? Locale.titlecase(agent.id) : undefined,', 'agentLabel: agent ? agent.name : undefined,'))
     await api.patch("packages/tui/src/component/dialog-agent.tsx", (source) =>
@@ -221,6 +271,7 @@ ${extensionMarker}
 const subagents = `      // InfiniteOC subagents; their role guidance comes from infiniteoc/guidance.ts.
       editor.update(Agent.ID.make("reviewer"), (item) => {
         item.name = Agent.Name.make("Reviewer")
+        item.steps = 60
         item.description =
           "Independent read-only code reviewer. Give it the change (a diff range or files) and its intent; it reads callers and tests, runs checks, and reports ranked defects with file:line, or says it found none. Use it before reporting nontrivial or risky changes as done."
         item.mode = "subagent"
@@ -236,6 +287,7 @@ const subagents = `      // InfiniteOC subagents; their role guidance comes from
           (rule) => rule.action === "external_directory" && rule.effect === "allow",
         )
         item.name = Agent.Name.make("Researcher")
+        item.steps = 30
         item.description =
           "Read-only researcher for information outside the codebase: library and API docs, changelogs, error messages, specs. It checks the project's installed versions and returns a concise answer with source URLs."
         item.mode = "subagent"
@@ -257,5 +309,9 @@ const subagents = `      // InfiniteOC subagents; their role guidance comes from
             [{ action: "external_directory", resource: "*", effect: "ask" }, ...externalDirectories],
           ),
         )
+      })
+      // Step caps keep search subagents fast: at the cap they must answer with what they found.
+      editor.update(Agent.ID.make("explore"), (item) => {
+        item.steps = 30
       })
 `

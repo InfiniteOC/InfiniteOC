@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { readdir } from "node:fs/promises"
 import { join } from "node:path"
-import { config, prepare, launch, doctor, exists, home } from "../src/launcher.mjs"
+import { config, prepare, launch, doctor, exists, home, run } from "../src/launcher.mjs"
+import { update } from "../src/updater.mjs"
 import { loadMods } from "../src/mod-loader.mjs"
 import { scaffoldFeature, checkFeatures, setFeatureEnabled } from "../src/feature-scaffold.mjs"
 
@@ -15,6 +16,7 @@ try {
 
   infiniteoc setup               Fetch dependencies, apply mods, build isolated CLI
   infiniteoc rebuild             Reapply mods from pristine source and rebuild
+  infiniteoc update              Fast-forward this checkout to its remote branch, then rebuild
   infiniteoc mods                List configured mods
   infiniteoc doctor [--json]     Read-only checks; never downloads or changes anything
   infiniteoc feature new ID      Create a typed, working TUI slash-command mod (not enabled)
@@ -27,7 +29,8 @@ try {
 Live reload:   opendaemon status | watch | restart (every launch starts it)
 Traffic/Tor:   /settings → InfiniteOC Settings, inside the TUI
 On PATH:       npm link (in ${home}) installs infiniteoc and opendaemon
-Refused:       uninstall, upgrade, update (they act on stock OpenCode data)
+Auto-update:   checks every 6h at launch; /settings → InfiniteOC Settings → Updates (auto, ask, off)
+Refused:       uninstall, upgrade (they act on stock OpenCode data)
 Configuration: ${home}/infiniteoc.json
 Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
   } else if (args[0] === "feature") {
@@ -50,6 +53,10 @@ Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
     if (args[1] === "--json") console.log(JSON.stringify(report, null, 2))
     else for (const { ok, detail, hint } of Object.values(report)) console.log(ok ? `✓ ${detail}` : `✗ ${detail}\n    ${hint}`)
     if (Object.values(report).some(check => !check.ok)) process.exitCode = 1
+  } else if (args[0] === "update") {
+    // InfiniteOC's own checkout only; stock OpenCode is never updated. The new code rebuilds in a fresh process.
+    const summary = await update({ home, saved: {}, explicit: true, motion: !settings.options?.reducedMotion })
+    if (summary) process.exitCode = await run(process.execPath, [join(home, "bin/infiniteoc.mjs"), "setup"])
   } else if (["setup", "rebuild"].includes(args[0])) {
     const result = await prepare(settings, args[0] === "rebuild")
     console.log(`[InfiniteOC] Ready: ${result.binary}`)
@@ -59,7 +66,7 @@ Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
     // The binary refuses too (mods/infiniteoc), but not with that mod disabled or from an older last-good build.
     // effect lets only its global settings precede a subcommand (--[no-]print-logs [bool], --log-level <level>, or --flag=value); any other flag there fails the parse or runs a built-in action instead.
     const command = forwarded.find((arg, i) => !/^--((no-)?print-logs|log-level)(=|$)/.test(arg) && forwarded[i - 1] !== "--log-level" && !(forwarded[i - 1] === "--print-logs" && /^(true|false|yes|no|on|off|[01yn])$/.test(arg)))
-    if (["uninstall", "upgrade", "update"].includes(command)) throw new Error(`${command} refused: it would act on your stock OpenCode install and the sessions, credentials and config InfiniteOC shares with it. Update InfiniteOC with git pull, then infiniteoc rebuild; remove it by deleting this checkout. For OpenCode itself run stock opencode ${command}.`)
+    if (["uninstall", "upgrade", "update"].includes(command)) throw new Error(`${command} refused: it would act on your stock OpenCode install and the sessions, credentials and config InfiniteOC shares with it. Update InfiniteOC with infiniteoc update; remove it by deleting this checkout. For OpenCode itself run stock opencode ${command}.`)
     process.exitCode = await launch(forwarded, settings)
   }
 } catch (error) {

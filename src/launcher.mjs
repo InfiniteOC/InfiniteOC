@@ -12,6 +12,8 @@ import { loadSettings, settingsFile } from "../mods/infiniteoc/settings/settings
 import { ensureDaemon, daemonPaths, digestTree } from "./opendaemon.mjs"
 import { daemonRequest } from "./daemon-client.mjs"
 import { installDaemonTool } from "./opendaemon-tool.mjs"
+import { update } from "./updater.mjs"
+import { fx } from "./fx.mjs"
 
 export const home = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 // Matches upstream build.ts --single target naming: cli-<os>-<arch>.
@@ -22,6 +24,7 @@ const bunVersion = bun => { const result = spawnSync(bun, ["--version"], { encod
 const alive = pid => { try { process.kill(pid, 0); return true } catch (error) { return error.code !== "ESRCH" } }
 const seconds = since => `${((Date.now() - since) / 1000).toFixed(1)}s`
 const socksLabel = (mode, socks) => `${mode === "tor" ? "Tor SOCKS" : "SOCKS proxy"} ${socks.host}:${socks.port}`
+let reducedMotion = false
 export async function exists(path) { try { await access(path); return true } catch { return false } }
 export function run(command, args, options = {}) {
   return new Promise((done, fail) => {
@@ -112,11 +115,14 @@ export async function acquireLock(lock) {
 }
 // Steps whose child output streams through get a closing line rather than a spinner over it.
 async function step(label, task, streams = false) {
+  const ui = fx(process.stderr, { motion: !reducedMotion })
+  if (ui.tty && !streams) return ui.spin(`[InfiniteOC] ${label}`, task)
   const started = Date.now()
   process.stderr.write(`[InfiniteOC] ${label}…${streams ? "\n" : ""}`)
   try { return await task() } finally { process.stderr.write(`${streams ? `[InfiniteOC] ${label} ` : " "}${seconds(started)}\n`) }
 }
 export async function prepare(settings, force = false) {
+  reducedMotion = !!settings.options?.reducedMotion
   if (!supported) throw new Error(`Unsupported platform ${target}; InfiniteOC builds on Linux and macOS (x64/arm64)`)
   const { upstream, bun } = await bootstrap(settings)
   const mods = await loadMods(settings.mods, home)
@@ -197,6 +203,12 @@ export async function launch(args, settings) {
   const notice = text => { notices.push(text); console.error(`[InfiniteOC] ${text}`) }
   const file = settingsFile()
   const saved = await loadSettings(file).catch(error => { throw new Error(`${file}: ${error.message}. Fix or delete it to restore defaults.`) })
+  // Self-update first; the updated launcher, mods and config then run (and rebuild) in a fresh process.
+  if (process.env.INFINITEOC_UPDATED) notice(`Updated InfiniteOC ${process.env.INFINITEOC_UPDATED}`)
+  else {
+    const summary = await update({ home, saved, motion: !settings.options?.reducedMotion })
+    if (summary) return run(process.execPath, [join(home, "bin/infiniteoc.mjs"), "--", ...args], { env: { ...process.env, INFINITEOC_UPDATED: summary } })
+  }
   let prepared, hooks
   try {
     prepared = await prepare(settings)
@@ -218,7 +230,7 @@ export async function launch(args, settings) {
     // INFINITEOC_SKILLS: the bundled skill library, registered by mods/infiniteoc (mostly unlisted, loadable by ID).
     const context = { args: [...args], env: { ...traffic.env, INFINITEOC_SETTINGS_FILE: file, INFINITEOC: "1", OPENCODE_CLIENT: "InfiniteOC", OPENCODE_TUI_CHANNEL: "infiniteoc", INFINITEOC_UI_CLIENT: randomUUID(), INFINITEOC_SKILLS: join(home, "skills") }, cwd: process.cwd() }
     // Possibly inherited from an enclosing InfiniteOC session; only this launch's values may reach the TUI.
-    for (const key of ["INFINITEOC_DAEMON_SOCKET", "INFINITEOC_LIVE_MANIFEST", "INFINITEOC_NOTICE"]) delete context.env[key]
+    for (const key of ["INFINITEOC_DAEMON_SOCKET", "INFINITEOC_LIVE_MANIFEST", "INFINITEOC_NOTICE", "INFINITEOC_UPDATED"]) delete context.env[key]
     if (traffic.socks && !await probeSocks(traffic.socks.host, traffic.socks.port))
       notice(`${socksLabel(saved.traffic.mode, traffic.socks)} unreachable; requests will fail until it runs (change in /settings → InfiniteOC Settings → Traffic)`)
     try {
