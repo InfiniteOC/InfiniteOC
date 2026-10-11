@@ -58,6 +58,7 @@ Mod paths are relative to the checkout root and order matters. `reducedMotion: t
 ## Features, live reload and skills
 
 - New TUI slash commands: `infiniteoc feature new my-feature`; see [FEATURES.md](FEATURES.md). Agents start at [AGENTS.md](AGENTS.md).
+- `/goal <what done means>`: the agent keeps working, testing and verifying until the goal is met (or it reports `GOAL BLOCKED`); `/goal stop` or Esc ends it. Details in [mods/infiniteoc/README.md](mods/infiniteoc/README.md).
 - Live command reload without restarting: `opendaemon` (every launch starts it) and `/live` in the TUI; see [OPENDAEMON.md](OPENDAEMON.md).
 - Bundled skills live in [skills/](skills/); mod API and safety rules: [skills/infiniteoc-mod-development/SKILL.md](skills/infiniteoc-mod-development/SKILL.md).
 

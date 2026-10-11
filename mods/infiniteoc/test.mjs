@@ -1,6 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { readFile } from "node:fs/promises"
+import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import path from "node:path"
 import mod from "./index.mjs"
 import { guidance } from "./workflow.mjs"
@@ -27,7 +28,7 @@ async function apply(reducedMotion = false, files = new Map()) {
 
 test("applies against local source, preserving all permission-rule code", async () => {
   const files = await apply()
-  assert.equal(files.size, 28)
+  assert.equal(files.size, 30)
   const file = "packages/core/src/plugin/agent.ts"
   const original = await readFile(path.join(root, file), "utf8")
   const rules = (source) => source.split("\n").filter((line) => /\.permissions|action:|resource:|effect:|Permission\.merge/.test(line))
@@ -54,6 +55,7 @@ test("applies against local source, preserving all permission-rule code", async 
   assert.match(context, /import \{ infiniteocGuidance \} from "\.\.\/infiniteoc\/guidance\.js"/)
   assert.match(context, /Instructions\.Key\.make\("infiniteoc\/guidance"\)[\s\S]*infiniteocGuidance\[agent\.id\]/)
   assert.match(files.get("packages/core/src/config/plugin/skill.ts"), /if \(process\.env\.INFINITEOC_SKILLS\) add\(Skill\.DirectorySource\.make/)
+  assert.match(files.get("packages/core/src/plugin/internal.ts"), /import \* as InfiniteocGoal from "\.\/infiniteoc-goal\.js"[\s\S]*PlanPlugin\.Plugin,\n  InfiniteocGoal\.Plugin,/)
   assert.match(config, /agent\.hidden = true/)
   assert.match(config, /editor.default\(Agent.defaultID\)/)
   assert.match(config, /current.id !== Agent.defaultID && current.mode !== "subagent"/)
@@ -152,4 +154,40 @@ test("configured Quick default resolves to one visible InfiniteOC primary withou
   finalize(editor, Agent)
   assert.equal(agents[0].system, "Custom prompt")
   assert.equal(agents[1].system, undefined)
+})
+test("/goal keeps going until the goal is verified, and stops on interrupt, block or cap", async (t) => {
+  // decide() is pure; load it without the plugin runtime by dropping imports and the Plugin export.
+  const source = await readFile(new URL("./goal.ts", import.meta.url), "utf8")
+  const dir = await mkdtemp(path.join(tmpdir(), "goal-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(path.join(dir, "goal.ts"), source.split("export const Plugin")[0].replace(/^import .*$/gm, ""))
+  const { decide, startText, continueText, verifyText, MAX_CONTINUATIONS } = await import(path.join(dir, "goal.ts"))
+  const user = (text) => ({ type: "user", text })
+  const synthetic = (text) => ({ type: "synthetic", text })
+  const reply = (text) => ({ type: "assistant", content: [{ type: "text", text }] })
+  const idle = (outcome = "succeeded") => ({ type: "idle", outcome })
+  const goal = "make tests pass"
+  const start = user(startText(goal))
+
+  assert.deepEqual(decide([user("hi"), reply("hello"), idle()]), { action: "none" })
+  assert.deepEqual(decide([start]), { action: "none" }) // no reply yet
+  assert.deepEqual(decide([start, reply("working"), idle()]), { action: "continue", goal, turn: 1 })
+  assert.deepEqual(decide([start, reply("x"), idle(), synthetic(continueText(goal, 1))]), { action: "none" })
+  assert.deepEqual(decide([start, reply("x"), idle(), synthetic(continueText(goal, 1)), reply("y"), idle()]), { action: "continue", goal, turn: 2 })
+  assert.deepEqual(decide([start, reply("done\nGOAL COMPLETE: npm test passed"), idle()]), { action: "verify", goal, turn: 1 })
+  assert.equal(decide([start, reply("GOAL COMPLETE"), idle(), synthetic(verifyText(goal)), reply("GOAL VERIFIED: reran"), idle()]).action, "finish")
+  assert.equal(decide([start, reply("GOAL COMPLETE"), idle(), synthetic(verifyText(goal)), reply("fixed\nGOAL COMPLETE"), idle()]).action, "verify")
+  const twice = [start, reply("GOAL COMPLETE"), idle(), synthetic(verifyText(goal)), reply("GOAL COMPLETE"), idle(), synthetic(verifyText(goal)), reply("GOAL COMPLETE"), idle()]
+  assert.equal(decide(twice).action, "finish")
+  assert.match(decide([start, reply("GOAL BLOCKED: need a token"), idle()]).note, /needs your input/)
+  assert.match(decide([start, reply("partial"), idle("interrupted")]).note, /interrupted/)
+  assert.match(decide([start, reply("partial"), idle("failed")]).note, /error/)
+  assert.deepEqual(decide([start, reply("x"), idle(), synthetic("[InfiniteOC goal: stopped]\nGoal stopped."), reply("later"), idle()]), { action: "none" })
+  assert.deepEqual(decide([start, reply("GOAL VERIFIED"), idle(), synthetic("[InfiniteOC goal: finished]\nGoal finished."), user("thanks"), reply("ok"), idle()]), { action: "none" })
+  const capped = [start, reply("x"), idle()]
+  for (let turn = 1; turn <= MAX_CONTINUATIONS; turn++) capped.push(synthetic(continueText(goal, turn)), reply("x"), idle())
+  assert.match(decide(capped).note, /paused after/)
+  // A new /goal resets the counters.
+  assert.deepEqual(decide([...capped, user(startText("next")), reply("x"), idle()]), { action: "continue", goal: "next", turn: 1 })
+  for (const text of [startText(goal), continueText(goal, 3), verifyText(goal)]) assert.match(text, /GOAL (COMPLETE|VERIFIED)/)
 })
