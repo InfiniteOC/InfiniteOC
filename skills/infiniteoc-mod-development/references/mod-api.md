@@ -1,6 +1,6 @@
 # Actual local mod API
 
-Authority: `$HOME/InfiniteOC/src/mod-loader.mjs` and `$HOME/InfiniteOC/src/launcher.mjs`. Re-read when implementation changes.
+Authority (relative to the checkout): `src/mod-loader.mjs`, `src/tui-features.mjs` and `src/launcher.mjs`. Re-read when implementation changes.
 
 ## Loading and order
 
@@ -26,9 +26,9 @@ Paths cannot be absolute, escape the root, or use symlinks into external trees. 
 
 ## Declarative TUI features
 
-Scaffold with `node $HOME/InfiniteOC/bin/infiniteoc.mjs feature new hello-ai`.
-It creates an unenabled mod; `feature check hello-ai` validates declarations and
-pinned anchors, not compilation or runtime behavior.
+Scaffold with `node bin/infiniteoc.mjs feature new hello-ai`.
+It creates an unenabled mod; `feature check hello-ai` validates declarations,
+slash collisions and pinned anchors, not compilation or runtime behavior.
 
 ```js
 import { readFile } from "node:fs/promises"
@@ -53,15 +53,22 @@ export function run(ctx: FeatureContext) {
 
 `id`, `title`, `slash`, and `source` are required; aliases/category optional.
 Slash names/aliases are lowercase without `/`; source must export `function run`
-or `async function run`. IDs are namespaced by mod. Duplicate IDs and app-level
-builtin/declared slash collisions fail closed; inspect route/plugin collisions
-manually. The compiled API type lives under
-`packages/tui/src/infiniteoc-features/api.ts` in the generated workspace.
+or `async function run`. Command IDs become `infiniteoc.<mod>.<id>` (also the
+keybind name). Duplicate IDs and slash collisions fail closed: the build,
+`feature check` and live reload check every `slash:` declared under
+`packages/tui/src` (app, routes, plugins; the build also sees other mods'
+patches), the reserved built-in `/live`, and other features. The compiled API type
+lives under `packages/tui/src/infiniteoc-features/api.ts` in the generated workspace.
 
-Context exposes `tabs`, `route`, `dialog`, `toast`, not a general server SDK.
+Context exposes `tabs`, `route`, `dialog`, `toast`, `ui`, not a general server SDK.
 `ctx.tabs.tabs()` reads current-scope tabs; `await ctx.tabs.closeAll()` closes
 that scope, navigates home and returns the count without deleting conversations
-or stopping tasks. Inspect pinned types for open/select/reopen/navigation/dialog
+or stopping tasks; `await ctx.tabs.restoreAll(ids, active?)` undoes it in one
+locked write. `ctx.ui` is the upstream plugin dialog API: `alert`, `confirm`,
+`prompt` and `select` resolve with the answer (`undefined` on Esc), and `set({ size })`
+resizes the open dialog. Toast actions are mouse-only; give side effects a
+keyboard path. Each run first clears the open dialog; failures show an error toast
+titled `/<slash> failed`. Inspect pinned types for open/select/reopen/navigation
 methods. For compiled features, `api.write` can add Solid/OpenTUI components;
 live ctx-only handlers must not import another framework instance.
 
@@ -69,7 +76,7 @@ live ctx-only handlers must not import another framework instance.
 
 Before launch, context is `{ args: string[], env: object, cwd: string }`. Mutate this supplied object to affect the spawned binary. Do not assume it is frozen or mutate global environment instead. After exit, context also has `code`.
 
-Ordering: module-level `beforeLaunch` functions in mod order, then registered `beforeLaunch` hooks in registration order, then the binary. After a normal child exit: module-level `afterExit`, then registered `afterExit`. Hook failures propagate. Post-exit hooks are not guaranteed after spawn/prelaunch failure, and are not `finally` cleanup hooks. Resources acquired in hooks need failure-aware design.
+Ordering: module-level `beforeLaunch` functions in mod order, then registered `beforeLaunch` hooks in registration order, then the binary. After a normal child exit: module-level `afterExit`, then registered `afterExit`. Hook failures propagate. Post-exit hooks are not guaranteed after spawn/prelaunch failure, and are not `finally` cleanup hooks. A launch that falls back to `.runtime/last-good` runs no hooks at all. Resources acquired in hooks need failure-aware design.
 
 Cached launches still invoke setup in register-only mode to restore hooks. Source callbacks do not run in that mode. `api.read` and reads of bundled mod resources do run, so resources must exist independently of a just-executed transform.
 
@@ -77,7 +84,9 @@ Cached launches still invoke setup in register-only mode to restore hooks. Sourc
 
 The launcher fingerprints configuration, framework source, and files beneath configured mod directories. Preparation copies pinned `.upstream` into `.runtime/opencode`, applies framework isolation/activation patches, applies mods, installs locked workspace dependencies, and builds the isolated CLI using bundled Bun. Do not change `.upstream`, `.tools`, or workspace lockfiles casually. Hooks are Node code; patched upstream is compiled with Bun/Solid/OpenTUI.
 
-Launcher commands: `setup` prepares if needed; `rebuild` forces pristine reapplication; `mods` lists entries; `doctor` checks prerequisites; `-- --version` passes through. Read current CLI before relying on flags. The loader's change list records mod file actions, not every launcher-managed patch.
+Supported targets are Linux (glibc) and macOS on x64/arm64. A build prints its reason and timed `[1/4]`…`[4/4]` steps. The build lock `.runtime/prepare.lock` records its pid and heals itself; a successful build is also kept in `.runtime/last-good`, which a launch runs (without mod hooks) when a later build or mod fails.
+
+Launcher commands: `setup` prepares if needed; `rebuild` forces pristine reapplication; `mods` lists entries; `doctor [--json]` runs read-only checks; `feature new|check|enable|disable ID` scaffolds, checks, or adds/removes `mods/ID` in `infiniteoc.json` (keeping `infiniteoc.json.bak`); `upgrade`/`update`/`uninstall` are refused; `-- --version` passes through. Read current CLI before relying on flags. The loader's change list records mod file actions, not every launcher-managed patch.
 
 ## Strict patch pattern
 

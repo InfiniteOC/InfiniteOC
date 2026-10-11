@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import net from "node:net"
 import http from "node:http"
 import { once } from "node:events"
-import { applyTraffic, connectSocks, createSocksBridge } from "../src/traffic.mjs"
+import { applyTraffic, connectSocks, createSocksBridge, probeSocks } from "../src/traffic.mjs"
 
 async function socks(t, reject = false) {
   const destinations = []
@@ -127,6 +127,26 @@ test("HTTP bridge uses SOCKS for unresolvable hostnames and removes proxy author
 
 test("Tor mode creates HTTP bridge and closes it", async () => {
   const result = await applyTraffic({ mode: "tor", socksHost: "127.0.0.1", socksPort: 9050 }, {})
-  assert.match(result.env.HTTPS_PROXY, /^http:\/\/127\.0\.0\.1:/)
   await result.close()
+  assert.match(result.env.HTTPS_PROXY, /^http:\/\/127\.0\.0\.1:/)
+  assert.deepEqual(result.socks, { host: "127.0.0.1", port: 9050 })
+})
+
+test("SOCKS preflight target is host:port only, never the proxy credentials", async () => {
+  const socks = await applyTraffic({ mode: "proxy", proxyURL: "socks5h://user:secret@[::1]:1081" }, {})
+  await socks.close()
+  assert.deepEqual(socks.socks, { host: "[::1]", port: 1081 })
+  assert.equal((await applyTraffic({ mode: "proxy", proxyURL: "http://127.0.0.1:8080" }, {})).socks, undefined)
+})
+
+test("probeSocks resolves reachability and never throws", async () => {
+  // unref: a failing assertion must not leave the run hanging on this server.
+  const server = net.createServer(socket => socket.destroy()).unref()
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  const { port } = server.address()
+  assert.equal(await probeSocks("127.0.0.1", port), true)
+  await new Promise(resolve => server.close(resolve))
+  assert.equal(await probeSocks("127.0.0.1", port), false)
+  assert.equal(await probeSocks("127.0.0.1", 70000), false)
 })

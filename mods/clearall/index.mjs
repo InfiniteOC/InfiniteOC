@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises"
 
 export default {
   id: "clearall",
-  version: "2.0.0",
+  version: "2.1.0",
   async setup(api) {
     api.tui.command({
       id: "close-all-tabs",

@@ -5,6 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { loadSettings, saveSettings, settingsFile, validateTraffic, validateProvider, buildProvider, saveProvider } from "../mods/infiniteoc/settings/settings-store.mjs"
 import { installSettings } from "../mods/infiniteoc/settings/index.mjs"
+import { applyTraffic } from "../src/traffic.mjs"
 
 const lab = () => mkdtemp(path.join(os.tmpdir(), "infiniteoc-settings-"))
 const input = { id: "custom", protocol: "anthropic", baseURL: "https://example.com/v1", models: "model-a,model-b" }
@@ -25,6 +26,35 @@ test("traffic rejects invalid modes, URLs, ports, no-proxy injection without ech
     assert.throws(() => validateTraffic(traffic), (e) => !e.message.includes("secret-value"))
   }
   for (const scheme of ["http", "https", "socks5", "socks5h"]) assert.equal(validateTraffic({ mode: "proxy", proxyURL: `${scheme}://127.0.0.1:9050` }).mode, "proxy")
+})
+test("Tor SOCKS host follows the launcher, so a saved host never blocks the next launch", async () => {
+  for (const socksHost of ["tor_proxy", "host!", "127.0.0.1:9050", "localhost:9050", "[::1", "user:secret-value@host"]) {
+    assert.throws(() => validateTraffic({ mode: "tor", socksHost }), (e) => !e.message.includes(socksHost))
+    await assert.rejects(applyTraffic({ mode: "tor", socksHost }, {}))
+  }
+  for (const socksHost of ["127.0.0.1", "localhost", "tor-host.local", "::1", "[::1]"]) await (await applyTraffic(validateTraffic({ mode: "tor", socksHost }), {})).close()
+})
+test("only Tor applies the launcher's host rule, so a file saved in another mode keeps launching", () => {
+  for (const mode of ["inherit", "direct"]) for (const socksHost of ["localhost:9050", "tor_proxy"]) assert.equal(validateTraffic({ mode, socksHost }).socksHost, socksHost)
+})
+test("settings pickers mount one footer and ignore Esc mid-save", async () => {
+  const source = await readFile(new URL("../mods/infiniteoc/settings/dialog-infiniteoc.tsx", import.meta.url), "utf8")
+  // Upstream DialogSelect reads footer twice; inline JSX compiles to a getter whose never-mounted copy's spinner never stops.
+  assert.doesNotMatch(source, /footer=\{</)
+  // Upstream DialogSelect's Esc ignores locked; leaving mid-save would hide the save's result.
+  assert.match(source, /onCancel=\{\(\) => \{ if \(!saving\(\)\) home\(\) \}\}/)
+})
+test("settings wizard stays large on every step, so one-line safety notes are not clipped", async () => {
+  const source = await readFile(new URL("../mods/infiniteoc/settings/dialog-infiniteoc.tsx", import.meta.url), "utf8")
+  // Upstream replace() resets to medium and DialogPrompt sets its own size on mount.
+  assert.match(source, /dialog\.setSize\("large"\)/)
+  assert.match(source, /<DialogPrompt size="large"/)
+  assert.ok(source.split('{ size: "large" }').length >= 3) // choose() and the SecretPrompt replace
+})
+test("provider field errors are static plain Errors, safe to show inline per wizard step", () => {
+  for (const [field, value, message] of [["id", "secret-value!", /Provider ID/], ["baseURL", "https://user:secret-value@example.com", /base URL/], ["models", "secret-value#", /model ID/], ["apiKey", "{env:secret-value!}", /environment/]]) {
+    assert.throws(() => validateProvider({ ...input, [field]: value }), (e) => e.constructor === Error && !("code" in e) && message.test(e.message) && !e.message.includes("secret-value"))
+  }
 })
 test("provider packages match upstream AISDKNative protocol selection, explicit models required", () => {
   for (const [protocol, pkg] of Object.entries({ anthropic: "@ai-sdk/anthropic", "openai-completions": "@ai-sdk/openai-compatible", "openai-responses": "@ai-sdk/openai" })) {

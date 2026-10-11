@@ -1,3 +1,23 @@
+# macOS arm64 verification (October 8, 2026)
+
+- macOS arm64, Node v26.7.0, bootstrapped Bun 1.4.2, pinned upstream v2.0.21.
+- `npm test` (test/*.test.mjs plus mods/*/test.mjs): 240/240 pass.
+- `infiniteoc setup` builds darwin-arm64 with [1/4]..[4/4] progress; the binary reports
+  v2.0.21-infiniteoc; .runtime/last-good holds a hardlink of the last good binary.
+- tsgo over packages/tui: no errors in InfiniteOC-written files (remaining errors are
+  pre-existing upstream ones). The 7 /health type errors are gone.
+- Real terminal (tmux, isolated XDG lab, no paid model requests, user config untouched):
+  logo wipe plus one glint, then static (idle CPU about 0.3%, previously 6-10%); no motion
+  with Animations off; layouts at 20-100 columns; toast sweep-in and correct replacement;
+  /clearall and agent close-all-tabs with working Undo; /live rows, client ID alert, reload,
+  outage and reconnect toasts; `opendaemon script` defaulting to its own UI; specific
+  live-reload failure reasons; /health consent menu; InfiniteOC Settings wizard (large
+  dialog, inline validation, masked key never rendered, single save, typed DELETE);
+  /update shows the pinned-build message; uninstall/upgrade/update refused by CLI and binary;
+  `doctor`, `feature new|enable|disable` in a scratch checkout.
+- Not verified here: paid model replies (reply footer label, light-mode agent color),
+  Linux after these changes (tests only), terminal restore after a SIGKILLed TUI (unit test only).
+
 # opendaemon live reload verification
 
 - Full Node suite including daemon and clearall tests: **42/42 passed**.

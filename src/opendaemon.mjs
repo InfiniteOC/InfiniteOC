@@ -1,18 +1,24 @@
 import http from "node:http"
 import { spawn } from "node:child_process"
-import { readFile, writeFile, mkdir, chmod, lstat, unlink, rename, readdir } from "node:fs/promises"
+import { readFile, writeFile, mkdir, chmod, lstat, stat, unlink, rename, readdir, rm } from "node:fs/promises"
+import { writeFileSync, rmSync } from "node:fs"
 import { createHash, randomUUID } from "node:crypto"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { daemonRequest } from "./daemon-client.mjs"
-import { validateCommand } from "./tui-features.mjs"
+import { validateCommand, safeError } from "./tui-features.mjs"
 import { buildLive } from "./live-build.mjs"
 
 export const daemonPaths = base => ({ directory: path.join(base, ".opendaemon"), socket: path.join(base, ".opendaemon/control.sock"), manifest: path.join(base, ".opendaemon/live.json") })
+// Measured on macOS (Node 26): 104-byte socket paths work, 105 fail with EINVAL (no truncation). Linux sun_path is 108 incl. NUL.
+export const socketLimit = process.platform === "darwin" ? 104 : 107
+export const checkSocket = socket => { const length = Buffer.byteLength(socket); if (length > socketLimit) throw new Error(`opendaemon socket path is ${length} bytes; this OS allows ${socketLimit}. Move InfiniteOC to a shorter directory`) }
 
-async function digestTree(directory, hash) {
+// The one ignore rule, shared with the launcher fingerprint: dependencies,
+// dotfiles (.git, .DS_Store, .opendaemon, .runtime, vim swaps) and editor/log litter.
+export async function digestTree(directory, hash) {
   for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
-    if (["node_modules", ".git", ".opendaemon", ".runtime"].includes(entry.name) || /\.(?:log|tmp)$/.test(entry.name)) continue
+    if (/^(?:node_modules$|\.)|~$|^#.*#$|\.(?:log|tmp)$/.test(entry.name)) continue
     const file = path.join(directory, entry.name)
     if (entry.isDirectory()) await digestTree(file, hash)
     else if (entry.isFile()) hash.update(file).update(await readFile(file))
@@ -28,6 +34,7 @@ export async function modsDigest(base) {
 
 export async function startDaemon(base, { interval = 1000, compiler, temporaryCompiler = buildLive, autoReload = true } = {}) {
   const paths = daemonPaths(base)
+  checkSocket(paths.socket)
   await mkdir(paths.directory, { recursive: true, mode: 0o700 })
   if (!(await lstat(paths.directory)).isDirectory() || (await lstat(paths.directory)).isSymbolicLink()) throw new Error("opendaemon directory must not be a symlink")
   await chmod(paths.directory, 0o700)
@@ -41,11 +48,25 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
     if (!(await lstat(paths.socket)).isSocket()) throw new Error("Refusing to remove a non-socket daemon path")
     await unlink(paths.socket)
   } catch (error) { if (error.code !== "ENOENT") throw error }
-  const state = { pid: process.pid, startedAt: new Date().toISOString(), autoReload, revision: null, phase: "starting", restartRequired: false, restartReason: null, job: null, events: [], clients: {}, messages: [] }
+  // Read before the startup reload republishes it; old generations are collected after listen.
+  const generations = path.join(paths.directory, "generations")
+  const live = await readFile(paths.manifest, "utf8").then(text => JSON.parse(text).revision).catch(() => null)
+  // A raised flag outlives the daemon: `opendaemon restart` compiles nothing, only a rebuild does.
+  const restartFile = path.join(paths.directory, "restart.json")
+  const saved = await readFile(restartFile, "utf8").then(JSON.parse).catch(() => null)
+  const state = { pid: process.pid, startedAt: new Date().toISOString(), autoReload, revision: null, phase: "starting", restartRequired: Boolean(saved), restartReason: saved?.reason ?? null, job: null, events: [], clients: {}, messages: [] }
   const temporary = new Map()
   let temporaryBusy = false
-  let baseline = await modsDigest(base)
-  let pending = false, closed = false, checking = false, sequence = 0, worker
+  // `flagged` is the mod digest restartRequired last accounted for, so a rebuild-cleared flag is not re-raised for the same files.
+  let baseline = await modsDigest(base), flagged = baseline, restartRequiredAt = Number(saved?.at) || 0
+  let pending = false, closed = false, checking = false, sequence = 0, worker, running
+  const flag = (digest, reason) => {
+    if (digest === flagged) return
+    flagged = digest; restartRequiredAt = Date.now()
+    state.restartRequired = true; state.restartReason = reason
+    // Sync, so the record never lands out of order or after close().
+    try { writeFileSync(restartFile, JSON.stringify({ at: restartRequiredAt, reason }), { mode: 0o600 }) } catch {}
+  }
   const event = (stage, message, extra = {}) => {
     const record = { sequence: ++sequence, at: new Date().toISOString(), stage, message, ...extra }
     state.events.push(record); state.events = state.events.slice(-200)
@@ -55,18 +76,18 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
   const defaultCompiler = revision => new Promise((resolve, reject) => {
     const resultFile = path.join(paths.directory, `${revision}.result.json`)
     worker = spawn(process.execPath, [fileURLToPath(new URL("./live-build.mjs", import.meta.url)), base, paths.directory, revision, resultFile], { stdio: ["ignore", "pipe", "pipe"] })
-    let buffer = "", error = ""
+    let buffer = "", error = "", invalid
     worker.stdout.on("data", data => {
       buffer += data
       const lines = buffer.split("\n"); buffer = lines.pop()
-      for (const line of lines) { try { const update = JSON.parse(line); event(update.stage, update.message) } catch {} }
+      for (const line of lines) { try { const update = JSON.parse(line); event(update.stage, update.message); if (update.stage === "invalid") invalid = update.message } catch {} }
     })
     worker.stderr.on("data", data => { error = (error + data).slice(-2000) })
     worker.on("error", reject)
     worker.on("exit", async code => {
       worker = undefined
       try {
-        if (code !== 0) throw new Error(error.trim() || "Live compiler failed")
+        if (code !== 0) throw invalid ? safeError(invalid) : new Error(error.trim() || "Live compiler failed")
         resolve(JSON.parse(await readFile(resultFile, "utf8")))
       } catch (e) { reject(e) } finally { await unlink(resultFile).catch(() => {}) }
     })
@@ -76,27 +97,24 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
     const revision = randomUUID()
     const job = state.job = { id: revision, reason, status: "running", startedAt: new Date().toISOString() }
     event("queued", "Reload requested", { job: revision })
-    void (async () => {
+    running = (async () => {
       try {
         const manifest = await (compiler || defaultCompiler)(revision, event)
         if (closed) return
-        const currentDigest = await modsDigest(base)
         // Full source patches are compiled into the executable; never pretend
         // that swapping handler bundles updates backend or permission logic.
-        if (currentDigest !== baseline) {
-          state.restartRequired = true
-          state.restartReason = "Mod files changed. Only declared ctx-only TUI commands were reloaded; compiled source patches/backend changes need a rebuild and restart. No process was interrupted."
-        }
+        flag(await modsDigest(base), "Mod files changed. Only declared ctx-only TUI commands were reloaded; compiled source patches/backend changes need infiniteoc rebuild and a UI restart. No process was interrupted.")
         const tmp = `${paths.manifest}.${revision}.tmp`
         await writeFile(tmp, JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600 })
         await rename(tmp, paths.manifest)
         state.revision = manifest.revision
         job.status = "published"; job.finishedAt = new Date().toISOString()
         event("published", "Generation published; waiting for connected UI acknowledgements", { revision: manifest.revision })
-      } catch {
+      } catch (error) {
         job.status = "failed"; job.finishedAt = new Date().toISOString()
-        // Error excerpts may contain source secrets; publish only a safe summary.
-        event("failed", "Live reload failed. Last working generation retained; check mod syntax, unique commands and ctx-only imports.")
+        // Error excerpts may contain source secrets; publish only a safe summary or a framework-tagged reason.
+        if (error?.safe) job.detail = error.message
+        event("failed", job.detail ? `Live reload failed: ${job.detail}. Last working generation retained.` : "Live reload failed. Last working generation retained; check mod syntax, unique commands and ctx-only imports.")
       } finally {
         if (pending && !closed) { pending = false; reload("coalesced file changes") }
       }
@@ -115,7 +133,16 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
         if (!body || typeof body !== "object" || Array.isArray(body)) { send(400, { error: "Expected object" }); return }
       }
       if (request.method === "GET" && url.pathname === "/status") {
-        send(200, { ...state, messages: state.messages.map(({ text, ...metadata }) => metadata), clients: Object.fromEntries(Object.entries(state.clients).filter(([, client]) => Date.now() - client.seenAt < 15000)) }); return
+        const clients = Object.fromEntries(Object.entries(state.clients).filter(([, client]) => Date.now() - client.seenAt < 15000))
+        // A rebuild that finished after the flag was raised compiled those changes, but UIs connected since before it run the old binary.
+        // ponytail: build.json mtime and first-seen are proxies: an edit made mid-rebuild clears early, and a daemon restart forgets
+        // which UIs predate the rebuild; compare a mods digest/build start in build.json and a UI start time in /poll if those appear.
+        const built = state.restartRequired && await stat(path.join(base, ".runtime/build.json")).catch(() => null)
+        if (built && built.mtimeMs > restartRequiredAt && Object.values(clients).every(client => client.firstSeenAt > built.mtimeMs)) {
+          state.restartRequired = false; state.restartReason = null
+          try { rmSync(restartFile, { force: true }) } catch {}
+        }
+        send(200, { ...state, messages: state.messages.map(({ text, ...metadata }) => metadata), clients }); return
       }
       if (request.method === "POST" && url.pathname === "/reload") { send(202, reload("manual")); return }
       if (request.method === "POST" && url.pathname === "/temporary") {
@@ -129,14 +156,18 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
           send(200, { client, status: "cleared" }); return
         }
         let command
-        try { command = validateCommand("temporary", body.command) } catch { send(400, { error: "Invalid temporary command descriptor" }); return }
+        // validateCommand messages are static and never echo the submitted input.
+        try { command = validateCommand("temporary", body.command) } catch (error) { send(400, { error: error.message }); return }
         if (command.source.length > 32000 || /(?:from\s*|import\s*\()["'](?:solid-js|@opentui|@opencode)/.test(command.source)) { send(400, { error: "Temporary command must be a bounded ctx-only handler" }); return }
         const existing = temporary.get(client)?.commands || []
         if (existing.length >= 20 && !existing.some(item => item.slash === command.slash)) { send(400, { error: "At most 20 temporary commands per UI" }); return }
         temporaryBusy = true
         try {
           const revision = randomUUID()
-          const generation = await temporaryCompiler(base, paths.directory, revision, (stage, message) => event(stage, message), [command])
+          let failure
+          const generation = await temporaryCompiler(base, paths.directory, revision, (stage, message) => event(stage, message), [command]).catch(error => { if (error?.safe) failure = error.message; return null })
+          // Compiler errors can echo source literals; report a static summary or a framework-tagged reason only.
+          if (!generation) { event("temporary-failed", "Temporary command failed to build; previous overlay retained", { client }); send(400, { error: `${failure ?? "Temporary command failed to build; check syntax, a slash not taken by a built-in command, and ctx-only imports"}. The previous overlay is retained` }); return }
           if (body.run === true) {
             state.messages = state.messages.filter(item => Date.now() - item.createdAt < 30000)
             if (state.messages.length >= 100) { send(429, { error: "Message queue full" }); return }
@@ -170,12 +201,12 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
         if (typeof body.client !== "string" || !/^[a-zA-Z0-9_-]{1,100}$/.test(body.client) || (body.revision !== undefined && body.revision !== null && typeof body.revision !== "string")) { send(400, { error: "Invalid client" }); return }
         if (!state.clients[body.client] && Object.keys(state.clients).length >= 100) { send(429, { error: "Too many UI clients" }); return }
         const previous = state.clients[body.client]
-        state.clients[body.client] = { seenAt: Date.now(), revision: body.revision ?? null, temporaryRevision: body.temporaryRevision ?? null, scripting: body.scripting === true }
+        state.clients[body.client] = { seenAt: Date.now(), firstSeenAt: previous?.firstSeenAt ?? Date.now(), revision: body.revision ?? null, temporaryRevision: body.temporaryRevision ?? null, scripting: body.scripting === true }
         if (body.revision === state.revision && state.revision && previous?.revision !== body.revision) event("applied", "UI acknowledged live generation", { client: body.client, revision: body.revision })
         const messages = state.messages.filter(item => Date.now() - item.createdAt < 30000 && (!item.client || item.client === body.client) && !item.acknowledgements[body.client])
         const overlay = temporary.get(body.client)
         if (overlay && body.temporaryRevision === overlay.revision && previous?.temporaryRevision !== overlay.revision) event("temporary-applied", "UI acknowledged temporary commands", { client: body.client, revision: overlay.revision })
-        send(200, { revision: state.revision, messages, temporary: overlay || { revision: null, commands: [] } }); return
+        send(200, { revision: state.revision, messages, temporary: overlay || { revision: null, commands: [] }, job: state.job ? { id: state.job.id, status: state.job.status, reason: state.job.reason, detail: state.job.detail } : null }); return
       }
       if (request.method === "POST" && url.pathname === "/ack") {
         const message = state.messages.find(item => item.id === body.id)
@@ -190,13 +221,25 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
   server.requestTimeout = 10000
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(paths.socket, resolve) })
   await chmod(paths.socket, 0o600)
+  // ponytail: generations are collected only at startup, so a long-lived daemon still grows until restarted.
+  // Not awaited, so a large backlog never delays startup; never through a symlinked generations directory.
+  const collect = (async () => {
+    if (!(await lstat(generations).catch(() => null))?.isDirectory()) return
+    for (const name of await readdir(generations).catch(() => [])) {
+      const generation = path.join(generations, name)
+      try { if (name !== live && Date.now() - (await lstat(generation)).mtimeMs > 86400000) await rm(generation, { recursive: true, force: true }) } catch {}
+    }
+  })()
   const poll = setInterval(async () => {
-    for (const [client] of temporary) if (!state.clients[client] || Date.now() - state.clients[client].seenAt > 60000) temporary.delete(client)
+    // Pruning frees the 100-client cap for new UIs; it runs even with auto reload off.
+    for (const [client, { seenAt }] of Object.entries(state.clients)) if (Date.now() - seenAt > 60000) delete state.clients[client]
+    for (const [client] of temporary) if (!state.clients[client]) temporary.delete(client)
     if (checking || closed || !state.autoReload) return
     checking = true
     try {
       const next = await modsDigest(base)
-      if (next !== baseline) { baseline = next; state.restartRequired = true; state.restartReason = "Local mod changes detected; live commands reload automatically, compiled patches still require restart."; reload("local mod files changed") }
+      // Re-check after the await: auto may have been disabled (or the daemon closed) meanwhile.
+      if (next !== baseline && state.autoReload && !closed) { baseline = next; flag(next, "Local mod changes detected; live commands reload automatically, compiled patches still need infiniteoc rebuild and a UI restart."); reload("local mod files changed") }
     } catch { event("watch-error", "Cannot inspect configured mods; last working generation retained") }
     finally { checking = false }
   }, interval)
@@ -206,21 +249,28 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
     if (worker) { worker.kill("SIGTERM"); await new Promise(resolve => worker.once("exit", resolve)) }
     server.closeAllConnections()
     await new Promise(resolve => server.close(resolve))
+    // Resolve only once nothing writes into .opendaemon anymore (in-flight publish, generation cleanup).
+    await Promise.all([running, collect])
   } }
 }
 
 export async function ensureDaemon(base) {
   const paths = daemonPaths(base)
+  checkSocket(paths.socket)
   try { await daemonRequest(paths.socket, "GET", "/status"); return paths } catch (error) { if (!["ENOENT", "ECONNREFUSED"].includes(error.code)) throw error }
   await mkdir(paths.directory, { recursive: true, mode: 0o700 })
-  const child = spawn(process.execPath, [fileURLToPath(new URL("../bin/opendaemon.mjs", import.meta.url)), "serve", "--home", base], { detached: true, stdio: "ignore" })
-  let launchError
-  child.on("error", error => { launchError = error })
+  // cwd: base, so the detached daemon never pins the user's project directory.
+  const child = spawn(process.execPath, [fileURLToPath(new URL("../bin/opendaemon.mjs", import.meta.url)), "serve", "--home", base], { cwd: base, detached: true, stdio: "ignore" })
+  let failure
+  child.on("error", error => { failure = error })
+  child.on("exit", () => { failure ??= new Error("opendaemon exited during startup; run opendaemon serve to see why") })
   child.unref()
   for (let attempt = 0; attempt < 100; attempt++) {
-    if (launchError) throw launchError
     await new Promise(resolve => setTimeout(resolve, 100))
+    const exited = failure
     try { await daemonRequest(paths.socket, "GET", "/status"); return paths } catch {}
+    // That probe ran after the child exited: a racing daemon may have won; otherwise fail now, not after 10s.
+    if (exited) throw exited
   }
   throw new Error("opendaemon did not start; use opendaemon serve to inspect startup")
 }

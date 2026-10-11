@@ -108,7 +108,7 @@ export async function applyMods(mods, root, options = {}, registerOnly = false) 
       await writeFile(full, next)
       changes.push({ mod: "infiniteoc.features", path, action: "patch" })
     },
-  })
+  }, resolve(root, "packages/tui/src")) // every built-in slash, including other mods' patches
   return { changes, featureSources: commands, features: commands.map(({ source, ...metadata }) => metadata), async emit(event, context) {
     for (const hook of hooks.get(event) ?? []) await hook(context)
   } }

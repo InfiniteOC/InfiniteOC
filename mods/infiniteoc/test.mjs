@@ -27,7 +27,7 @@ async function apply(reducedMotion = false, files = new Map()) {
 
 test("applies against local source, preserving all permission-rule code", async () => {
   const files = await apply()
-  assert.equal(files.size, 14)
+  assert.equal(files.size, 25)
   const file = "packages/core/src/plugin/agent.ts"
   const original = await readFile(path.join(root, file), "utf8")
   const rules = (source) => source.split("\n").filter((line) => /\.permissions|action:|resource:|effect:|Permission\.merge/.test(line))
@@ -44,7 +44,8 @@ test("applies against local source, preserving all permission-rule code", async 
   assert.match(config, /agent\.hidden = true/)
   assert.match(config, /editor.default\(Agent.defaultID\)/)
   assert.match(config, /current.id !== Agent.defaultID && current.mode !== "subagent"/)
-  assert.match(config, /agent.color = Agent.Color.make\("#c084fc"\)/)
+  // The agent color comes from the theme (readable in light mode) and user config is respected.
+  assert.doesNotMatch(config, /Agent\.Color\.make\("#c084fc"\)/)
   assert.match(files.get("packages/tui/src/component/prompt/index.tsx"), /agentLabel: agent \? agent.name : undefined/)
   assert.match(files.get("packages/tui/src/component/dialog-agent.tsx"), /title: item.name/)
   assert.match(files.get("packages/tui/src/mini/footer.command.tsx"), /display: agent.name/)
@@ -63,10 +64,48 @@ test("applies against local source, preserving all permission-rule code", async 
 })
 
 test("reduced motion disables animation and cleanup exists", async () => {
+  const logo = (await apply(true)).get("packages/tui/src/component/logo.tsx")
+  // reducedMotion only sets the default of the one runtime Animations switch.
   const files = await apply(true)
-  const logo = files.get("packages/tui/src/component/logo.tsx")
-  assert.match(logo, /if \(true\) return/)
-  assert.match(logo, /onCleanup\(\(\) => clearInterval\(timer\)\)/)
+  assert.match(files.get("packages/tui/src/config/index.tsx"), /animations: input\.animations \?\? false,/)
+  assert.match((await apply(false)).get("packages/tui/src/config/index.tsx"), /animations: input\.animations \?\? true,/)
+  assert.match(logo, /motion=\{config\.animations \?\? true\}/)
+  assert.match(logo, /Math\.min\(deltaTime, 50\)/)
+  assert.match(logo, /wrapMode="none"/) // art must clip, never word-wrap into scrambled half-blocks
+  assert.doesNotMatch(logo, /setTimeout|setInterval/) // one intro per process, an idle Home never animates
+  assert.match(logo, /if \(value && !introPlayed\)/)
+})
+
+test("wordmark data and resume hints point at InfiniteOC", async () => {
+  const files = await apply()
+  const data = files.get("packages/tui/src/logo.ts")
+  assert.match(data, /export const go = \{/) // short mark used by the mini splash is untouched
+  const { logo } = await import(`data:text/javascript,${encodeURIComponent(data)}`)
+  for (const word of [logo.left, logo.right]) {
+    assert.equal(word.length, 4)
+    assert.equal(new Set(word.map(line => [...line].length)).size, 1)
+  }
+  assert.ok([...logo.left[0]].length + 1 + [...logo.right[0]].length < 44, "fits the upstream wide-logo breakpoint")
+  assert.match(files.get("packages/tui/src/util/presentation.ts"), /infiniteoc -s \$\{input\.sessionID\}/)
+  assert.match(files.get("packages/tui/src/mini/splash.ts"), /`infiniteoc mini -s \$\{meta\.session_id\}`/)
+  const toast = files.get("packages/tui/src/ui/toast.tsx")
+  assert.equal(toast.match(/<FadeInText /g).length, 3)
+  assert.match(toast, /<Show when=\{toast\.currentToast\} keyed>/)
+  assert.match(toast, /toast=\{current\}/)
+  // Solid store sets merge objects: clear first so a replacement cannot inherit title/action.
+  assert.match(toast, /setStore\("currentToast", null\)\n      setStore\("currentToast", toastOptions\)/)
+  assert.match(toast, /setStore\("currentToast", null\)\n    if \(next\) setStore\("currentToast", next\)/)
+  assert.match(files.get("packages/tui/src/feature-plugins/system/stats.tsx"), /infiniteoc \/ stats/)
+  const updater = files.get("packages/cli/src/services/updater.ts")
+  assert.equal(updater.match(/if \(OPENCODE_CHANNEL === "infiniteoc"\)/g).length, 3) // inspect, check, upgrade
+  assert.match(updater, /return yield\* Effect\.fail\(new Error\(INFINITEOC_PINNED\)\)/)
+  assert.match(files.get("packages/cli/src/commands/handlers/uninstall.ts"), /if \(OPENCODE_CHANNEL === "infiniteoc"\) return yield\* Effect\.fail/)
+  assert.equal(JSON.parse(files.get("packages/tui/src/theme/assets/v2/infiniteoc.json")).dark.categorical[0], "purple")
+  assert.match(files.get("packages/tui/src/routes/session/index.tsx"), /\?\.name \?\? Locale\.titlecase\(props\.message\.agent\)/)
+  assert.equal(files.get("packages/tui/src/app.tsx").match(/setTerminalTitle\("InfiniteOC"\)/g).length, 2)
+  const dialog = files.get("packages/tui/src/ui/dialog.tsx")
+  assert.match(dialog, /enabled: \(\) => config\.data\.animations \?\? true, transition: tween\(\{ duration: 0\.12 \}\)/)
+  assert.match(dialog, /RGBA\.fromInts\(0, 0, 0, Math\.round\(dim\.value\(\)\.alpha\)\)/)
 })
 
 test("configured Quick default resolves to one visible InfiniteOC primary without changing permissions", async () => {
@@ -91,7 +130,7 @@ test("configured Quick default resolves to one visible InfiniteOC primary withou
   const finalize = new Function("editor", "Agent", block)
   finalize(editor, Agent)
   assert.equal(selected, "build")
-  assert.equal(agents[0].color, "#c084fc")
+  assert.equal(agents[0].color, undefined)
   assert.deepEqual(agents.filter(agent => agent.mode !== "subagent" && !agent.hidden).map(agent => agent.name), ["InfiniteOC"])
   assert.equal(agents.find(agent => agent.id === "explore").hidden, false)
   assert.deepEqual(agents.map(agent => agent.permissions), before)

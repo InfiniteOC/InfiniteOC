@@ -21,7 +21,10 @@ export function validateTraffic(input = {}) {
     try { url = new URL(result.proxyURL) } catch { throw new Error("Proxy URL must be a valid HTTP(S) or SOCKS5 URL") }
     if (!["http:", "https:", "socks5:", "socks5h:"].includes(url.protocol) || !url.hostname || url.hash || url.search || (url.pathname !== "" && url.pathname !== "/")) throw new Error("Unsupported proxy URL")
   }
-  if (typeof result.socksHost !== "string" || !result.socksHost || /[\s/@?#]/.test(result.socksHost)) throw new Error("Invalid SOCKS host")
+  const host = result.socksHost
+  // Only Tor reads the host, with this rule and URL (src/traffic.mjs applyTraffic): a host it rejects would block
+  // the next launch. Other modes keep the loose check, so files older versions saved still load.
+  if (typeof host !== "string" || !host || /[\s/@?#]/.test(host) || (result.mode === "tor" && (!/^[a-z0-9.:[\]-]+$/i.test(host) || !URL.canParse(`socks5h://${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:9050`)))) throw new Error("SOCKS host must use letters, digits, dots, hyphens or an IPv6 address, without a port")
   result.socksPort = Number(result.socksPort)
   if (!Number.isInteger(result.socksPort) || result.socksPort < 1 || result.socksPort > 65535) throw new Error("SOCKS port must be 1–65535")
   if (/[\r\n\0]/.test(result.noProxy)) throw new Error("Invalid no-proxy list")

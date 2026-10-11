@@ -2,18 +2,20 @@
 
 A source-backed OpenCode launcher and mod framework, pinned to **OpenCode v2.0.21**. It copies upstream into a disposable worktree, applies trusted JavaScript source mods, builds a separate CLI/TUI binary, and launches it without touching your installed stock OpenCode.
 
-The bundled mod adds a purple/pink theme, an animated terminal logo, and InfiniteOC as the default primary agent. No permission rules or approval requirements are weakened. Details: [mods/infiniteoc/README.md](mods/infiniteoc/README.md).
+Enabled mods: `infiniteoc` (purple/pink theme, animated wordmark, InfiniteOC as the default primary agent, settings UI, pinned-build guards; [README](mods/infiniteoc/README.md)), `clearall` ([/clearall](mods/clearall/README.md)), `health` ([/health](mods/health/README.md)) and `deep-deliberation` (adds planning guidance to the agent prompt). No permission rules or approval requirements are weakened.
 
 ## Requirements
 
-Linux x64, Node.js 22+, npm, Git, and provider credentials. First setup also needs internet access and disk space for the upstream source, dependencies, and build.
+Linux (glibc) or macOS, x64 or arm64; musl/Alpine is not supported. Node.js 22+, npm, Git, and provider credentials. First setup also needs internet access and disk space for the upstream source, dependencies (Bun is installed locally under `.tools`), and the build. The checkout can live anywhere short enough for its `.opendaemon/control.sock` path (104 bytes on macOS, 107 on Linux; `doctor` checks it), else live reload is off.
 
 ## Quickstart
 
+From the checkout root:
+
 ```sh
-ROOT=/path/to/InfiniteOC  # absolute path of your checkout
-node "$ROOT/bin/infiniteoc.mjs" setup
-node "$ROOT/bin/infiniteoc.mjs" /path/to/project
+npm link                       # optional: puts infiniteoc and opendaemon on PATH
+infiniteoc setup               # without npm link: node bin/infiniteoc.mjs setup
+infiniteoc /path/to/project
 ```
 
 ## Commands
@@ -23,14 +25,25 @@ node "$ROOT/bin/infiniteoc.mjs" /path/to/project
 | `setup` | Prepare and build, reusing a cached binary when possible. |
 | `rebuild` | Recreate the worktree from pristine upstream, reapply mods, rebuild. |
 | `mods` | List configured mods (importing them — only enable trusted mods). |
-| `doctor` | Check pinned source and tools; may download them. |
+| `doctor [--json]` | Read-only ✓/✗ checks (platform, tools, upstream, build, daemon, settings, Tor/SOCKS); exits 1 on any ✗. |
+| `feature new\|check\|enable\|disable ID` | Scaffold, check, or add/remove `mods/ID` in `infiniteoc.json` (enable checks first; both keep `infiniteoc.json.bak`). See [FEATURES.md](FEATURES.md). |
+| `[directory/args]` | Launch (private server unless `--server URL`). |
 | `-- [args]` | Forward arguments to OpenCode. |
 
 `npm run setup`, `npm start -- [args]`, and `npm test` also work from the repo root. Never edit `.runtime/opencode` directly — rebuild deletes that tree; edit mods instead.
 
+## Builds and launches
+
+- A launch rebuilds only when `infiniteoc.json`, the framework or a mod changed; the build prints its reason, timed `[1/4]`…`[4/4]` steps and `Ready in Ns`.
+- `.runtime/prepare.lock` heals itself: a dead owner's lock (or a pid-less one older than 30 minutes) is reclaimed, a second launch waits and reuses the fresh build, and Ctrl+C removes it.
+- Each successful build is kept in `.runtime/last-good`. If a build or mod fails at launch, that build starts instead, without mod hooks; fix the mod, then `infiniteoc rebuild`.
+- That fallback, an unavailable opendaemon, or an unreachable Tor/SOCKS listener never stops a launch: it is printed and shown again as a TUI warning toast.
+- The build is pinned: no update checks, and the launcher and binary refuse `upgrade`/`update`/`uninstall`, which would act on stock OpenCode and the sessions, credentials and config it shares. Update with `git pull` and `infiniteoc rebuild`; remove InfiniteOC by deleting the checkout. Exit hints resume with `infiniteoc -s SESSION_ID`.
+- After a crash signal the launcher restores the terminal (screen, cursor, mouse and keyboard modes).
+
 ## Configuration
 
-`infiniteoc.json` lives beside this README:
+`infiniteoc.json` lives at the checkout root:
 
 ```json
 {
@@ -40,22 +53,21 @@ node "$ROOT/bin/infiniteoc.mjs" /path/to/project
 }
 ```
 
-Mod paths are relative to the repo root and order matters. See [AGENTS.md](AGENTS.md) for the agent entry point.
+Mod paths are relative to the checkout root and order matters. `reducedMotion: true` makes Animations default to off (applied at build time); an Animations choice made in the TUI still wins. Traffic (proxy/Tor) and custom providers live under `/settings` → InfiniteOC Settings; see [mods/infiniteoc/settings/README.md](mods/infiniteoc/settings/README.md).
 
-## Features and skills
+## Features, live reload and skills
 
-- New TUI slash commands: `node bin/infiniteoc.mjs feature new my-feature` — see [FEATURES.md](FEATURES.md).
-- Live ctx-only command reload without restart: see [OPENDAEMON.md](OPENDAEMON.md).
+- New TUI slash commands: `infiniteoc feature new my-feature`; see [FEATURES.md](FEATURES.md). Agents start at [AGENTS.md](AGENTS.md).
+- Live command reload without restarting: `opendaemon` (every launch starts it) and `/live` in the TUI; see [OPENDAEMON.md](OPENDAEMON.md).
 - Bundled skills live in [skills/](skills/); mod API and safety rules: [skills/infiniteoc-mod-development/SKILL.md](skills/infiniteoc-mod-development/SKILL.md).
-- Settings UI (`/settings` → InfiniteOC Settings) covers traffic/proxy and provider setup — see [mods/infiniteoc/settings/README.md](mods/infiniteoc/settings/README.md).
 
 ## Tests
 
 ```sh
-npm test
+npm test    # node --test test/*.test.mjs mods/*/test.mjs
 ```
 
-Framework tests need only Node built-ins. Compiled-binary and interactive-TUI behavior need separate build/manual validation — see [VERIFICATION.md](VERIFICATION.md).
+Tests use Node built-ins, temporary directories and the pinned `.upstream` checkout that `setup` clones; a few skip on Node versions without TypeScript type stripping. Compiled-binary and interactive-TUI behavior need a rebuild and a real terminal — see [VERIFICATION.md](VERIFICATION.md).
 
 ## Trust boundary
 

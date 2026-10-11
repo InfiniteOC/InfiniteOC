@@ -1,8 +1,8 @@
 # Shared settings, providers and traffic
 
-Authority: `$HOME/InfiniteOC/mods/infiniteoc/settings/index.mjs`,
-`settings-store.mjs`, `settings-store.ts`, `dialog-infiniteoc.tsx`,
-`src/traffic.mjs` and the pinned core config/SDK code.
+Authority (relative to the checkout): `mods/infiniteoc/settings/index.mjs`,
+`settings-store.mjs`, `settings-store.ts`, `dialog-infiniteoc.tsx`, its
+`README.md`, `src/traffic.mjs` and the pinned core config/SDK code.
 
 `index.mjs` exports `async installSettings(api)`; the main InfiniteOC mod calls
 it during setup. It writes the dialog/store files and patches `dialog-config.tsx`
@@ -20,9 +20,12 @@ default is `~/.config/infiniteoc/settings.json`. Provider config honors
 `OPENCODE_CONFIG`, otherwise the XDG/default OpenCode strict JSON path.
 
 Traffic modes: inherit, direct, proxy, tor. Keep `validateTraffic` authoritative
-and preserve unknown settings fields when saving. Changes take effect on launcher
-restart; this is not all-process anonymity or guaranteed Tor routing for every
-subprocess. Never display credential-bearing proxy URLs or secret environment
+and preserve unknown settings fields when saving; in tor mode it applies the
+launcher's own SOCKS-host rule, so a saved host never blocks the next launch.
+Changes take effect on launcher restart; this is not all-process anonymity or
+guaranteed Tor routing for every subprocess. Launch probes a Tor/SOCKS listener
+and only warns (stderr and a TUI toast) when it is unreachable; `doctor` reports
+it too. Never display credential-bearing proxy URLs or secret environment
 values. Do not add a second traffic store or silently mutate global process.env.
 
 Protocol/package mapping in the implemented helper:
@@ -50,3 +53,10 @@ uses custom masked key capture; inspect it rather than inventing a password prop
 or briefly rendering the raw key. Test typing/paste/editing without exposing the
 secret. Provider/traffic/config edits are not temporary script overlays and
 must not be described as automatically reversible on restart.
+
+Dialog behavior to preserve: the home rows show the current traffic route (proxy
+shows only the URL host) and custom providers; the provider wizard has five
+numbered steps, each validated on Enter; errors and the post-save notice stay
+inside the dialog (toasts render under its backdrop) and show only the store's
+static messages; Esc returns to the settings home except while one shared save
+runs; deletion needs `DELETE` typed exactly.

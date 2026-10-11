@@ -1,5 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
+import { spawnSync } from "node:child_process"
 import { mkdtemp, mkdir, writeFile, readFile, cp, access, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -35,6 +36,21 @@ test("checker applies ordered mods in a disposable tree without mutating upstrea
     await writeFile(join(dir, ".upstream/fixture.txt"), "missing\n")
     await assert.rejects(checkMod(join(skill, "examples/patch-fixture.mjs"), dir), /source anchor/)
     assert.equal(await readFile(join(dir, ".upstream/fixture.txt"), "utf8"), "missing\n")
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+// Regression: the default checkout was the literal "$HOME/InfiniteOC", so every run without one failed with ENOENT.
+test("checker CLI defaults to its own checkout from any working directory", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "infiniteoc-skill-test-"))
+  try {
+    const file = join(dir, "x.mjs")
+    await writeFile(file, "export default null")
+    const run = spawnSync(process.execPath, [join(skill, "scripts/check-mod.mjs"), file], { cwd: tmpdir(), encoding: "utf8" })
+    assert.equal(run.status, 1, run.stderr)
+    assert.match(run.stderr, /Invalid mod/)
+    assert.doesNotMatch(run.stderr, /ENOENT/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

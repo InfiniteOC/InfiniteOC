@@ -9,7 +9,7 @@ Build the requested mod, not just a proposal. Respect explicit plan-only request
 
 ## Locate and inspect
 
-The current installation is `$HOME/InfiniteOC`. If moved, locate its `infiniteoc.json`, `src/mod-loader.mjs`, and `bin/infiniteoc.mjs`; do not assume the current working directory is the launcher root.
+Paths in this skill are relative to the InfiniteOC checkout, which can live anywhere: the directory holding `infiniteoc.json`, `src/mod-loader.mjs`, and `bin/infiniteoc.mjs`, two levels above this skill's folder (`infiniteoc help` prints its `infiniteoc.json` path when linked). Do not assume the current working directory is the checkout; run commands from its root or use absolute paths.
 
 Read these together, using targeted ranges where possible:
 
@@ -27,7 +27,7 @@ Read these together, using targeted ranges where possible:
 
 1. Use an existing OpenCode configuration option when it fully solves the request; distinguish configuration from a source mod.
 2. Use a launch hook for launcher args/environment changes.
-3. For local TUI slash commands use `api.tui.command` and typed `FeatureContext`; read `$HOME/InfiniteOC/FEATURES.md`. Scaffold with `infiniteoc feature new ID`. Tabs are client UI state, not stored sessions: close/hide must not interrupt tasks, delete sessions or submit prompts.
+3. For local TUI slash commands use `api.tui.command` and typed `FeatureContext`; read `FEATURES.md`. Scaffold with `infiniteoc feature new ID`. Ask with `ctx.ui` dialogs: toast actions are mouse-only. Tabs are client UI state, not stored sessions: close/hide must not interrupt tasks, delete sessions or submit prompts.
 4. For live testing use `opendaemon script` (one invocation) or `temporary` (per-UI command overlay). For permanent ctx-only command updates use daemon reload/auto watching. Read [references/live-development.md](references/live-development.md) first.
 5. For configuration UI use the existing settings integration and shared stores; read [references/settings.md](references/settings.md). Traffic/launcher changes require restart.
 6. Use `api.patchExact` for unique-anchor internal changes, `api.patch` for transforms, or `api.write` for new source/assets.
@@ -54,17 +54,17 @@ Batch independent reads/searches; delegate bounded implementation or tests with 
 
 1. Add Node `node:test` regression tests using disposable source copies. Cover successful change, missing/duplicate anchors, preservation of unrelated configuration, and hooks on cached launches where relevant.
 2. Run syntax checks and disposable application, then the existing test suite. Never test patches against the live pristine checkout.
-3. If authorized, enable the mod by appending its relative path after backing up `infiniteoc.json`. Never enable the example smoke fixture.
-4. For supported live commands, reload and wait for the target UI acknowledgement. For compiled changes, run `node $HOME/InfiniteOC/bin/infiniteoc.mjs rebuild` only at a safe boundary: it replaces the generated tree and is not guaranteed safe during active agent work. Wait for exit and inspect the build log and `.runtime/build.json`. Do not delete an active `prepare.lock`; first determine whether its process is alive.
+3. If authorized, enable it with `node bin/infiniteoc.mjs feature enable ID` for `mods/ID` (checks registration and slash collisions, appends `./mods/ID/index.mjs`, keeps `infiniteoc.json.bak`), or append its relative path after backing up `infiniteoc.json`. Never enable the example smoke fixture.
+4. For supported live commands, reload and wait for the target UI acknowledgement. For compiled changes, run `node bin/infiniteoc.mjs rebuild` only at a safe boundary: it replaces the generated tree and is not guaranteed safe during active agent work. Wait for exit (`[1/4]`…`[4/4]`, then `Ready in Ns`) and inspect `.runtime/build.json`. Do not delete `.runtime/prepare.lock` by hand: it records its owner's pid, a dead owner's lock is reclaimed, and a waiting build reuses the fresh result. A launch whose build fails runs `.runtime/last-good` without mod hooks; that fallback is not success.
 5. Smoke-test the actual changed behavior: render/interact with TUI changes in a terminal; check server APIs for registry/config changes; check args/environment via an isolated child for hooks. A clean build alone is not functional proof. Do not send paid model requests or change credentials just to test UI.
-6. Explain what changed, installed mod path/order, verified checks, limitations, and restart requirements. Rollback: restore the backed-up mods list or remove only the added entry, then rebuild. Generated runtime files are disposable; user configuration is not.
+6. Explain what changed, installed mod path/order, verified checks, limitations, and restart requirements. Rollback: `feature disable ID`, restore the backed-up mods list, or remove only the added entry, then rebuild. Generated runtime files are disposable; user configuration is not.
 
 ## Live-operation hard rules
 
-- `CLIENT` is a placeholder, never a literal command argument. Copy a current ID from `opendaemon status`; temporary scripting needs `scripting: true`.
+- `CLIENT` is a placeholder, never a literal command argument. Inside the target UI's own terminal or agent omit it (it defaults to that UI); otherwise copy a current ID from `/live` or `opendaemon status`. Temporary scripting needs `scripting: true`.
 - A queued/published result is not proof of UI execution. Check applied/failed acknowledgements; messages expire after 30 seconds.
-- `Unknown opendaemon operation` can mean an old daemon process, not bad script syntax. Check daemon and UI separately; source edits alone do not update resident infrastructure. Restart only the verified daemon PID when needed, never wildcard-kill or restart the user's agent to demonstrate a notification.
+- `Unknown opendaemon operation` can mean an old daemon process, not bad script syntax. Check daemon and UI separately; source edits alone do not update resident infrastructure. When needed, `opendaemon restart` signals only the pid the daemon reports; UIs and agents keep running and reconnect. Never wildcard-kill or restart the user's agent to demonstrate a notification.
 - Scripts are trusted local code, not sandboxed. Temporary registration disappears after UI restart; persistent script side effects do not automatically roll back. Never promise arbitrary source hot-patching or reversible file/session changes.
 - Live commands retain in-flight handler functions; do not cancel model tasks, submit agent prompts, or delete history to manipulate tabs. Auto-update watches trusted local files, not remote downloads.
 
-Compiled source mods require build/restart; declared ctx-only TUI handlers can reload through an already-installed live loader. New loader/backend/tool infrastructure needs a safe initial update/restart. Linux x64 is the current launcher-supported target. Confirm version and capability from local files on each task.
+Compiled source mods require build/restart; declared ctx-only TUI handlers can reload through an already-installed live loader. New loader/backend/tool infrastructure needs a safe initial update/restart. The launcher supports Linux (glibc) and macOS on x64/arm64; musl is not supported. Confirm version and capability from local files on each task.

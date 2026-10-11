@@ -78,6 +78,16 @@ export async function connectSocks(proxy, hostname, port, timeout = 15000) {
   }
 }
 
+// Launch preflight: can a SOCKS server be reached at all? Connect only; false instead of throwing.
+export function probeSocks(host, port, timeout = 1500) {
+  return new Promise(resolve => {
+    try {
+      const socket = net.connect({ host: host.replace(/^\[|\]$/g, ""), port, timeout }, () => { socket.destroy(); resolve(true) })
+      socket.on("timeout", () => { socket.destroy(); resolve(false) }).on("error", () => resolve(false))
+    } catch { resolve(false) }
+  })
+}
+
 export async function createSocksBridge(proxyURL) {
   const proxy = new URL(proxyURL)
   if (!["socks5:", "socks5h:"].includes(proxy.protocol)) throw new Error("SOCKS5 proxy URL required")
@@ -175,5 +185,6 @@ export async function applyTraffic(traffic = {}, inherited = process.env) {
   for (const key of ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "WS_PROXY", "WSS_PROXY", "http_proxy", "https_proxy", "all_proxy", "ws_proxy", "wss_proxy"]) env[key] = url
   env.NO_PROXY = [localBypass, traffic.noProxy].filter(Boolean).join(",")
   env.no_proxy = env.NO_PROXY
-  return { env, close: () => bridge ? bridge.close() : Promise.resolve() }
+  // host:port only, never the credentials a proxy URL may carry.
+  return { env, socks: bridge && { host: proxy.hostname, port: Number(proxy.port || 1080) }, close: () => bridge ? bridge.close() : Promise.resolve() }
 }

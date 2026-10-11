@@ -8,3 +8,4 @@ backups/
 *.bak*
 *.backup*
 **/.*-backup-*/
+.DS_Store

@@ -39,6 +39,8 @@ export default {
     }
     // Warning yellow is a safety/status signal, not a branding accent.
     theme.light.text.feedback.warning.base = "#a16207"
+    // Agent colors and /stats use categorical[0]; dark mode otherwise inherits blue-first from base.
+    theme.dark.categorical = ["purple", "blue", "green", "orange", "red"]
     await api.write("packages/tui/src/theme/assets/v2/infiniteoc.json", JSON.stringify(theme, null, 2) + "\n")
     await api.patch("packages/tui/src/theme/index.ts", (source) => {
       source = replace(source, 'import opencode from "./assets/v2/opencode.json" with { type: "json" }', 'import opencode from "./assets/v2/opencode.json" with { type: "json" }\nimport infiniteoc from "./assets/v2/infiniteoc.json" with { type: "json" }')
@@ -64,7 +66,6 @@ export default {
       const build = editor.get(Agent.defaultID)
       if (build) editor.update(Agent.defaultID, (agent) => {
         agent.name = Agent.Name.make("InfiniteOC")
-        agent.color = Agent.Color.make("#c084fc")
         const instruction = ${JSON.stringify(instruction)}
         if (!agent.system?.includes("[InfiniteOC unified workflow]")) {
           agent.system = [agent.system, instruction].filter(Boolean).join("\\n\\n")
@@ -90,52 +91,86 @@ export default {
       replace(source, 'title: item.id,', 'title: item.name,'))
     await api.patch("packages/tui/src/mini/footer.command.tsx", (source) =>
       replace(source, 'display: agent.id,', 'display: agent.name,'))
-    await api.write("packages/tui/src/component/logo.tsx", logoSource(Boolean(api.options?.reducedMotion)))
+    await api.write("packages/tui/src/component/logo.tsx", await readFile(new URL("./logo.tsx", import.meta.url), "utf8"))
+    // options.reducedMotion is the default of the one runtime Animations switch (logo, toasts,
+    // spinners, tab pulses); the TUI config, /settings and "Disable animations" still override it.
+    // Resolving it here also makes /settings show the effective value instead of "off".
+    await api.patch("packages/tui/src/config/index.tsx", (source) =>
+      replace(source, "    mouse: input.mouse ?? true,\n", `    mouse: input.mouse ?? true,\n    animations: input.animations ?? ${!api.options?.reducedMotion},\n`))
+    // Shared wordmark data: the home logo, and the exit epilogue printed to the shell.
+    await api.patch("packages/tui/src/logo.ts", (source) => replace(source, upstreamWordmark, wordmark))
+    // Resume hints must reopen InfiniteOC, not the stock OpenCode install.
+    await api.patch("packages/tui/src/util/presentation.ts", (source) =>
+      replace(source, "${bold}opencode -s ${input.sessionID}", "${bold}infiniteoc -s ${input.sessionID}"))
+    await api.patch("packages/tui/src/mini/splash.ts", (source) =>
+      replace(source, "const command = `opencode mini -s ${meta.session_id}`", "const command = `infiniteoc mini -s ${meta.session_id}`"))
+    await api.patch("packages/tui/src/feature-plugins/system/stats.tsx", (source) =>
+      replace(source, "          opencode / stats\n", "          infiniteoc / stats\n"))
+    // A pinned source build: never phone home for updates, never upgrade or uninstall OpenCode.
+    // Upstream's uninstaller deletes the data/config/sessions shared with the stock install.
+    await api.patch("packages/cli/src/services/updater.ts", (source) => {
+      source = replace(source, 'import { OPENCODE_ARTIFACT, OPENCODE_CHANNEL, OPENCODE_LOCAL, OPENCODE_VERSION } from "../version"',
+        `import { OPENCODE_ARTIFACT, OPENCODE_CHANNEL, OPENCODE_LOCAL, OPENCODE_VERSION } from "../version"\nconst INFINITEOC_PINNED = ${JSON.stringify(pinned)}`)
+      source = replace(source, '  const inspect = Effect.fnUntraced(function* () {\n',
+        '  const inspect = Effect.fnUntraced(function* () {\n    if (OPENCODE_CHANNEL === "infiniteoc") return undefined\n')
+      source = replace(source, '  const check = Effect.fn("cli.updater.check")(function* () {\n',
+        '  const check = Effect.fn("cli.updater.check")(function* () {\n    if (OPENCODE_CHANNEL === "infiniteoc") return { type: "unavailable" as const, message: INFINITEOC_PINNED }\n')
+      return replace(source, '  const upgrade = Effect.fnUntraced(function* (method: Method, input: string) {\n',
+        '  const upgrade = Effect.fnUntraced(function* (method: Method, input: string) {\n    if (OPENCODE_CHANNEL === "infiniteoc") return yield* Effect.fail(new Error(INFINITEOC_PINNED))\n')
+    })
+    await api.patch("packages/cli/src/commands/handlers/uninstall.ts", (source) => {
+      source = replace(source, 'import { errorMessage } from "../../util/error"', 'import { errorMessage } from "../../util/error"\nimport { OPENCODE_CHANNEL } from "../../version"')
+      return replace(source, '  Effect.fn("cli.uninstall")(function* (input) {\n',
+        `  Effect.fn("cli.uninstall")(function* (input) {\n    if (OPENCODE_CHANNEL === "infiniteoc") return yield* Effect.fail(new Error(${JSON.stringify(noUninstall)}))\n`)
+    })
+    // Brand the always-visible surfaces: reply footers said "Build", the terminal title "OpenCode".
+    await api.patch("packages/tui/src/routes/session/index.tsx", (source) =>
+      replace(source, "            {Locale.titlecase(props.message.agent)}\n",
+        "            {local.agent.list().find((agent) => agent.id === props.message.agent)?.name ?? Locale.titlecase(props.message.agent)}\n"))
+    await api.patch("packages/tui/src/app.tsx", (source) => {
+      source = replace(source, '    if (route.data.type === "home") {\n      renderer.setTerminalTitle("OpenCode")', '    if (route.data.type === "home") {\n      renderer.setTerminalTitle("InfiniteOC")')
+      return replace(source, '      if (!title || isFallbackTitle(title)) {\n        renderer.setTerminalTitle("OpenCode")', '      if (!title || isFallbackTitle(title)) {\n        renderer.setTerminalTitle("InfiniteOC")')
+    })
+    // Dialogs dim the page in over 120ms instead of a hard cut; content and focus are instant, and
+    // wizard steps (dialog.replace) keep the mounted backdrop, so the fade plays once per open.
+    await api.patch("packages/tui/src/ui/dialog.tsx", (source) => {
+      source = replace(source, 'import { copy, copyOnSelectRelease } from "../util/selection"', 'import { copy, copyOnSelectRelease } from "../util/selection"\nimport { createAnimatable, tween } from "./animation"')
+      source = replace(source, '  const renderer = useRenderer()\n\n  let dismiss = false\n',
+        '  const renderer = useRenderer()\n  const config = useConfig()\n  const dim = createAnimatable({ alpha: 0 }, { enabled: () => config.data.animations ?? true, transition: tween({ duration: 0.12 }) })\n  dim.animate({ alpha: 150 })\n\n  let dismiss = false\n')
+      return replace(source, '      backgroundColor={RGBA.fromInts(0, 0, 0, 150)}', '      backgroundColor={RGBA.fromInts(0, 0, 0, Math.round(dim.value().alpha))}')
+    })
+    // Each toast's text sweeps in with upstream FadeInText (200ms, off when animations are off).
+    // Keyed so every new toast remounts and animates, not only the first after an idle gap.
+    // A store set merges into the visible toast object, so a replacement used to inherit the
+    // old title and click action (e.g. "Probe free models"); clear first to really replace it.
+    await api.patch("packages/tui/src/ui/toast.tsx", (source) => {
+      source = replace(source, '      setStore("currentToast", toastOptions)\n      start(toastOptions.duration)',
+        '      setStore("currentToast", null)\n      setStore("currentToast", toastOptions)\n      start(toastOptions.duration)')
+      source = replace(source, '    setStore("currentToast", next ?? null)\n',
+        '    setStore("currentToast", null)\n    if (next) setStore("currentToast", next)\n')
+      source = replace(source, 'import { errorMessage } from "../util/error"', 'import { errorMessage } from "../util/error"\nimport { FadeInText } from "../component/fade-in-text"')
+      source = replace(source, '              <text fg={theme.text.base} wrapMode="word" flexGrow={1}>\n                {props.toast.message}\n              </text>',
+        '              <FadeInText fg={theme.text.base} backdrop={theme.background.raised.high} wrapMode="word" flexGrow={1}>\n                {props.toast.message}\n              </FadeInText>')
+      source = replace(source, '            <text attributes={TextAttributes.BOLD} fg={theme.text.base}>\n              {props.toast.title}\n            </text>',
+        '            <FadeInText attributes={TextAttributes.BOLD} fg={theme.text.base} backdrop={theme.background.raised.high}>\n              {props.toast.title}\n            </FadeInText>')
+      source = replace(source, '          <text fg={theme.text.base} wrapMode="word" width="100%">\n            {props.toast.message}\n          </text>',
+        '          <FadeInText fg={theme.text.base} backdrop={theme.background.raised.high} wrapMode="word" width="100%">\n            {props.toast.message}\n          </FadeInText>')
+      return replace(source, '    <Show when={toast.currentToast}>\n      {(current) => (\n        <ToastSurface\n          toast={current()}',
+        '    <Show when={toast.currentToast} keyed>\n      {(current) => (\n        <ToastSurface\n          toast={current}')
+    })
     await installSettings(api)
   },
 }
 
-function logoSource(reducedMotion) {
-  const art = [
-    " ___        __ _       _ _        ___   ____ ",
-    "|_ _|_ __  / _(_)_ __ (_) |_ ___ / _ \\ / ___|",
-    " | || '_ \\| |_| | '_ \\| | __/ _ \\ | | | |    ",
-    " | || | | |  _| | | | | | ||  __/ |_| | |___ ",
-    "|___|_| |_|_| |_|_| |_|_|\\__\\___|\\___/ \\____|",
-  ]
-  return `// InfiniteOC: source-only branding; no network or permission hooks.
-import { RGBA, TextAttributes } from "@opentui/core"
-import { useTerminalDimensions } from "@opentui/solid"
-import { For, createSignal, onCleanup, onMount } from "solid-js"
+const pinned = "InfiniteOC is a pinned OpenCode source build and never updates OpenCode installs. Update it with git pull, then infiniteoc rebuild."
+const noUninstall = "InfiniteOC never runs OpenCode's uninstaller: it deletes the data, config and sessions shared with your stock OpenCode install. To remove InfiniteOC, delete its checkout. To uninstall stock OpenCode, use its own opencode uninstall."
 
-const art = ${JSON.stringify(art, null, 2)}
-
-export function Logo() {
-  const dimensions = useTerminalDimensions()
-  const [phase, setPhase] = createSignal(0)
-  onMount(() => {
-    if (${reducedMotion}) return
-    const timer = setInterval(() => setPhase((value) => (value + 0.12) % (Math.PI * 2)), 100)
-    onCleanup(() => clearInterval(timer))
-  })
-  const color = (column: number, row: number) => {
-    const mix = (Math.sin(column * 0.15 + row * 0.3 + phase()) + 1) / 2
-    return RGBA.fromInts(Math.round(192 + 52 * mix), Math.round(132 - 18 * mix), Math.round(252 - 70 * mix), 255)
-  }
-  const lines = () => dimensions().width < 48 ? ["InfiniteOC"] : art
-  return (
-    <box>
-      <For each={dimensions().height < 12 ? [] : lines()}>
-        {(line, row) => (
-          <box flexDirection="row">
-            <For each={Array.from(line)}>
-              {(char, column) => <text fg={color(column(), row())} attributes={TextAttributes.BOLD} selectable={false}>{char}</text>}
-            </For>
-          </box>
-        )}
-      </For>
-    </box>
-  )
-}
-`
-}
+// Upstream logo.ts glyph encoding: _ shadow cell, ^ ▀ over shadow, ~ shadow ▀.
+const upstreamWordmark = `export const logo = {
+  left: ["                   ", "█▀▀█ █▀▀█ █▀▀█ █▀▀▄", "█__█ █__█ █^^^ █__█", "▀▀▀▀ █▀▀▀ ▀▀▀▀ ▀~~▀"],
+  right: ["             ▄     ", "█▀▀▀ █▀▀█ █▀▀█ █▀▀█", "█___ █__█ █__█ █^^^", "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"],
+}`
+const wordmark = `export const logo = {
+  left: ["▀       █▀ ▀      ▀  ▄      ", "█ █▀▀▄ ▀█▀ █ █▀▀▄ █ ▀█▀ █▀▀█", "█ █__█  █  █ █__█ █  █  █^^^", "▀ ▀~~▀  ▀  ▀ ▀~~▀ ▀  ▀▀ ▀▀▀▀"],
+  right: ["         ", "█▀▀█ █▀▀▀", "█__█ █___", "▀▀▀▀ ▀▀▀▀"],
+}`

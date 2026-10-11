@@ -4,6 +4,15 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import http from "node:http"
 
+/** @typedef {{ id: string, status: string, durationMs: number }} ProbeResult */
+/** @typedef {{ binary?: string, timeout?: number }} ProbeOptions */
+
+/** One state for every copy of /health: each opendaemon live generation bundles its own module instance. */
+export const healthState = /** @type {{ report?: ProbeResult[], progress?: string }} */ (globalThis[Symbol.for("infiniteoc.health")] ??= {})
+/** ■ per finished probe, ⬝ per remaining one (upstream block-spinner glyphs). */
+export const meter = (done, total) => "■".repeat(done) + "⬝".repeat(total - done)
+
+/** @returns {Promise<string>} */
 export async function daemonHealth(socket = process.env.INFINITEOC_DAEMON_SOCKET) {
   if (!socket) return "not connected"
   return new Promise(resolve => {
@@ -21,6 +30,7 @@ export function freeModelIDs(data) {
   return [...new Set(data.data.map(item => item.id).filter(id => typeof id === "string" && /^[a-z0-9][a-z0-9._-]*-free$/.test(id)))].sort()
 }
 
+/** @returns {Promise<string[]>} */
 export async function discoverFreeModels(request = fetch) {
   const response = await request("https://opencode.ai/zen/v1/models", {
     headers: { "User-Agent": "opencode/infiniteoc/health/opencode", Accept: "application/json" },
@@ -66,6 +76,11 @@ export function isolatedEnvironment(base, model, environment = process.env) {
   return env
 }
 
+/**
+ * @param {string} id
+ * @param {ProbeOptions} [options]
+ * @returns {Promise<ProbeResult>}
+ */
 export async function probeModel(id, { binary, timeout = 20000 } = {}) {
   if (!/^[a-z0-9][a-z0-9._-]*-free$/.test(id) || !path.isAbsolute(binary || "")) throw new Error("Invalid probe")
   const base = await mkdtemp(path.join(tmpdir(), "infiniteoc-health-"))
@@ -94,6 +109,11 @@ export async function probeModel(id, { binary, timeout = 20000 } = {}) {
   } finally { await rm(base, { recursive: true, force: true }) }
 }
 
+/**
+ * @param {string[]} ids
+ * @param {ProbeOptions & { probe?: typeof probeModel, onResult?: (result: ProbeResult, done: number, total: number) => void }} [options]
+ * @returns {Promise<ProbeResult[]>}
+ */
 export async function probeModels(ids, { onResult = () => {}, probe = probeModel, ...options } = {}) {
   if (!Array.isArray(ids) || !ids.length || ids.length > 20 || ids.some(id => typeof id !== "string" || !/^[a-z0-9][a-z0-9._-]*-free$/.test(id))) throw new Error("Invalid free model list")
   const results = []

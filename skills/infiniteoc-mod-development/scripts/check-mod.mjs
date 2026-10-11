@@ -2,10 +2,11 @@
 import { cp, mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { resolve, join } from "node:path"
-import { pathToFileURL } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { execFileSync } from "node:child_process"
 
-export async function checkMod(candidate, launcher = "$HOME/InfiniteOC") {
+// Default to the checkout this script lives in (skills/infiniteoc-mod-development/scripts/).
+export async function checkMod(candidate, launcher = fileURLToPath(new URL("../../../", import.meta.url))) {
   const base = resolve(launcher)
   const filename = resolve(candidate)
   execFileSync(process.execPath, ["--check", filename], { stdio: "pipe" })
@@ -31,7 +32,7 @@ export async function checkMod(candidate, launcher = "$HOME/InfiniteOC") {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   if (!process.argv[2] || process.argv.length > 4) {
-    console.error("Usage: node check-mod.mjs /absolute/mod/index.mjs [/absolute/InfiniteOC]")
+    console.error("Usage: node check-mod.mjs mods/<id>/index.mjs [/path/to/InfiniteOC checkout]")
     process.exitCode = 2
   } else {
     try {

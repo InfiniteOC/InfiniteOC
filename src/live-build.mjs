@@ -6,21 +6,15 @@ import { spawn } from "node:child_process"
 import { pathToFileURL } from "node:url"
 import { createHash } from "node:crypto"
 import { loadMods, applyMods } from "./mod-loader.mjs"
+import { builtinSlashNames, claimSlashNames, safeError } from "./tui-features.mjs"
 
 export async function buildLive(base, output, revision, progress = () => {}, override) {
   progress("discovering", "Reading configured local mods")
   const config = JSON.parse(await readFile(path.join(base, "infiniteoc.json"), "utf8"))
   const mods = await loadMods(config.mods, base)
   const result = override ? { featureSources: override } : await applyMods(mods, path.join(base, ".upstream"), config.options, true)
-  if (result.featureSources.some(command => /(?:from\s*|import\s*\()["'](?:solid-js|@opentui|@opencode)/.test(command.source))) throw new Error("Live handlers cannot import framework modules; use supplied context")
-  const seen = new Set()
-  const app = await readFile(path.join(base, ".upstream/packages/tui/src/app.tsx"), "utf8")
-  for (const command of result.featureSources) {
-    for (const name of [command.slash, ...command.aliases]) {
-      if (seen.has(name) || [...app.matchAll(/slash:\s*\{([^}]+)\}/g)].some(match => match[1].includes(JSON.stringify(name)))) throw new Error(`Duplicate TUI slash command: /${name}`)
-      seen.add(name)
-    }
-  }
+  if (result.featureSources.some(command => /(?:from\s*|import\s*\()["'](?:solid-js|@opentui|@opencode)/.test(command.source))) throw safeError("Live handlers cannot import framework modules; use supplied context")
+  claimSlashNames(result.featureSources, await builtinSlashNames(path.join(base, ".upstream/packages/tui/src")))
   const directory = path.join(output, "generations", revision)
   await mkdir(directory, { recursive: true, mode: 0o700 })
   const entries = []
@@ -43,10 +37,10 @@ export async function buildLive(base, output, revision, progress = () => {}, ove
         // Do not return compiler excerpts that can contain literals/secrets.
         child.stdout.resume(); child.stderr.resume()
         child.on("error", reject)
-        child.on("exit", code => code === 0 ? resolve() : reject(new Error(`Cannot compile ${command.id}; use ctx-only live handlers, or keep UI component/framework imports in a source mod`)))
+        child.on("exit", code => code === 0 ? resolve() : reject(safeError(`Cannot compile ${command.id}; check its syntax and imports (live handlers are ctx-only; UI components and framework imports belong in a source mod)`)))
       })
       const code = await readFile(bundle, "utf8")
-      if (/from\s*["'](?:solid-js|@opentui|@opencode)|require\(["'](?:solid-js|@opentui|@opencode)/.test(code)) throw new Error("Live handlers must use the supplied context, not load another framework instance")
+      if (/from\s*["'](?:solid-js|@opentui|@opencode)|require\(["'](?:solid-js|@opentui|@opencode)/.test(code)) throw safeError("Live handlers must use the supplied context, not load another framework instance")
       const { source: ignored, ...metadata } = command
       entries.push({ ...metadata, module: pathToFileURL(bundle).href })
     }
@@ -60,5 +54,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     const [base, output, revision, resultFile] = process.argv.slice(2)
     const manifest = await buildLive(base, output, revision, (stage, message) => process.stdout.write(JSON.stringify({ stage, message }) + "\n"))
     await writeFile(resultFile, JSON.stringify(manifest), { mode: 0o600 })
-  } catch (error) { process.stderr.write(error.message + "\n"); process.exitCode = 1 }
+  } catch (error) {
+    // stdout becomes daemon status events; only framework-tagged static reasons go there, never compiler output.
+    if (error?.safe) process.stdout.write(JSON.stringify({ stage: "invalid", message: error.message }) + "\n")
+    process.stderr.write(error.message + "\n"); process.exitCode = 1
+  }
 }

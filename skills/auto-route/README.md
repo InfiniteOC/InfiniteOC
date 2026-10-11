@@ -1,6 +1,6 @@
 # Local auto-route reliability update
 
-Maintained source: `$HOME/InfiniteOC/skills/auto-route/`.
+Maintained source: `skills/auto-route/` in the InfiniteOC checkout.
 Active OpenCode library: `$HOME/.config/opencode/skill-library/auto-route/`.
 
 This improves the existing general-purpose router, not model choice or permissions.
@@ -19,9 +19,11 @@ remote skill packages are installed.
 
 ## Validate
 
+From the checkout root:
+
 ```sh
-node --test $HOME/InfiniteOC/test/auto-route-*.test.mjs
-node --test $HOME/InfiniteOC/test/*.test.mjs
+node --test test/auto-route-*.test.mjs
+npm test
 ```
 
 The routing tests check decisions and invalid inputs; search tests check real CLI

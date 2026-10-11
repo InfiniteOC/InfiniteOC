@@ -31,14 +31,26 @@ API keys preferably use `{env:VARIABLE}`. Entered keys are captured without an
 Input/Textarea (OpenTUI 0.5.14 has no password option), displayed only as bullets,
 and written to separate mode-0600 files referenced via `{file:absolute-path}`.
 Provider metadata in InfiniteOC settings contains only protocol and model IDs.
-Keys never enter toasts, titles or helper error messages. Local plaintext key
+Keys never enter titles, inline messages or helper error messages. Local plaintext key
 files are not encryption; use environment references when possible.
 
 Traffic modes are `inherit`, `direct`, `proxy`, `tor`. Default Tor listener is
-`127.0.0.1:9050`; Tor must already be running. Saving requires a restart. This UI
+`127.0.0.1:9050`; Tor must already be running. In Tor mode the host must pass the
+launcher's own rule (letters, digits, dots, hyphens or IPv6, no port), so a saved host
+never blocks the next launch; other modes never read it. Saving requires a restart. This UI
 does not apply routing itself: the launcher consumes the helper. Supported client
 routing is not all-process anonymity; tools/subprocesses may ignore proxies.
 
-Verification: `node --test test/settings.test.mjs` (7 tests). TUI typecheck found
+Dialog: the home rows show the current traffic route (proxy shows only the URL
+host, never credentials) and the custom providers with protocol and model count.
+The provider wizard has five numbered steps, each validated on Enter. Errors and
+the post-save notice appear inside the dialog, never as toasts, because toasts render
+under the backdrop. Only the store's own static messages are shown; filesystem errors
+become a generic permissions message. Esc on any step returns to the settings home,
+except while a save runs. One in-flight save is shared by provider save, traffic save and delete.
+Every step uses the large dialog size, so one-line rows and their safety notes fit (narrower
+terminals clamp it).
+
+Verification: `node --test test/settings.test.mjs` (12 tests). TUI typecheck found
 no errors in added settings files; the upstream workspace has unrelated missing
 declaration outputs and test/simulation type errors.

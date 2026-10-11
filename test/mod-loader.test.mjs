@@ -197,6 +197,17 @@ test("bundled mod applies through the real loader to a minimal copy of pinned up
     "packages/tui/src/component/dialog-agent.tsx",
     "packages/tui/src/mini/footer.command.tsx",
     "packages/tui/src/component/dialog-config.tsx",
+    "packages/tui/src/logo.ts",
+    "packages/tui/src/util/presentation.ts",
+    "packages/tui/src/mini/splash.ts",
+    "packages/tui/src/ui/toast.tsx",
+    "packages/tui/src/feature-plugins/system/stats.tsx",
+    "packages/cli/src/services/updater.ts",
+    "packages/cli/src/commands/handlers/uninstall.ts",
+    "packages/tui/src/config/index.tsx",
+    "packages/tui/src/routes/session/index.tsx",
+    "packages/tui/src/app.tsx",
+    "packages/tui/src/ui/dialog.tsx",
   ]
   const originals = new Map()
   for (const path of targets) {
@@ -206,7 +217,7 @@ test("bundled mod applies through the real loader to a minimal copy of pinned up
   }
   const mods = await loadMods(["mods/infiniteoc/index.mjs"], repository)
   const { changes } = await applyMods(mods, root, { reducedMotion: true })
-  assert.equal(changes.length, 14)
+  assert.equal(changes.length, 25)
   assert.ok(changes.every(({ mod }) => mod === "infiniteoc"))
   const read = (path) => readFile(join(root, path), "utf8")
   const theme = JSON.parse(await read("packages/tui/src/theme/assets/v2/infiniteoc.json"))
@@ -223,8 +234,9 @@ test("bundled mod applies through the real loader to a minimal copy of pinned up
   assert.match(context, /config.theme.name === "opencode" \? "infiniteoc" : config.theme.name/)
   const logo = await read(targets[3])
   assert.match(logo, /InfiniteOC/)
-  assert.match(logo, /if \(true\) return/)
-  assert.match(logo, /onCleanup\(\(\) => clearInterval\(timer\)\)/)
+  assert.match(await read("packages/tui/src/config/index.tsx"), /animations: input\.animations \?\? false,/)
+  assert.match(logo, /wrapMode="none"/)
+  assert.match(await read("packages/tui/src/logo.ts"), /█ █▀▀▄ ▀█▀/)
   const agent = await read(targets[4])
   assert.match(agent, /Agent\.Name\.make\("InfiniteOC"\)/)
   assert.match(agent, /Unified primary agent for reasoning, planning, and implementation/)
