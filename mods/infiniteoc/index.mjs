@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises"
 import path from "node:path"
 import { installSettings } from "./settings/index.mjs"
-import { workflowInstruction } from "./workflow.mjs"
+import { guidance, extensionMarker } from "./workflow.mjs"
 
 // Anchor checks intentionally fail closed on incompatible upstream revisions.
 function replace(source, before, after) {
@@ -59,17 +59,13 @@ export default {
     })
     await api.patch("packages/core/src/plugin/plan.ts", (source) =>
       replace(source, '        item.mode = "primary"', '        item.mode = "primary"\n        item.hidden = true // InfiniteOC: retain legacy Plan restrictions, omit selector'))
-    await api.patch("packages/core/src/config/plugin/agent.ts", (source) => {
-      const instruction = workflowInstruction
-      return replace(source, '      }\n    })\n  }),\n})', `      }
+    // Guidance is not set as agent.system: that would replace upstream's base and model-tuned prompts.
+    await api.patch("packages/core/src/config/plugin/agent.ts", (source) =>
+      replace(source, '      }\n    })\n  }),\n})', `      }
       // InfiniteOC finalizes presentation after config; never change permission rules.
       const build = editor.get(Agent.defaultID)
       if (build) editor.update(Agent.defaultID, (agent) => {
         agent.name = Agent.Name.make("InfiniteOC")
-        const instruction = ${JSON.stringify(instruction)}
-        if (!agent.system?.includes("[InfiniteOC unified workflow]")) {
-          agent.system = [agent.system, instruction].filter(Boolean).join("\\n\\n")
-        }
       })
       const legacyPlan = Agent.ID.make("plan")
       if (editor.get(legacyPlan)) editor.update(legacyPlan, (agent) => { agent.hidden = true })
@@ -83,8 +79,38 @@ export default {
       }
     })
   }),
-})`)
+})`))
+    await api.patch("packages/core/src/plugin/agent.ts", (source) => {
+      source = replace(source,
+        '"General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel."',
+        '"Implementation worker for a bounded, well-specified change or multi-step task in files you assign. Give it the goal, owned files, constraints and the checks that define done; it reports changed files and check results. Run several in parallel only on non-overlapping files."')
+      return replace(source, '      editor.update(Agent.ID.make("compaction"), (item) => {', `${subagents}
+      editor.update(Agent.ID.make("compaction"), (item) => {`)
     })
+    // Per-agent guidance becomes an instruction block in every session's context, after upstream's
+    // base/model prompt. Other mods append through the extension marker.
+    await api.write("packages/core/src/infiniteoc/guidance.ts", guidanceSource())
+    await api.patch("packages/core/src/session/context.ts", (source) => {
+      source = replace(source, 'import { Context, Effect, Layer } from "effect"', 'import { Context, Effect, Layer, Schema } from "effect"\nimport { infiniteocGuidance } from "../infiniteoc/guidance.js"')
+      return replace(source, '        instructions: Instructions.combine([\n          CodeModeInstructions.make(loaded.tools.codeModeCatalog),', `        instructions: Instructions.combine([
+          Instructions.make({
+            key: Instructions.Key.make("infiniteoc/guidance"),
+            codec: Schema.toCodecJson(Schema.String),
+            read: Effect.succeed(infiniteocGuidance[agent.id]?.join("\\n\\n") || Instructions.removed),
+            render: {
+              initial: (text) => text,
+              changed: (_previous, text) => text,
+              removed: () => "Earlier InfiniteOC guidance no longer applies to this agent.",
+            },
+          }),
+          CodeModeInstructions.make(loaded.tools.codeModeCatalog),`)
+    })
+    // The launcher points INFINITEOC_SKILLS at the bundled skills/ library (mostly unlisted, loadable by ID).
+    await api.patch("packages/core/src/config/plugin/skill.ts", (source) =>
+      replace(source, '        add(Skill.DirectorySource.make({ type: "directory", path: AbsolutePath.make(path.join(directory, "skills")) }))\n      }\n', `        add(Skill.DirectorySource.make({ type: "directory", path: AbsolutePath.make(path.join(directory, "skills")) }))
+      }
+      if (process.env.INFINITEOC_SKILLS) add(Skill.DirectorySource.make({ type: "directory", path: AbsolutePath.make(process.env.INFINITEOC_SKILLS) }))
+`))
     await api.patch("packages/tui/src/component/prompt/index.tsx", (source) =>
       replace(source, 'agentLabel: agent ? Locale.titlecase(agent.id) : undefined,', 'agentLabel: agent ? agent.name : undefined,'))
     await api.patch("packages/tui/src/component/dialog-agent.tsx", (source) =>
@@ -174,3 +200,54 @@ const wordmark = `export const logo = {
   left: ["▀       █▀ ▀      ▀  ▄      ", "█ █▀▀▄ ▀█▀ █ █▀▀▄ █ ▀█▀ █▀▀█", "█ █__█  █  █ █__█ █  █  █^^^", "▀ ▀~~▀  ▀  ▀ ▀~~▀ ▀  ▀▀ ▀▀▀▀"],
   right: ["         ", "█▀▀█ █▀▀▀", "█__█ █___", "▀▀▀▀ ▀▀▀▀"],
 }`
+// Generated module: guidance per agent ID, joined into one instruction block per session.
+function guidanceSource() {
+  const entries = Object.fromEntries(Object.entries(guidance).map(([agent, text]) => [agent, [text]]))
+  return `// Written by mods/infiniteoc from mods/infiniteoc/workflow.mjs; edit it there.
+export const infiniteocGuidance: Record<string, string[]> = ${JSON.stringify(entries, null, 2)}
+${extensionMarker}
+`
+}
+
+// Inserted into upstream's built-in agent plugin, next to general and explore.
+const subagents = `      // InfiniteOC subagents; their role guidance comes from infiniteoc/guidance.ts.
+      editor.update(Agent.ID.make("reviewer"), (item) => {
+        item.name = Agent.Name.make("Reviewer")
+        item.description =
+          "Independent read-only code reviewer. Give it the change (a diff range or files) and its intent; it reads callers and tests, runs checks, and reports ranked defects with file:line, or says it found none. Use it before reporting nontrivial or risky changes as done."
+        item.mode = "subagent"
+        item.permissions.push(
+          { action: "edit", resource: "*", effect: "deny" },
+          { action: "question", resource: "*", effect: "deny" },
+          { action: "subagent", resource: "*", effect: "deny" },
+        )
+      })
+
+      editor.update(Agent.ID.make("researcher"), (item) => {
+        const externalDirectories = item.permissions.filter(
+          (rule) => rule.action === "external_directory" && rule.effect === "allow",
+        )
+        item.name = Agent.Name.make("Researcher")
+        item.description =
+          "Read-only researcher for information outside the codebase: library and API docs, changelogs, error messages, specs. It checks the project's installed versions and returns a concise answer with source URLs."
+        item.mode = "subagent"
+        item.permissions.push(
+          ...Permission.merge(
+            [
+              { action: "*", resource: "*", effect: "deny" },
+              { action: "grep", resource: "*", effect: "allow" },
+              { action: "glob", resource: "*", effect: "allow" },
+              { action: "read", resource: "*", effect: "allow" },
+              { action: "read", resource: "*.env", effect: "ask" },
+              { action: "read", resource: "*.env.*", effect: "ask" },
+              { action: "read", resource: "*.env.example", effect: "allow" },
+              { action: "webfetch", resource: "*", effect: "allow" },
+              { action: "websearch", resource: "*", effect: "allow" },
+              { action: "skill", resource: "*", effect: "allow" },
+              { action: "subagent", resource: "*", effect: "deny" },
+            ],
+            [{ action: "external_directory", resource: "*", effect: "ask" }, ...externalDirectories],
+          ),
+        )
+      })
+`

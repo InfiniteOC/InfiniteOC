@@ -11,8 +11,8 @@ Use this library to improve the actual deliverable. Keep routing brief and execu
 
 1. Identify the requested artifact, domain, stack or medium, constraints, and what would demonstrate success. Inspect existing work before deciding how to change it. Preserve the user's requested scope, voice, and format.
 2. Choose a primary skill using the map below. For a specific technology or an unfamiliar task, search the bundled catalog:
-   `python3 $HOME/.config/opencode/skill-library/auto-route/scripts/find.py "your domain and task"`
-   The results give exact skill IDs, descriptions, and installed paths. Use a few discriminating terms. `--category NAME` lists a category; `--categories` lists category names. For broad requests, split the search by deliverable.
+   `python3 <auto-route directory>/scripts/find.py "your domain and task"`
+   `<auto-route directory>` is the directory the skill tool reported when it loaded this skill. The results give exact skill IDs, descriptions, and installed paths. Use a few discriminating terms. `--category NAME` lists a category; `--categories` lists category names. For broad requests, split the search by deliverable.
 3. Load the chosen ID with OpenCode's native `skill` tool (`{"id":"..."}`). Most library skills are intentionally hidden from the default advertised list, but are registered and loadable by ID. If discovery cannot find one, read its installed `SKILL.md` from the catalog and resolve references relative to that directory. Never bypass a permission denial this way. A file existing is not proof its tools work. Report a missing capability only if it blocks the work.
 4. Start with one primary skill, adding at most two complementary skills for an immediate need. This is a starting budget, not a hard limit. Load further skills at phase changes; do not preload every matching skill, every reference, or whole catalogs. Do not reload an unchanged skill already in context. After compaction, restore only what the current phase needs.
 5. Apply the relevant guidance, use tools, and complete the artifact. Don't just report the route or provide a plan when execution was requested.

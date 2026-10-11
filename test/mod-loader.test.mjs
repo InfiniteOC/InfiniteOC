@@ -208,6 +208,8 @@ test("bundled mod applies through the real loader to a minimal copy of pinned up
     "packages/tui/src/routes/session/index.tsx",
     "packages/tui/src/app.tsx",
     "packages/tui/src/ui/dialog.tsx",
+    "packages/core/src/session/context.ts",
+    "packages/core/src/config/plugin/skill.ts",
   ]
   const originals = new Map()
   for (const path of targets) {
@@ -217,7 +219,7 @@ test("bundled mod applies through the real loader to a minimal copy of pinned up
   }
   const mods = await loadMods(["mods/infiniteoc/index.mjs"], repository)
   const { changes } = await applyMods(mods, root, { reducedMotion: true })
-  assert.equal(changes.length, 25)
+  assert.equal(changes.length, 29)
   assert.ok(changes.every(({ mod }) => mod === "infiniteoc"))
   const read = (path) => readFile(join(root, path), "utf8")
   const theme = JSON.parse(await read("packages/tui/src/theme/assets/v2/infiniteoc.json"))
@@ -240,17 +242,19 @@ test("bundled mod applies through the real loader to a minimal copy of pinned up
   const agent = await read(targets[4])
   assert.match(agent, /Agent\.Name\.make\("InfiniteOC"\)/)
   assert.match(agent, /Unified primary agent for reasoning, planning, and implementation/)
-  // Only branding/description may change, not agent IDs, prompts, or permissions.
+  // Beyond branding and descriptions, only the added InfiniteOC subagent block may differ.
   const normalized = agent
     .replace('item.name = Agent.Name.make("InfiniteOC")', 'item.name = Agent.Name.make("Build")')
     .replace(/item.description = "Unified primary agent[^\n]+/, 'item.description = "The default agent. Executes tools based on configured permissions."')
+    .replace(/"Implementation worker for a bounded[^"]+"/, '"General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel."')
+    .replace(/      \/\/ InfiniteOC subagents;[\s\S]*?(?=      editor\.update\(Agent\.ID\.make\("compaction"\))/, "")
   assert.equal(normalized, originals.get(targets[4]))
   const plan = await read(targets[5])
   assert.match(plan, /item.hidden = true/)
   assert.equal(plan.replace('\n        item.hidden = true // InfiniteOC: retain legacy Plan restrictions, omit selector', ""), originals.get(targets[5]))
   const configuredAgent = await read(targets[6])
-  assert.match(configuredAgent, /Respect configured permissions and approval requirements/)
-  assert.match(configuredAgent, /agent.system = \[agent.system, instruction\]/)
+  assert.match(await read("packages/core/src/infiniteoc/guidance.ts"), /Configured permissions and approvals always apply/)
+  assert.match(await read("packages/core/src/session/context.ts"), /infiniteocGuidance\[agent\.id\]/)
   assert.match(configuredAgent, /editor.default\(Agent.defaultID\)/)
   assert.match(configuredAgent, /current.id !== Agent.defaultID && current.mode !== "subagent"/)
   assert.match(await read(targets[7]), /agentLabel: agent \? agent.name : undefined/)

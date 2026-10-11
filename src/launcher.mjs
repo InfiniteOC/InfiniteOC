@@ -215,7 +215,8 @@ export async function launch(args, settings) {
   const traffic = await applyTraffic(saved.traffic)
   try {
     // INFINITEOC_UI_CLIENT: one opendaemon client id per launched UI, inherited by its server, terminals and agent.
-    const context = { args: [...args], env: { ...traffic.env, INFINITEOC_SETTINGS_FILE: file, INFINITEOC: "1", OPENCODE_CLIENT: "InfiniteOC", OPENCODE_TUI_CHANNEL: "infiniteoc", INFINITEOC_UI_CLIENT: randomUUID() }, cwd: process.cwd() }
+    // INFINITEOC_SKILLS: the bundled skill library, registered by mods/infiniteoc (mostly unlisted, loadable by ID).
+    const context = { args: [...args], env: { ...traffic.env, INFINITEOC_SETTINGS_FILE: file, INFINITEOC: "1", OPENCODE_CLIENT: "InfiniteOC", OPENCODE_TUI_CHANNEL: "infiniteoc", INFINITEOC_UI_CLIENT: randomUUID(), INFINITEOC_SKILLS: join(home, "skills") }, cwd: process.cwd() }
     // Possibly inherited from an enclosing InfiniteOC session; only this launch's values may reach the TUI.
     for (const key of ["INFINITEOC_DAEMON_SOCKET", "INFINITEOC_LIVE_MANIFEST", "INFINITEOC_NOTICE"]) delete context.env[key]
     if (traffic.socks && !await probeSocks(traffic.socks.host, traffic.socks.port))

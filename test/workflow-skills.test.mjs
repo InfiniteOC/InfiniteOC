@@ -1,11 +1,13 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { readFile, access } from "node:fs/promises"
-import { workflowInstruction } from "../mods/infiniteoc/workflow.mjs"
+import { guidance } from "../mods/infiniteoc/workflow.mjs"
+
+const skills = new URL("../skills/", import.meta.url)
 
 test("writing and command skills have valid metadata and resolvable references", async () => {
   for (const name of ["plain-human-writing", "efficient-tool-use"]) {
-    const directory = new URL(`../skills/${name}/`, import.meta.url)
+    const directory = new URL(`${name}/`, skills)
     const source = await readFile(new URL("SKILL.md", directory), "utf8")
     assert.ok(source.startsWith(`---\nname: ${name}\ndescription:`))
     for (const match of source.matchAll(/\]\((references\/[^)]+)\)/g)) await access(new URL(match[1], directory))
@@ -13,10 +15,27 @@ test("writing and command skills have valid metadata and resolvable references",
   }
 })
 
-test("always-on guidance keeps replies brief without suppressing necessary information", () => {
-  for (const text of ["one to three sentences", "40–120 words", "necessary facts", "explicit requests for detail", "complete code", "pretending to be human", "without loading a skill on every turn"]) assert.ok(workflowInstruction.includes(text), text)
+test("guidance names only subagents that exist", async () => {
+  // Upstream defines general and explore; mods/infiniteoc adds reviewer and researcher.
+  const mod = await readFile(new URL("../mods/infiniteoc/index.mjs", import.meta.url), "utf8")
+  const defined = new Set(["general", "explore", ...[...mod.matchAll(/Agent\.ID\.make\("([a-z-]+)"\)/g)].map((match) => match[1])])
+  const section = guidance.build.split("[Subagents]")[1].split("[Skills]")[0]
+  const named = [...section.matchAll(/^- ([a-z-]+):/gm)].map((match) => match[1])
+  assert.deepEqual(named, ["explore", "researcher", "general", "reviewer"])
+  for (const agent of named) assert.ok(defined.has(agent), agent)
+  for (const agent of Object.keys(guidance)) assert.ok(defined.has(agent) || agent === "build", agent)
 })
 
-test("command efficiency protects dependencies, permissions, secrets and completion checks", () => {
-  for (const text of ["non-interactive", "quoted paths", "exit-status", "print secrets", "rapidly polling", "evidence-based change", "permissions", "Keep dependent actions sequential", "non-overlapping"]) assert.ok(workflowInstruction.includes(text), text)
+test("every skill ID the guidance recommends is bundled", async () => {
+  const section = guidance.build.split("[Skills]")[1].split("[Replies]")[0]
+  const ids = [...section.matchAll(/\b([a-z]+(?:-[a-z]+)+|impeccable)\b/g)].map((match) => match[1])
+  assert.ok(ids.length >= 8, ids.join(","))
+  for (const id of ids) await access(new URL(`${id}/SKILL.md`, skills))
+})
+
+test("guidance keeps safety, verification and honest reporting", () => {
+  for (const text of ["nothing here grants tool access", "Never print or commit secrets", "Ask before destructive", "Verify before claiming", "could not be run", "Debug from evidence", "After two hypotheses fail"]) assert.ok(guidance.build.includes(text), text)
+  assert.match(guidance.reviewer, /Stay read-only/)
+  assert.match(guidance.general, /cannot ask the user questions/)
+  assert.match(guidance.researcher, /primary sources/)
 })

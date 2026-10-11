@@ -24,9 +24,11 @@ Paths are under `packages/tui/src/` unless they start with `cli/` or `core/`
 | `util/presentation.ts`, `mini/splash.ts` | Resume hints read `infiniteoc -s ID` and `infiniteoc mini -s ID`. |
 | `component/prompt/index.tsx`, `component/dialog-agent.tsx`, `mini/footer.command.tsx` | Prompt and agent pickers display the agent name rather than its internal ID. |
 | `cli/services/updater.ts`, `cli/commands/handlers/uninstall.ts` | On the `infiniteoc` channel the binary never checks for updates, and `upgrade` and `uninstall` fail with an explanation. OpenCode's uninstaller would delete the data, config and sessions shared with stock OpenCode. |
-| `core/plugin/agent.ts` | Server-side built-in primary agent is displayed as InfiniteOC with a unified-agent description. Existing `build` ID is deliberately retained for session/config compatibility. |
+| `core/plugin/agent.ts` | Built-in primary agent is displayed as InfiniteOC (stable `build` ID). Adds the `reviewer` (read-only: `edit`, `question`, `subagent` denied) and `researcher` (read, search, web, skills only) subagents, and gives `general` an implementation-worker description. |
 | `core/plugin/plan.ts` | Hides the separate Plan primary from the selector; retains its ID, read-only permissions, and session/tool hooks for legacy sessions. |
-| `core/config/plugin/agent.ts` | After configuration, restores InfiniteOC display name, appends unified workflow guidance to the custom build prompt without replacing it, re-hides Plan, and makes Build the default when it exists. |
+| `core/config/plugin/agent.ts` | After configuration, restores the InfiniteOC display name, re-hides Plan, and makes Build the default when it exists. It no longer touches `system`. |
+| `core/infiniteoc/guidance.ts` (new), `core/session/context.ts` | Per-agent guidance from [workflow.mjs](workflow.mjs) (build, general, explore, reviewer, researcher) is added to each session's instructions as the `infiniteoc/guidance` block. Upstream's base system prompt and its model-tuned prompts stay in place. Mods append guidance at the `// infiniteoc:guidance-extensions` marker (see `mods/deep-deliberation`). |
+| `core/config/plugin/skill.ts` | Registers the directory in `INFINITEOC_SKILLS` (the launcher sets it to the bundled `skills/`) as a skill source. Most bundled skills are unlisted (`opencode/autoinvoke: false`) but load by ID; `auto-route` searches them. |
 | `component/dialog-config.tsx` and three new component files | `installSettings` adds InfiniteOC Settings to `/settings`; see [settings/README.md](settings/README.md). |
 
 The inspected revision registers Build in the agent plugin and a separate Plan
@@ -36,12 +38,13 @@ User-defined agents and permission rules remain stored. When Build exists,
 InfiniteOC becomes the default and sole visible primary, hiding Quick and any
 other primary choices without deleting them. Subagents remain available.
 A disabled Build agent is not recreated. `build` remains the internal identifier.
-The primary agent's system instruction respects requested read-only/planning work;
-this is conversational guidance, **not a replacement for permission enforcement**.
+The guidance respects requested read-only/planning work; it is conversational
+guidance, **not a replacement for permission enforcement**. An agent `system` prompt
+replaces upstream's base prompt, so InfiniteOC adds guidance as an instruction block
+instead. A custom Build `system` you configure is left exactly as you wrote it.
 
 No permission rules, tools, approval handlers, sandbox logic, or config permission
-merging are changed. Custom Build prompts are preserved as the base, with the
-unified workflow appended once after config. The mod never writes upstream, user config, or external assets;
+merging are changed for existing agents. The mod never writes upstream, user config, or external assets;
 all writes go through the supplied source-worktree API.
 
 `reducedMotion: true` makes Animations default to off: the logo intro, toast and

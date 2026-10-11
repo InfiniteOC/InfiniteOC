@@ -3,11 +3,14 @@
 import argparse
 import json
 import math
+import os
 import re
 import sys
 from pathlib import Path
 
 DEFAULT_CATALOG = Path(__file__).resolve().parents[1] / "references/catalog.json"
+# The bundled library this script ships in; catalog paths recorded on another machine fall back to it.
+LIBRARY = Path(__file__).resolve().parents[2]
 STOP = {"a", "an", "the", "and", "or", "with", "for", "to", "in", "of", "my", "help", "me", "use", "using"}
 LANGUAGES = {"rust", "python", "go", "java", "javascript", "typescript", "react", "kubernetes", "swiftui"}
 
@@ -27,6 +30,7 @@ def load_catalog(file):
             raise ValueError("Invalid catalog entry")
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9:_-]*", row["id"]) or row["id"] in seen:
             raise ValueError("Duplicate or invalid skill ID")
+        row["installed"] = os.path.expanduser(os.path.expandvars(row["installed"]))
         if not Path(row["installed"]).is_absolute():
             raise ValueError("Skill paths must be absolute")
         seen.add(row["id"])
@@ -42,6 +46,8 @@ def search(rows, query, category=None, include_missing=False):
         if category and row["category"] != category:
             continue
         skill_file = Path(row["installed"]) / "SKILL.md"
+        if not skill_file.is_file() and (LIBRARY / skill_file.parent.name / "SKILL.md").is_file():
+            skill_file = LIBRARY / skill_file.parent.name / "SKILL.md"
         present = skill_file.is_file()
         if not present and not include_missing:
             continue

@@ -1,7 +1,9 @@
 # Local auto-route reliability update
 
 Maintained source: `skills/auto-route/` in the InfiniteOC checkout.
-Active OpenCode library: `$HOME/.config/opencode/skill-library/auto-route/`.
+InfiniteOC registers the whole `skills/` folder as a skill library at launch (the launcher sets
+`INFINITEOC_SKILLS`); no copy into `~/.config/opencode` is needed. `find.py` resolves catalog
+paths recorded on another machine to this folder.
 
 This improves the existing general-purpose router, not model choice or permissions.
 The main skill keeps all domain routes. Software reliability, state recovery, and
@@ -32,8 +34,8 @@ model follows the skill or that the user's book app is fixed.
 
 ## Installation and rollback
 
-Before installing, back up the active auto-route directory and the global
-`$HOME/.config/opencode/AGENTS.md`. Update only this skill's owned files;
+Edit the files here; InfiniteOC loads them in place. For a separate OpenCode install, back up
+its active auto-route directory first. Update only this skill's owned files;
 preserve catalog entries and unrelated instructions/configuration. Publish helpers
 and references first, then `SKILL.md`, using atomic file replacement. Do not modify
 the separate Claude skill mirror: it has its own tool conventions and additions.

@@ -3,11 +3,11 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import path from "node:path"
 import mod from "./index.mjs"
-import { workflowInstruction } from "./workflow.mjs"
+import { guidance } from "./workflow.mjs"
 
-test("workflow encourages bounded parallel delegation without granting permissions", () => {
-  for (const phrase of ["at most two active workers", "non-overlapping regions", "Keep dependent actions sequential", "Integrate the combined changes", "never grant tool access", "do not claim that it ran concurrently", "existing auto-route skill"]) {
-    assert.ok(workflowInstruction.includes(phrase), `Missing workflow guard: ${phrase}`)
+test("build guidance keeps delegation bounded and never grants permissions", () => {
+  for (const phrase of ["nothing here grants tool access", "never on overlapping files", "keep dependent steps sequential", "re-run the checks yourself", "a subagent's claim is not proof", "Ask before destructive"]) {
+    assert.ok(guidance.build.includes(phrase), `Missing workflow guard: ${phrase}`)
   }
 })
 
@@ -27,11 +27,17 @@ async function apply(reducedMotion = false, files = new Map()) {
 
 test("applies against local source, preserving all permission-rule code", async () => {
   const files = await apply()
-  assert.equal(files.size, 25)
+  assert.equal(files.size, 28)
   const file = "packages/core/src/plugin/agent.ts"
   const original = await readFile(path.join(root, file), "utf8")
   const rules = (source) => source.split("\n").filter((line) => /\.permissions|action:|resource:|effect:|Permission\.merge/.test(line))
-  assert.deepEqual(rules(files.get(file)), rules(original))
+  // Upstream rules are untouched; the only new rules are the InfiniteOC subagents' own.
+  const [before, rest] = files.get(file).split("      // InfiniteOC subagents;")
+  const block = rest.split('      editor.update(Agent.ID.make("compaction")')[0]
+  assert.deepEqual(rules(before + rest.slice(block.length)), rules(original))
+  for (const line of rules(block).filter((line) => line.includes('effect: "allow"')))
+    assert.match(line, /action: "(read|grep|glob|webfetch|websearch|skill)"/, line)
+  assert.match(block, /Agent\.ID\.make\("reviewer"\)[\s\S]*action: "edit", resource: "\*", effect: "deny"/)
   assert.match(files.get(file), /Agent\.Name\.make\("InfiniteOC"\)/)
   assert.match(files.get(file), /editor\.update\(Agent\.defaultID/)
   for (const target of ["packages/core/src/plugin/plan.ts", "packages/core/src/config/plugin/agent.ts"]) {
@@ -39,8 +45,15 @@ test("applies against local source, preserving all permission-rule code", async 
   }
   assert.match(files.get("packages/core/src/plugin/plan.ts"), /item\.hidden = true/)
   const config = files.get("packages/core/src/config/plugin/agent.ts")
-  assert.match(config, /\[agent\.system, instruction\]/)
-  assert.ok(config.includes("Efficient delegation and parallel execution"))
+  // Guidance never replaces the system prompt; it is appended per agent through session context.
+  assert.doesNotMatch(config.split("// InfiniteOC finalizes presentation")[1], /\.system/)
+  const guidanceFile = files.get("packages/core/src/infiniteoc/guidance.ts")
+  assert.match(guidanceFile, /\/\/ infiniteoc:guidance-extensions\n$/)
+  for (const agent of ["build", "general", "explore", "reviewer", "researcher"]) assert.ok(guidanceFile.includes(`"${agent}": [`), agent)
+  const context = files.get("packages/core/src/session/context.ts")
+  assert.match(context, /import \{ infiniteocGuidance \} from "\.\.\/infiniteoc\/guidance\.js"/)
+  assert.match(context, /Instructions\.Key\.make\("infiniteoc\/guidance"\)[\s\S]*infiniteocGuidance\[agent\.id\]/)
+  assert.match(files.get("packages/core/src/config/plugin/skill.ts"), /if \(process\.env\.INFINITEOC_SKILLS\) add\(Skill\.DirectorySource\.make/)
   assert.match(config, /agent\.hidden = true/)
   assert.match(config, /editor.default\(Agent.defaultID\)/)
   assert.match(config, /current.id !== Agent.defaultID && current.mode !== "subagent"/)
@@ -134,8 +147,9 @@ test("configured Quick default resolves to one visible InfiniteOC primary withou
   assert.deepEqual(agents.filter(agent => agent.mode !== "subagent" && !agent.hidden).map(agent => agent.name), ["InfiniteOC"])
   assert.equal(agents.find(agent => agent.id === "explore").hidden, false)
   assert.deepEqual(agents.map(agent => agent.permissions), before)
-  assert.ok(agents[0].system.startsWith("Custom prompt"))
-  const system = agents[0].system
+  // A user's custom prompt is left exactly as configured; none is added when absent.
+  assert.equal(agents[0].system, "Custom prompt")
   finalize(editor, Agent)
-  assert.equal(agents[0].system, system)
+  assert.equal(agents[0].system, "Custom prompt")
+  assert.equal(agents[1].system, undefined)
 })

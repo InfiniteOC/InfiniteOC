@@ -101,3 +101,15 @@ export function replaceOnce(source, before, after) {
 ```
 
 The callback replacement avoids JavaScript `$&`/`$1` replacement expansion. Fail on already-patched source when using this helper: the real loader rejects no-op patches. If a mod intentionally supports partial earlier-mod changes, detect each supported variant explicitly and test it.
+## Agent guidance and subagents
+
+Do not set an agent's `system` to add instructions: upstream then drops its base and
+model-tuned system prompts for that agent. mods/infiniteoc writes
+`packages/core/src/infiniteoc/guidance.ts` (`infiniteocGuidance: Record<agentID, string[]>`)
+and adds the joined text for the session's agent as an instruction block. To extend it,
+patch the unique `// infiniteoc:guidance-extensions` marker and keep it, for example
+`infiniteocGuidance.build.push(text)` (see mods/deep-deliberation). The mod must run after
+mods/infiniteoc. Built-in subagents are `general`, `explore`, `reviewer` (read-only, runs
+checks) and `researcher` (read, search, web, skills); new ones go in
+`packages/core/src/plugin/agent.ts` next to them. The bundled `skills/` folder is a skill
+source through `INFINITEOC_SKILLS`.

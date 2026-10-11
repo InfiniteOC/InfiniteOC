@@ -7,7 +7,7 @@ does not execute commands, read project files, load skills, send network request
 or write state. No prompt-classification model or keyword router is involved.
 
 ```sh
-python3 $HOME/.config/opencode/skill-library/auto-route/scripts/route.py --facts - <<'JSON'
+python3 <auto-route directory>/scripts/route.py --facts - <<'JSON'
 {"mode":"act","task":"design","phase":"implement","surface":"web","failure":true,"shared_change":true,"browser":"available"}
 JSON
 ```
