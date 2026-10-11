@@ -113,9 +113,11 @@ export default {
 `))
     // /goal: a server command plus a turn-end loop that keeps prompting until the goal is verified.
     await api.write("packages/core/src/plugin/infiniteoc-goal.ts", await readFile(new URL("./goal.ts", import.meta.url), "utf8"))
+    // Frontend gate: UI-file edits are refused until the session has loaded the frontend-design skill.
+    await api.write("packages/core/src/plugin/infiniteoc-frontend.ts", await readFile(new URL("./frontend.ts", import.meta.url), "utf8"))
     await api.patch("packages/core/src/plugin/internal.ts", (source) => {
-      source = replace(source, 'import { PlanPlugin } from "./plan.js"', 'import { PlanPlugin } from "./plan.js"\nimport * as InfiniteocGoal from "./infiniteoc-goal.js"')
-      return replace(source, "  PlanPlugin.Plugin,\n", "  PlanPlugin.Plugin,\n  InfiniteocGoal.Plugin,\n")
+      source = replace(source, 'import { PlanPlugin } from "./plan.js"', 'import { PlanPlugin } from "./plan.js"\nimport * as InfiniteocGoal from "./infiniteoc-goal.js"\nimport * as InfiniteocFrontend from "./infiniteoc-frontend.js"')
+      return replace(source, "  PlanPlugin.Plugin,\n", "  PlanPlugin.Plugin,\n  InfiniteocGoal.Plugin,\n  InfiniteocFrontend.Plugin,\n")
     })
     await api.patch("packages/tui/src/component/prompt/index.tsx", (source) =>
       replace(source, 'agentLabel: agent ? Locale.titlecase(agent.id) : undefined,', 'agentLabel: agent ? agent.name : undefined,'))

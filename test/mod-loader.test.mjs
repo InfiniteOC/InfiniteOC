@@ -220,7 +220,7 @@ test("bundled mod applies through the real loader to a minimal copy of pinned up
   }
   const mods = await loadMods(["mods/infiniteoc/index.mjs"], repository)
   const { changes } = await applyMods(mods, root, { reducedMotion: true })
-  assert.equal(changes.length, 31)
+  assert.equal(changes.length, 32)
   assert.ok(changes.every(({ mod }) => mod === "infiniteoc"))
   const read = (path) => readFile(join(root, path), "utf8")
   const theme = JSON.parse(await read("packages/tui/src/theme/assets/v2/infiniteoc.json"))
@@ -256,7 +256,7 @@ test("bundled mod applies through the real loader to a minimal copy of pinned up
   const configuredAgent = await read(targets[6])
   assert.match(await read("packages/core/src/infiniteoc/guidance.ts"), /Configured permissions and approvals always apply/)
   assert.match(await read("packages/core/src/session/context.ts"), /infiniteocGuidance\[agent\.id\]/)
-  assert.match(await read("packages/core/src/plugin/internal.ts"), /PlanPlugin\.Plugin,\n  InfiniteocGoal\.Plugin,/)
+  assert.match(await read("packages/core/src/plugin/internal.ts"), /PlanPlugin\.Plugin,\n  InfiniteocGoal\.Plugin,\n  InfiniteocFrontend\.Plugin,/)
   assert.match(await read("packages/core/src/plugin/infiniteoc-goal.ts"), /name: "goal"/)
   assert.match(configuredAgent, /editor.default\(Agent.defaultID\)/)
   assert.match(configuredAgent, /current.id !== Agent.defaultID && current.mode !== "subagent"/)

@@ -27,7 +27,7 @@ test("guidance names only subagents that exist", async () => {
 })
 
 test("every skill ID the guidance recommends is bundled", async () => {
-  const section = guidance.build.split("[Skills]")[1].split("[Replies]")[0]
+  const section = guidance.build.split("[Skills]")[1].split("\n\n[")[0]
   const ids = [...section.matchAll(/\b([a-z]+(?:-[a-z]+)+|impeccable)\b/g)].map((match) => match[1])
   assert.ok(ids.length >= 8, ids.join(","))
   for (const id of ids) await access(new URL(`${id}/SKILL.md`, skills))

@@ -45,14 +45,14 @@
   },
   {
     "id": "frontend-design",
-    "description": "Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults.",
+    "description": "Required before creating or changing any user-facing UI (HTML, CSS, JSX/TSX, Vue, Svelte, Astro, templates, email HTML, landing pages, dashboards, components). Gives a fixed process, design direction that avoids templated defaults, a measurable quality floor (type, spacing, contrast, responsive, accessibility, states) and a render-and-check verification loop, so any model ships a good frontend.",
     "category": "design-documents",
     "repository": "https://github.com/anthropics/skills",
     "commit": "8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4",
     "source": "$HOME/opencodemaxxing/sources/anthropics--skills/skills/frontend-design/SKILL.md",
     "installed": "$HOME/.config/opencode/skill-library/frontend-design",
-    "sha256": "d91970639e9f5c37682ac7ab60094d35f1c7c1f38d731bd56396563aee10c1d3",
-    "adaptation": "metadata.opencode/autoinvoke=false; body and supporting resources unchanged"
+    "sha256": "fcf690143421dd49517e319daf502281baed1c545b43a6e95c38d88445dd7920",
+    "adaptation": "listed (autoinvoke on); rewritten for InfiniteOC: existing-product mode, required plan, measurable quality floor, render-and-inspect verification, checklist; enforced by the frontend gate in mods/infiniteoc"
   },
   {
     "id": "internal-comms",

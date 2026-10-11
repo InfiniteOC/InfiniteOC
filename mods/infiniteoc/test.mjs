@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { readFile, writeFile, mkdtemp, rm } from "node:fs/promises"
+import { readFile, writeFile, mkdtemp, rm, access } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import mod from "./index.mjs"
@@ -28,7 +28,7 @@ async function apply(reducedMotion = false, files = new Map()) {
 
 test("applies against local source, preserving all permission-rule code", async () => {
   const files = await apply()
-  assert.equal(files.size, 30)
+  assert.equal(files.size, 31)
   const file = "packages/core/src/plugin/agent.ts"
   const original = await readFile(path.join(root, file), "utf8")
   const rules = (source) => source.split("\n").filter((line) => /\.permissions|action:|resource:|effect:|Permission\.merge/.test(line))
@@ -55,7 +55,7 @@ test("applies against local source, preserving all permission-rule code", async 
   assert.match(context, /import \{ infiniteocGuidance \} from "\.\.\/infiniteoc\/guidance\.js"/)
   assert.match(context, /Instructions\.Key\.make\("infiniteoc\/guidance"\)[\s\S]*infiniteocGuidance\[agent\.id\]/)
   assert.match(files.get("packages/core/src/config/plugin/skill.ts"), /if \(process\.env\.INFINITEOC_SKILLS\) add\(Skill\.DirectorySource\.make/)
-  assert.match(files.get("packages/core/src/plugin/internal.ts"), /import \* as InfiniteocGoal from "\.\/infiniteoc-goal\.js"[\s\S]*PlanPlugin\.Plugin,\n  InfiniteocGoal\.Plugin,/)
+  assert.match(files.get("packages/core/src/plugin/internal.ts"), /import \* as InfiniteocGoal from "\.\/infiniteoc-goal\.js"[\s\S]*PlanPlugin\.Plugin,\n  InfiniteocGoal\.Plugin,\n  InfiniteocFrontend\.Plugin,/)
   assert.match(config, /agent\.hidden = true/)
   assert.match(config, /editor.default\(Agent.defaultID\)/)
   assert.match(config, /current.id !== Agent.defaultID && current.mode !== "subagent"/)
@@ -190,4 +190,35 @@ test("/goal keeps going until the goal is verified, and stops on interrupt, bloc
   // A new /goal resets the counters.
   assert.deepEqual(decide([...capped, user(startText("next")), reply("x"), idle()]), { action: "continue", goal: "next", turn: 1 })
   for (const text of [startText(goal), continueText(goal, 3), verifyText(goal)]) assert.match(text, /GOAL (COMPLETE|VERIFIED)/)
+})
+
+test("frontend gate covers UI files from edit, write and patch, and names the skill", async (t) => {
+  const source = await readFile(new URL("./frontend.ts", import.meta.url), "utf8")
+  const dir = await mkdtemp(path.join(tmpdir(), "frontend-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(path.join(dir, "frontend.ts"), source.split("export const Plugin")[0].replace(/^import .*$/gm, ""))
+  const { targets, isUiFile, refusal, loaded, SKILL } = await import(path.join(dir, "frontend.ts"))
+  assert.equal(SKILL, "frontend-design")
+  await access(new URL(`../../skills/${SKILL}/SKILL.md`, import.meta.url))
+  for (const file of ["a/index.html", "b.css", "c.module.scss", "App.tsx", "x.jsx", "Card.vue", "Page.svelte", "p.astro"]) assert.ok(isUiFile(file), file)
+  for (const file of ["server.ts", "util.js", "README.md", "style.css.map", "data.json"]) assert.ok(!isUiFile(file), file)
+  assert.deepEqual(targets("edit", { path: "src/App.tsx" }), ["src/App.tsx"])
+  assert.deepEqual(targets("write", { path: "x.css", content: "" }), ["x.css"])
+  assert.deepEqual(targets("read", { path: "x.css" }), [])
+  assert.deepEqual(targets("edit", null), [])
+  const patch = "*** Begin Patch\n*** Add File: web/a.html\n+<p>\n*** Update File: lib/b.ts\n*** Move to: web/b.tsx\n@@\n*** Delete File: old.css\n*** End Patch"
+  assert.deepEqual(targets("patch", { patchText: patch }), ["web/a.html", "lib/b.ts", "web/b.tsx"])
+  assert.match(refusal(["x.css"]), /skill tool with id "frontend-design"/)
+  const tool = (id, status = "completed") => ({ type: "assistant", content: [{ type: "tool", name: "skill", state: { status, input: { id } } }] })
+  assert.equal(loaded([{ type: "user", text: "make a page" }]), false)
+  assert.equal(loaded([tool("impeccable")]), false)
+  assert.equal(loaded([tool(SKILL, "error")]), false)
+  assert.equal(loaded([tool(SKILL)]), true)
+  assert.equal(loaded([{ type: "skill", skill: SKILL }]), true)
+})
+
+test("every agent's guidance requires the frontend-design skill for UI work", () => {
+  assert.match(guidance.build, /\[Frontend\][\s\S]*loading the frontend-design skill[\s\S]*render and inspect/)
+  assert.match(guidance.general, /load the frontend-design skill first/)
+  assert.match(guidance.reviewer, /load the frontend-design skill and review/)
 })
