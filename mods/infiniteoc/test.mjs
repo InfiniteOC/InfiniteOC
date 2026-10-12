@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { readFile, writeFile, mkdtemp, rm, access } from "node:fs/promises"
+import { readFile, writeFile, mkdir, mkdtemp, rm, access } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import mod from "./index.mjs"
@@ -233,14 +233,35 @@ test("ponytail applies to coding turns only, honors levels and per-session stop"
   const skill = await readFile(new URL("../../skills/ponytail/SKILL.md", import.meta.url), "utf8")
   const dir = await mkdtemp(path.join(tmpdir(), "ponytail-"))
   t.after(() => rm(dir, { recursive: true, force: true }))
-  await writeFile(path.join(dir, "ponytail.ts"), source.split("export const Plugin")[0].replace(/^import .*$/gm, "").replace('"__PONYTAIL_SKILL__"', JSON.stringify(skill)))
+  await writeFile(path.join(dir, "ponytail.ts"), `import { readFileSync } from "node:fs"
+import { homedir } from "node:os"
+import path from "node:path"
+` + source.split("export const Plugin")[0].replace(/^import .*$/gm, "").replace('"__PONYTAIL_SKILL__"', JSON.stringify(skill)))
   const { decide, rules, parseMode, DEFAULT_MODE, readMode } = await import(path.join(dir, "ponytail.ts"))
   assert.equal(DEFAULT_MODE, "off")
-  delete process.env.PONYTAIL_DEFAULT_MODE
-  assert.equal(readMode(), "off") // no state file in the stripped harness, no env override
-  process.env.PONYTAIL_DEFAULT_MODE = "auto"
-  assert.equal(readMode(), "auto")
-  delete process.env.PONYTAIL_DEFAULT_MODE
+  // State file wins over env, env over the shipped default; isolate XDG_CONFIG_HOME first.
+  const prevMode = process.env.PONYTAIL_DEFAULT_MODE
+  const prevXdg = process.env.XDG_CONFIG_HOME
+  try {
+    process.env.XDG_CONFIG_HOME = path.join(dir, "home")
+    const stateFile = path.join(process.env.XDG_CONFIG_HOME, "opencode", ".ponytail-active")
+    await mkdir(path.dirname(stateFile), { recursive: true })
+    delete process.env.PONYTAIL_DEFAULT_MODE
+    assert.equal(readMode(), "off")
+    process.env.PONYTAIL_DEFAULT_MODE = "auto"
+    assert.equal(readMode(), "auto")
+    await writeFile(stateFile, "full")
+    assert.equal(readMode(), "full")
+    await writeFile(stateFile, "bogus")
+    assert.equal(readMode(), "auto")
+    delete process.env.PONYTAIL_DEFAULT_MODE
+    assert.equal(readMode(), "off")
+  } finally {
+    if (prevMode === undefined) delete process.env.PONYTAIL_DEFAULT_MODE
+    else process.env.PONYTAIL_DEFAULT_MODE = prevMode
+    if (prevXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = prevXdg
+  }
   const user = (text) => ({ role: "user", content: [{ type: "text", text }] })
   const edit = { role: "assistant", content: [{ type: "tool-call", id: "1", name: "edit", input: {} }] }
   const read = { role: "assistant", content: [{ type: "tool-call", id: "2", name: "read", input: {} }] }

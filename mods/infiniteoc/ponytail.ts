@@ -100,7 +100,7 @@ export const Plugin = define({
     yield* ctx.command.transform((editor) => {
       editor.add({
         name: "ponytail",
-        description: "lazy senior dev mode: auto (default), lite, full, ultra, off",
+        description: "lazy senior dev mode: off (default), auto, lite, full, ultra",
         execute: (input) =>
           Effect.suspend(() => {
             const wanted = input.prompt.text.trim()
