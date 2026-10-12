@@ -9,3 +9,5 @@ backups/
 *.backup*
 **/.*-backup-*/
 .DS_Store
+packs/
+infiniteoc.packs.json

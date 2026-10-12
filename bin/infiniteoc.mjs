@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 import { readdir } from "node:fs/promises"
 import { join } from "node:path"
-import { config, prepare, launch, doctor, exists, home, run } from "../src/launcher.mjs"
+import { config, prepare, launch, doctor, doctorFix, exists, home, run } from "../src/launcher.mjs"
 import { update, settle } from "../src/updater.mjs"
-import { loadSettings, settingsFile } from "../mods/infiniteoc/settings/settings-store.mjs"
+import { needsWizard, runWizard, terminalIO } from "../src/wizard.mjs"
+import { addPack, removePack } from "../src/packs.mjs"
+import { findTeamFile, readTeamFile, isTrusted } from "../src/team.mjs"
+import { loadSettings, saveSettings, settingsFile } from "../mods/infiniteoc/settings/settings-store.mjs"
 import { loadMods } from "../src/mod-loader.mjs"
 import { scaffoldFeature, checkFeatures, setFeatureEnabled } from "../src/feature-scaffold.mjs"
 
@@ -17,9 +20,14 @@ try {
 
   infiniteoc setup               Fetch dependencies, apply mods, build isolated CLI
   infiniteoc rebuild             Reapply mods from pristine source and rebuild
+  infiniteoc wizard              Re-run the first-run setup (provider, model, theme, updates, ponytail)
+  infiniteoc team [trust|revoke] Show or approve the project's infiniteoc.team.json
   infiniteoc update              Fast-forward this checkout to its remote branch, then rebuild
-  infiniteoc mods                List configured mods
+  infiniteoc mods                List configured mods (including installed packs)
+  infiniteoc mod add URL         Install a mod pack from git, pinned by --commit and --sha256 (prompts if omitted)
+  infiniteoc mod remove ID       Remove an installed pack
   infiniteoc doctor [--json]     Read-only checks; never downloads or changes anything
+  infiniteoc doctor --fix        Repair: fetch missing tools, relink MCP paths, rebuild a stale build
   infiniteoc feature new ID      Create a typed, working TUI slash-command mod (not enabled)
   infiniteoc feature check ID    Check feature declarations and pinned UI integration
   infiniteoc feature enable ID   Check it, then append it to infiniteoc.json mods (keeps a .bak)
@@ -47,13 +55,55 @@ Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
       console.log(await setFeatureEnabled(home, id, true) ? `Enabled ${id} (backup: infiniteoc.json.bak). A running opendaemon publishes its live commands now; compiled parts apply on the next launch, which rebuilds automatically.` : `${id} is already enabled.`)
     } else if (action === "disable") console.log(await setFeatureEnabled(home, id, false) ? `Disabled ${id} (backup: infiniteoc.json.bak); the next launch rebuilds without it.` : `${id} is not enabled.`)
     else throw new Error(usage)
+  } else if (args[0] === "mod") {
+    const [, action, target, ...rest] = args
+    const flag = (name) => rest.includes(name) ? rest[rest.indexOf(name) + 1] : undefined
+    const usage = "Usage: infiniteoc mod add GIT_URL [--commit FULL_SHA --sha256 DIGEST] | infiniteoc mod remove ID"
+    if (action === "add" && target) {
+      const tty = process.stdin.isTTY && process.stderr.isTTY
+      const io = tty ? terminalIO() : undefined
+      const confirm = io && (async (found) => {
+        console.error(`\nPack code runs with your permissions, like any mod. Review it first.\n  url     ${found.url}\n  commit  ${found.commit}\n  sha256  ${found.sha256}`)
+        return /^y/i.test(await io.ask("Install this exact version? [y/N] ") ?? "")
+      })
+      try {
+        const result = await addPack({ home, url: target, commit: flag("--commit"), sha256: flag("--sha256"), confirm, existing: (await loadMods(settings.mods, home)).map(mod => mod.id) })
+        console.log(`Installed ${result.id}\n  pin: --commit ${result.commit} --sha256 ${result.sha256}\nIt is built in on the next launch.`)
+      } finally { io?.close() }
+    } else if (action === "remove" && target) {
+      await removePack(home, target)
+      console.log(`Removed ${target}; the next launch rebuilds without it.`)
+    } else throw new Error(usage)
   } else if (args[0] === "mods") {
     for (const mod of await loadMods(settings.mods, home)) console.log(`${mod.id}@${mod.version ?? "local"}  ${mod.filename}`)
   } else if (args[0] === "doctor") {
-    const report = await doctor(settings)
-    if (args[1] === "--json") console.log(JSON.stringify(report, null, 2))
-    else for (const { ok, detail, hint } of Object.values(report)) console.log(ok ? `✓ ${detail}` : `✗ ${detail}\n    ${hint}`)
+    let report = await doctor(settings)
+    if (args.includes("--fix")) {
+      const did = await doctorFix(settings, report)
+      for (const line of did) console.error(`[InfiniteOC] fixed: ${line}`)
+      if (!did.length) console.error("[InfiniteOC] nothing to fix")
+      report = await doctor(settings)
+    }
+    if (args.includes("--json")) console.log(JSON.stringify(report, null, 2))
+    else for (const { ok, warn, detail, hint } of Object.values(report)) console.log(warn ? `! ${detail}\n    ${hint}` : ok ? `✓ ${detail}` : `✗ ${detail}\n    ${hint}`)
     if (Object.values(report).some(check => !check.ok)) process.exitCode = 1
+  } else if (args[0] === "wizard") {
+    const io = terminalIO()
+    try { await runWizard({ io }) } finally { io.close() }
+  } else if (args[0] === "team") {
+    const file = await findTeamFile(process.cwd())
+    if (!file) throw new Error("No infiniteoc.team.json in this directory or its parents (up to the git root)")
+    const team = await readTeamFile(file)
+    const saved = await loadSettings(settingsFile())
+    console.log(`${file}\n  sets: ${Object.keys(team.settings).join(", ") || "nothing"}${team.ignored.length ? `\n  ignored (not allowed): ${team.ignored.join(", ")}` : ""}\n  ${isTrusted(saved, team) ? "approved" : "not approved"}`)
+    if (args[1] === "trust") {
+      await saveSettings({ ...saved, team: { ...saved.team, trusted: { ...saved.team?.trusted, [file]: team.sha256 } } })
+      console.log("Approved. It applies from the next launch, until the file changes.")
+    } else if (args[1] === "revoke") {
+      const { [file]: _, ...rest } = saved.team?.trusted ?? {}
+      await saveSettings({ ...saved, team: { ...saved.team, trusted: rest } })
+      console.log("Approval removed.")
+    } else if (args[1]) throw new Error("Usage: infiniteoc team [trust|revoke]")
   } else if (args[0] === "update") {
     // InfiniteOC's own checkout only; stock OpenCode is never updated. The new code rebuilds in a fresh process.
     // A settings file that cannot be read must fail the update: it may hold updates.requireSigned.

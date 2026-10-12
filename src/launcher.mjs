@@ -8,12 +8,17 @@ import { constants, uptime } from "node:os"
 import { setTimeout as sleep } from "node:timers/promises"
 import { loadMods, applyMods } from "./mod-loader.mjs"
 import { applyTraffic, probeSocks } from "./traffic.mjs"
-import { loadSettings, settingsFile } from "../mods/infiniteoc/settings/settings-store.mjs"
+import { loadSettings, saveSettings, settingsFile, providerConfigFile } from "../mods/infiniteoc/settings/settings-store.mjs"
 import { ensureDaemon, daemonPaths, digestTree } from "./opendaemon.mjs"
 import { daemonRequest } from "./daemon-client.mjs"
 import { installDaemonTool } from "./opendaemon-tool.mjs"
 import { update, settle } from "./updater.mjs"
 import { fx } from "./fx.mjs"
+import { needsWizard, runWizard, terminalIO } from "./wizard.mjs"
+import { applyTeam } from "./team.mjs"
+import { packEntries } from "./packs.mjs"
+import { isCrash, writeCrashReport } from "./crash.mjs"
+import { missingPaths, repairPaths } from "./mcp-paths.mjs"
 
 export const home = resolve(dirname(fileURLToPath(import.meta.url)), "..")
 // Matches upstream build.ts --single target naming: cli-<os>-<arch>.
@@ -52,7 +57,12 @@ export async function config(base = home) {
   const text = await readFile(file, "utf8")
   try {
     const value = JSON.parse(text)
-    if (/^v\d+\.\d+\.\d+$/.test(value?.upstream) && Array.isArray(value.mods)) return value
+    if (/^v\d+\.\d+\.\d+$/.test(value?.upstream) && Array.isArray(value.mods)) {
+      // Installed packs whose files still match their pin join the mod list; a changed one is named and left out.
+      const { entries, skipped } = await packEntries(base)
+      for (const reason of skipped) console.error(`[InfiniteOC] Pack not loaded (${reason}); reinstall it with infiniteoc mod remove/add`)
+      return { ...value, mods: [...value.mods, ...entries] }
+    }
     throw new Error("must contain an exact upstream tag and mods array")
   } catch (error) { throw new Error(`${file}: ${error.message}`) }
 }
@@ -202,7 +212,20 @@ export async function launch(args, settings) {
   const notices = []
   const notice = text => { notices.push(text); console.error(`[InfiniteOC] ${text}`) }
   const file = settingsFile()
-  const saved = await loadSettings(file).catch(error => { throw new Error(`${file}: ${error.message}. Fix or delete it to restore defaults.`) })
+  const unreadable = error => { throw new Error(`${file}: ${error.message}. Fix or delete it to restore defaults.`) }
+  await loadSettings(file).catch(unreadable)
+  // First launch on a terminal only (a TUI start, not a one-shot command).
+  if (!process.env.INFINITEOC_UPDATED && !args.some(arg => arg.startsWith("-")) && args.length <= 1 && await needsWizard()) {
+    const io = terminalIO()
+    try { await runWizard({ io }) } finally { io.close() }
+  }
+  // Personal settings, with an approved infiniteoc.team.json from the project merged underneath.
+  const interactive = process.stdin.isTTY && process.stderr.isTTY
+  const askIO = interactive ? terminalIO() : undefined
+  let team
+  try { team = await applyTeam({ file, cwd: process.cwd(), ask: askIO?.ask, load: loadSettings, save: saveSettings }).catch(unreadable) } finally { askIO?.close() }
+  const saved = team.saved
+  for (const text of team.notices) notice(text)
   // Self-update first; the updated launcher, mods and config then run (and rebuild) in a fresh process.
   if (process.env.INFINITEOC_UPDATED) notice(`Updated InfiniteOC ${process.env.INFINITEOC_UPDATED}`)
   else if (process.env.INFINITEOC_ROLLBACK) notice(process.env.INFINITEOC_ROLLBACK)
@@ -234,7 +257,7 @@ export async function launch(args, settings) {
   try {
     // INFINITEOC_UI_CLIENT: one opendaemon client id per launched UI, inherited by its server, terminals and agent.
     // INFINITEOC_SKILLS: the bundled skill library, registered by mods/infiniteoc (mostly unlisted, loadable by ID).
-    const context = { args: [...args], env: { ...traffic.env, INFINITEOC_SETTINGS_FILE: file, INFINITEOC: "1", OPENCODE_CLIENT: "InfiniteOC", OPENCODE_TUI_CHANNEL: "infiniteoc", INFINITEOC_UI_CLIENT: randomUUID(), INFINITEOC_SKILLS: join(home, "skills") }, cwd: process.cwd() }
+    const context = { args: [...args], env: { ...traffic.env, INFINITEOC_SETTINGS_FILE: file, INFINITEOC_HOME: home, INFINITEOC: "1", OPENCODE_CLIENT: "InfiniteOC", OPENCODE_TUI_CHANNEL: "infiniteoc", INFINITEOC_UI_CLIENT: randomUUID(), INFINITEOC_SKILLS: join(home, "skills") }, cwd: process.cwd() }
     // Possibly inherited from an enclosing InfiniteOC session; only this launch's values may reach the TUI.
     for (const key of ["INFINITEOC_DAEMON_SOCKET", "INFINITEOC_LIVE_MANIFEST", "INFINITEOC_NOTICE", "INFINITEOC_UPDATED", "INFINITEOC_ROLLBACK"]) delete context.env[key]
     if (traffic.socks && !await probeSocks(traffic.socks.host, traffic.socks.port))
@@ -250,7 +273,12 @@ export async function launch(args, settings) {
     await hooks.emit("beforeLaunch", context)
     // Saved before the TUI takes the terminal. It restores it on exit and INT/TERM/HUP; SIGKILL, SIGSEGV and native aborts skip that.
     const tty = process.stdin.isTTY && process.stdout.isTTY ? spawnSync("stty", ["-g"], { stdio: ["inherit", "pipe", "ignore"], encoding: "utf8" }).stdout?.trim() : ""
+    const startedAt = new Date()
     const code = await run(prepared.binary, context.args, { cwd: context.cwd, env: context.env })
+    if (isCrash(code, { tui: !!tty })) {
+      const report = await writeCrashReport({ home, code, args: context.args, env: context.env, socket: context.env.INFINITEOC_DAEMON_SOCKET, manifest: prepared.manifest, startedAt }).catch(() => undefined)
+      if (report) console.error(`[InfiniteOC] OpenCode crashed (exit ${code}). Crash report saved to ${report}`)
+    }
     if (tty && code > 128 && ![129, 130, 143].includes(code)) {
       spawnSync("stty", [tty], { stdio: ["inherit", "ignore", "ignore"] })
       // Main screen, cursor on, mouse/focus/paste/color-scheme reporting off, kitty keyboard flags popped, modifyOtherKeys off, any synchronized frame ended.
@@ -266,6 +294,8 @@ export async function launch(args, settings) {
 export async function doctor(settings) {
   const report = {}
   const check = (name, ok, detail, hint, data) => { report[name] = { ok, detail, hint: ok ? undefined : hint, ...data } }
+  // A warning is not a failure (exit code stays 0): the launcher repairs it by itself, or it only affects an optional tool.
+  const warn = (name, detail, hint, data) => { report[name] = { ok: true, warn: true, detail, hint, ...data } }
   check("platform", supported, `platform ${target}`, "InfiniteOC builds on Linux and macOS (x64/arm64)")
   check("node", Number(process.versions.node.split(".")[0]) >= 22, `node ${process.version}`, "install Node.js 22 or newer")
   const bun = bunVersion(join(home, ".tools/node_modules/.bin/bun"))
@@ -276,8 +306,17 @@ export async function doctor(settings) {
     const key = await fingerprint(settings, await loadMods(settings.mods, home))
     const built = await readFile(join(home, ".runtime/build.json"), "utf8").then(JSON.parse).catch(() => undefined)
     const fresh = built?.key === key && await exists(binary)
-    check("build", fresh, built ? `build from ${built.builtAt} is ${fresh ? "fresh" : "stale"}` : "no finished build", "next launch rebuilds")
+    if (fresh) check("build", true, `build from ${built.builtAt} is fresh`)
+    else warn("build", built ? `build from ${built.builtAt} is stale` : "no finished build", "the next launch rebuilds; infiniteoc doctor --fix rebuilds now", { fix: "build" })
   } catch (error) { check("build", false, `mods failed to load: ${error.message}`, "fix the mod") }
+  // Optional tools (a missing GIMP or Roblox checkout) must not fail the whole report.
+  const mcp = []
+  for (const file of [join(home, "opencode.json"), providerConfigFile()]) {
+    const config = await readFile(file, "utf8").then(JSON.parse, () => undefined)
+    for (const { server, path } of config ? await missingPaths(config, home) : []) mcp.push({ file, server, path })
+  }
+  if (mcp.length) warn("mcp", `MCP paths missing: ${mcp.map(({ server, path }) => `${server} ${path}`).join("; ")}`, "install the tool under .tools, or edit the path; infiniteoc doctor --fix relinks paths that exist in this install", { fix: "mcp", files: [...new Set(mcp.map(item => item.file))] })
+  else check("mcp", true, "MCP server paths exist")
   const { socket } = daemonPaths(home)
   try {
     const status = await daemonRequest(socket, "GET", "/status", undefined, 2000)
@@ -302,5 +341,25 @@ export async function doctor(settings) {
       check("socks", reachable, `${socksLabel(saved.traffic.mode, traffic.socks)} ${reachable ? "reachable" : "unreachable"}`, "start it, or change /settings → InfiniteOC Settings → Traffic")
     }
   } catch (error) { check("settings", false, `settings ${file}: ${error.message}`, "fix or delete it to restore defaults") }
+  for (const name of ["bun", "upstream"]) if (!report[name].ok) report[name].fix = "tools"
   return report
+}
+/**
+ * Repairs what doctor flagged: missing bun/upstream (downloads), legacy MCP paths, a stale build. Returns what it did.
+ * A rebuild is skipped while a UI is connected: replacing the generated source under a live agent is not safe.
+ */
+export async function doctorFix(settings, report) {
+  const did = []
+  const fixes = new Set(Object.values(report).map(item => item.fix).filter(Boolean))
+  if (fixes.has("tools")) { await bootstrap(settings); did.push("fetched missing tools and upstream source") }
+  if (fixes.has("mcp")) {
+    let count = 0
+    for (const file of report.mcp.files) count += await repairPaths(file, home)
+    did.push(count ? `relinked ${count} MCP path(s) to ${home}/.tools` : "no MCP path could be relinked (the files do not exist in this install)")
+  }
+  if (fixes.has("build") || fixes.has("tools")) {
+    if (report.daemon?.clients > 0) did.push(`skipped the rebuild: ${report.daemon.clients} UI(s) are running; restart them, then run infiniteoc rebuild`)
+    else { await prepare(settings); did.push("rebuilt") }
+  }
+  return did
 }
