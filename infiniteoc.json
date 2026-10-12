@@ -4,7 +4,8 @@
     "./mods/infiniteoc/index.mjs",
     "./mods/clearall/index.mjs",
     "./mods/health/index.mjs",
-    "./mods/deep-deliberation/index.mjs"
+    "./mods/deep-deliberation/index.mjs",
+    "./mods/auto-loop/index.mjs"
   ],
   "options": {
     "reducedMotion": false
