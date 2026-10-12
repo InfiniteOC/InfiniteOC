@@ -282,3 +282,25 @@ test("temporary scripts target capable clients and overlays do not survive UI re
   assert.equal((await call("POST", "/poll", { client: "ui1", scripting: true })).temporary.commands.length, 0)
   assert.equal(await readFile(path.join(base, "mods/test/index.mjs"), "utf8"), "first")
 })
+test("dev mode shows compiler diagnostics, reports reload time, polls faster, and also watches installed packs", async t => {
+  let failure
+  const { base, daemon, call } = await fixture(t, { interval: 5000, compiler: async revision => { if (failure) throw failure; return { revision, commands: [] } } })
+  await waitUntil(() => daemon.state.job.status === "published")
+  failure = new Error("syntax error at command.tsx:3")
+  await call("POST", "/reload", {})
+  await waitUntil(() => daemon.state.job.status === "failed")
+  assert.equal(daemon.state.job.detail, undefined, "off by default")
+  assert.deepEqual(await call("POST", "/dev", { enabled: true }), { dev: true, autoReload: true })
+  await call("POST", "/reload", {})
+  await waitUntil(() => daemon.state.job.status === "failed" && daemon.state.job.detail)
+  assert.match(daemon.state.job.detail, /command\.tsx:3/)
+  // A 5s interval would miss this within the test; dev mode checks every 250ms.
+  failure = undefined
+  await mkdir(path.join(base, "packs/demo"), { recursive: true })
+  await writeFile(path.join(base, "packs/demo/index.mjs"), "pack v1")
+  await writeFile(path.join(base, "infiniteoc.packs.json"), JSON.stringify({ demo: { url: "x", commit: "c", sha256: (await import("../src/packs.mjs").then(m => m.treeDigest(path.join(base, "packs/demo")))) } }))
+  await waitUntil(() => daemon.state.job.status === "published" && daemon.state.job.reason === "local mod files changed")
+  assert.equal(typeof (await call("GET", "/status")).events.findLast(event => event.stage === "published").ms, "number")
+  assert.deepEqual(await call("POST", "/dev", { enabled: false }), { dev: false, autoReload: true })
+  await assert.rejects(call("POST", "/dev", { enabled: "yes" }), /enabled must be boolean/)
+})

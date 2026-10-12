@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url"
 import { daemonRequest } from "./daemon-client.mjs"
 import { validateCommand, safeError } from "./tui-features.mjs"
 import { buildLive } from "./live-build.mjs"
+import { packEntries } from "./packs.mjs"
 
 export const daemonPaths = base => ({ directory: path.join(base, ".opendaemon"), socket: path.join(base, ".opendaemon/control.sock"), manifest: path.join(base, ".opendaemon/live.json") })
 // Measured on macOS (Node 26): 104-byte socket paths work, 105 fail with EINVAL (no truncation). Linux sun_path is 108 incl. NUL.
@@ -28,7 +29,10 @@ export async function modsDigest(base) {
   const raw = await readFile(path.join(base, "infiniteoc.json"), "utf8")
   const config = JSON.parse(raw)
   const hash = createHash("sha256").update(raw)
-  for (const directory of new Set(config.mods.map(entry => path.dirname(path.resolve(base, entry))))) await digestTree(directory, hash)
+  // Installed packs are watched like mods; one that no longer matches its pin drops out of the list, which also changes the digest.
+  // ponytail: pack files are hashed twice per check (pin verification, then here); a pack of a few files makes that negligible.
+  const mods = [...config.mods, ...(await packEntries(base)).entries]
+  for (const directory of new Set(mods.map(entry => path.dirname(path.resolve(base, entry))))) await digestTree(directory, hash)
   return hash.digest("hex")
 }
 
@@ -54,7 +58,7 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
   // A raised flag outlives the daemon: `opendaemon restart` compiles nothing, only a rebuild does.
   const restartFile = path.join(paths.directory, "restart.json")
   const saved = await readFile(restartFile, "utf8").then(JSON.parse).catch(() => null)
-  const state = { pid: process.pid, startedAt: new Date().toISOString(), autoReload, revision: null, phase: "starting", restartRequired: Boolean(saved), restartReason: saved?.reason ?? null, job: null, events: [], clients: {}, messages: [] }
+  const state = { pid: process.pid, startedAt: new Date().toISOString(), autoReload, dev: false, revision: null, phase: "starting", restartRequired: Boolean(saved), restartReason: saved?.reason ?? null, job: null, events: [], clients: {}, messages: [] }
   const temporary = new Map()
   let temporaryBusy = false
   // `flagged` is the mod digest restartRequired last accounted for, so a rebuild-cleared flag is not re-raised for the same files.
@@ -75,7 +79,7 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
   }
   const defaultCompiler = revision => new Promise((resolve, reject) => {
     const resultFile = path.join(paths.directory, `${revision}.result.json`)
-    worker = spawn(process.execPath, [fileURLToPath(new URL("./live-build.mjs", import.meta.url)), base, paths.directory, revision, resultFile], { stdio: ["ignore", "pipe", "pipe"] })
+    worker = spawn(process.execPath, [fileURLToPath(new URL("./live-build.mjs", import.meta.url)), base, paths.directory, revision, resultFile], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, INFINITEOC_LIVE_DEV: state.dev ? "1" : "0" } })
     let buffer = "", error = "", invalid
     worker.stdout.on("data", data => {
       buffer += data
@@ -109,11 +113,13 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
         await rename(tmp, paths.manifest)
         state.revision = manifest.revision
         job.status = "published"; job.finishedAt = new Date().toISOString()
-        event("published", "Generation published; waiting for connected UI acknowledgements", { revision: manifest.revision })
+        event("published", "Generation published; waiting for connected UI acknowledgements", { revision: manifest.revision, ms: Date.parse(job.finishedAt) - Date.parse(job.startedAt) })
       } catch (error) {
         job.status = "failed"; job.finishedAt = new Date().toISOString()
         // Error excerpts may contain source secrets; publish only a safe summary or a framework-tagged reason.
+        // Dev mode (opendaemon dev) is an explicit opt-in on this same-user socket: the compiler's own diagnostics are shown.
         if (error?.safe) job.detail = error.message
+        else if (state.dev && error?.message) job.detail = error.message.slice(0, 1500)
         event("failed", job.detail ? `Live reload failed: ${job.detail}. Last working generation retained.` : "Live reload failed. Last working generation retained; check mod syntax, unique commands and ctx-only imports.")
       } finally {
         if (pending && !closed) { pending = false; reload("coalesced file changes") }
@@ -183,6 +189,15 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
         } finally { temporaryBusy = false }
         return
       }
+      if (request.method === "POST" && url.pathname === "/dev") {
+        if (typeof body.enabled !== "boolean") { send(400, { error: "enabled must be boolean" }); return }
+        state.dev = body.enabled
+        // Dev mode implies watching local files; leaving it keeps whatever the user had.
+        if (body.enabled) state.autoReload = true
+        schedule()
+        event("dev", state.dev ? "Dev mode on: files are checked every 250ms and compile errors show their diagnostics" : "Dev mode off")
+        send(200, { dev: state.dev, autoReload: state.autoReload }); return
+      }
       if (request.method === "POST" && url.pathname === "/auto") {
         if (typeof body.enabled !== "boolean") { send(400, { error: "enabled must be boolean" }); return }
         state.autoReload = body.enabled; send(200, { autoReload: state.autoReload }); return
@@ -230,7 +245,8 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
       try { if (name !== live && Date.now() - (await lstat(generation)).mtimeMs > 86400000) await rm(generation, { recursive: true, force: true }) } catch {}
     }
   })()
-  const poll = setInterval(async () => {
+  let poll
+  const tick = async () => {
     // Pruning frees the 100-client cap for new UIs; it runs even with auto reload off.
     for (const [client, { seenAt }] of Object.entries(state.clients)) if (Date.now() - seenAt > 60000) delete state.clients[client]
     for (const [client] of temporary) if (!state.clients[client]) temporary.delete(client)
@@ -242,10 +258,12 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
       if (next !== baseline && state.autoReload && !closed) { baseline = next; flag(next, "Local mod changes detected; live commands reload automatically, compiled patches still need infiniteoc rebuild and a UI restart."); reload("local mod files changed") }
     } catch { event("watch-error", "Cannot inspect configured mods; last working generation retained") }
     finally { checking = false }
-  }, interval)
+  }
+  const schedule = () => { clearTimeout(poll); if (closed) return; poll = setTimeout(async () => { await tick(); if (!closed) schedule() }, state.dev ? Math.min(interval, 250) : interval) }
+  schedule()
   reload("daemon startup")
   return { paths, state, reload, async close() {
-    closed = true; clearInterval(poll)
+    closed = true; clearTimeout(poll)
     if (worker) { worker.kill("SIGTERM"); await new Promise(resolve => worker.once("exit", resolve)) }
     server.closeAllConnections()
     await new Promise(resolve => server.close(resolve))
