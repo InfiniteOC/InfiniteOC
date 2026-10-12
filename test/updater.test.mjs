@@ -4,6 +4,8 @@ import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises"
 import { execFileSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+process.env.INFINITEOC_OFFLINE = "0" // the checks under test must not depend on this machine's network or battery
+process.env.INFINITEOC_BATTERY = "0"
 import { update, inspect, updateMode } from "../src/updater.mjs"
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }).trim()
