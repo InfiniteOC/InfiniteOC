@@ -1,0 +1,23 @@
+{
+  "skill_name": "fiction-writing-prose-advanced",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I'm writing a short story about a woman who returns to her hometown after twenty years for her father's funeral. The story covers about three days but I want to imply the weight of those twenty years of absence. I have the scenes — the funeral, a conversation with her estranged sister, a walk through the old neighbourhood — but it feels episodic, like scenes stitched together rather than a unified story. How do I structure this so it feels inevitable and compressed rather than just sequential? Help me find the turn and build toward it.",
+      "expected_output": "Structural advice grounded in short story form principles — unity of effect, identifying the turn, temporal compression techniques, how to make the three scenes converge rather than merely follow each other. Should reference techniques like the telling detail for implying backstory, Le Guin's crowding/leaping, and specific strategies for managing time in compressed space. Should NOT just be generic writing advice.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "I'm 40,000 words into a novel with two POV characters — a mother and her adult son — set across two timelines (1990s and present day). The mother's timeline is more compelling but the son's present-day sections feel flat. The chapters alternate but the son's chapters feel like they're just waiting for the next mother chapter. My readers say the middle is sagging. How do I fix the structural problems without scrapping the dual timeline? I need specific craft advice on chapter architecture, subplot integration, and pacing across the two strands.",
+      "expected_output": "Detailed structural diagnosis and repair advice for a braided novel. Should address: voice differentiation between POVs, chapter architecture (propulsion, turns), why the son's strand lacks energy and how to fix it, pacing strategies for the middle, how the two timelines should create meaning through juxtaposition not just alternation. Should draw on novel-form principles and be specific to the described situation.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Write the opening 500 words of a short story in the style of a contemporary literary short story. The premise: a retired teacher sits in a hospital waiting room while her husband is in surgery. She notices a young couple across the room. Use close third person, present tense. I want the opening to establish voice, create a question, and imply decades of marriage through specific detail — without any exposition or backstory dumps. Make every detail earn its place.",
+      "expected_output": "A polished 500-word opening that demonstrates advanced short story craft — compressed characterization through telling detail, psychic distance control, the continuous present creating immediacy, specific sensory detail filtered through the POV character's consciousness, an implicit question driving the reader forward. No named emotions, no exposition, no generic detail. Every sentence should serve the unity of effect.",
+      "files": []
+    }
+  ]
+}

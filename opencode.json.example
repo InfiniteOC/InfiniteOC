@@ -1,0 +1,25 @@
+{
+  "mcp": {
+    "servers": {
+      "gimp": {
+        "type": "local",
+        "command": [
+          "uv",
+          "run",
+          "--directory",
+          "$HOME/InfiniteOC/.tools/gimp-mcp",
+          "gimp_mcp_server.py"
+        ]
+      },
+      "Roblox_Studio": {
+        "type": "local",
+        "command": [
+          "$HOME/InfiniteOC/.tools/roblox-mcp/roblox-mcp.sh"
+        ],
+        "timeout": {
+          "startup": 60000
+        }
+      }
+    }
+  }
+}

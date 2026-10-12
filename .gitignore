@@ -1,0 +1,17 @@
+.upstream/
+.runtime/
+.opendaemon/
+.tools/
+node_modules/
+*.log
+backups/
+*.bak*
+*.backup*
+**/.*-backup-*/
+.DS_Store
+# Local OpenCode config (personal MCP servers/paths); the tracked template is opencode.json.example.
+opencode.json
+# Secrets and credentials must never be committed.
+.env
+*.pem
+*.key

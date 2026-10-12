@@ -1,0 +1,101 @@
+{
+  "skill_name": "fiction-writing-comedy",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I'm writing a comic short story about a man who genuinely believes he is an excellent driver, but he is not. He keeps almost crashing but interprets every near-miss as evidence of his superior skills. The story is told in close third person from his POV. I have this paragraph:\n\n\"Gerald took the roundabout at speed, a technique he had developed over years of confident motoring. The red Vauxhall that had swerved onto the verge was simply in the wrong place. The cyclist who had leaped a hedge had probably done so for reasons unrelated to Gerald. Gerald checked his mirrors. Exemplary.\"\n\nThis feels close but not quite right. Diagnose what's working and what isn't, and revise the paragraph to make it as funny as possible while staying in his POV.",
+      "expected_output": "Expert analysis identifying the comic mechanics at work (unreliable narrator, gap between Gerald's interpretation and reality), diagnosing the specific weakness (probably the hedge/cyclist line and the final 'Exemplary' needing refinement), and a revised paragraph that sharpens the dignity violation and the specificity. Should reference relevant prose comedy techniques.",
+      "assertions": [
+        {
+          "name": "identifies unreliable narrator mechanism",
+          "type": "llm",
+          "value": "The response identifies and names the comic technique of the unreliable narrator, explaining that the comedy comes from the gap between Gerald's interpretation and what the reader understands"
+        },
+        {
+          "name": "diagnoses specific weakness not just generics",
+          "type": "llm",
+          "value": "The response identifies at least one specific weakness in the original paragraph, with concrete reasoning, not just generic 'add more specificity' advice"
+        },
+        {
+          "name": "provides revised paragraph",
+          "type": "llm",
+          "value": "The response includes a rewritten version of the paragraph that is in Gerald's POV and attempts to be funnier than the original"
+        },
+        {
+          "name": "revised version is actually funnier",
+          "type": "llm",
+          "value": "The revised paragraph is measurably funnier than the original - more specific details, sharper final beat, better rhythmic construction of the closing line"
+        },
+        {
+          "name": "references craft principle not just vibes",
+          "type": "llm",
+          "value": "The response references at least one comedy craft principle (specificity, timing, the short final sentence, dignity violation, rule of three, or similar) to justify the revision"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I'm developing a stand-up bit about how terrible I am at receiving compliments. Here's my current draft:\n\nSetup: \"I'm really bad at accepting compliments. Like when someone says 'you look great today,' I just freeze up and say something weird.\"\nPunchline: \"Last week someone told me I looked nice and I said 'you too' and then ran away.\"\n\nThe bit gets a mild response when I test it. Help me understand why it's not landing as hard as it should, and suggest how to develop it further including possible tags.",
+      "expected_output": "Analysis of the bit's structure using stand-up principles (premise is thin/generic, connector isn't specific enough, or the punchline doesn't have a strong enough second story), plus concrete suggestions for developing the premise (making it more specific to this comedian's experience), strengthening the punchline, and 2-3 possible tags that extend the bit.",
+      "assertions": [
+        {
+          "name": "diagnoses setup as too generic",
+          "type": "llm",
+          "value": "The response identifies that 'I'm bad at accepting compliments' is a generic premise that many comedians could own, and suggests making it more specific"
+        },
+        {
+          "name": "addresses punchline structure",
+          "type": "llm",
+          "value": "The response analyses the punchline's structure, whether it creates a genuine second story/reinterpretation or just describes awkward behaviour"
+        },
+        {
+          "name": "provides specific improvement suggestions",
+          "type": "llm",
+          "value": "The response gives at least two concrete suggestions for improving the bit, not just general advice"
+        },
+        {
+          "name": "includes tags",
+          "type": "llm",
+          "value": "The response proposes at least two possible tags that extend the original punchline"
+        },
+        {
+          "name": "references stand-up craft principles",
+          "type": "llm",
+          "value": "The response references at least one stand-up specific principle: specificity, premise vs joke distinction, connector, tags, or callbacks"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "I'm writing a sitcom spec episode. In my A-story, my protagonist (a mild-mannered museum curator named Diane) has accidentally agreed to organize the museum's annual gala while also trying to secretly return a borrowed item she shouldn't have taken. I've written the act break for Act One but it feels flat:\n\n\"Diane realised she had double-booked the gala venue with a taxidermist convention. She would need to sort this out.\"\n\nHow should I think about and rewrite this act break? What should the act one break be doing structurally, and what's wrong with my version?",
+      "expected_output": "Explanation of what an act one break needs to do in sitcom structure (end on a reversal or complication that raises stakes and creates forward momentum, not a problem to 'sort out'), analysis of why the current version is flat (it's a statement of a problem not a reversal; 'she would need to sort this out' deflates tension), and a rewritten act break that ends on the complication actively landing rather than being noted.",
+      "assertions": [
+        {
+          "name": "explains act break function",
+          "type": "llm",
+          "value": "The response explains what an act one break needs to accomplish structurally in a sitcom: raising stakes, creating forward momentum, ending on a reversal or active complication rather than a statement of problem"
+        },
+        {
+          "name": "diagnoses the flatness correctly",
+          "type": "llm",
+          "value": "The response identifies that 'she would need to sort this out' is the specific problem - it deflates rather than pressurizes, it's passive, it states a task rather than landing a complication"
+        },
+        {
+          "name": "addresses both comedy and structure",
+          "type": "llm",
+          "value": "The response addresses both the structural weakness (act break function) and the comedy weakness (it's not funny), not just one or the other"
+        },
+        {
+          "name": "provides rewritten act break",
+          "type": "llm",
+          "value": "The response includes at least one rewritten version of the act break that ends on an active complication or reversal"
+        },
+        {
+          "name": "uses sitcom-specific vocabulary",
+          "type": "llm",
+          "value": "The response uses sitcom-specific concepts: act break, reversal, escalation, stakes, complication - demonstrating screen comedy craft knowledge"
+        }
+      ]
+    }
+  ]
+}

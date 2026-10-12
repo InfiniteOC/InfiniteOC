@@ -1,0 +1,12 @@
+{
+  "upstream": "v2.0.21",
+  "mods": [
+    "./mods/infiniteoc/index.mjs",
+    "./mods/clearall/index.mjs",
+    "./mods/health/index.mjs",
+    "./mods/deep-deliberation/index.mjs"
+  ],
+  "options": {
+    "reducedMotion": false
+  }
+}

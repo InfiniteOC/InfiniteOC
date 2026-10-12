@@ -1,0 +1,20 @@
+{
+  "skill_name": "fiction-writing-poetry-advanced",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "I'm writing a sequence of poems about my grandmother's dementia — her gradual loss of memory and language, and my experience of watching someone become a stranger. I have about eight individual poems already drafted but they feel like a pile rather than a sequence. They're all good on their own but don't build toward anything. How do I architect this into a true sequence — something where the poems require each other and the whole is greater than the parts? What structural principles should I use, and how do I design the gaps between poems?",
+      "expected_output": "Expert guidance on sequence architecture — counter-voice, temporal registers, architectural turn, breathing pattern, the gap between poems. Specific to dementia/loss material."
+    },
+    {
+      "id": 2,
+      "prompt": "I want to write an elegy for my father. He was difficult — emotionally absent, sometimes cruel, occasionally tender, and I have genuinely mixed feelings. I don't want to write a hagiographic poem that pretends he was better than he was, but I also don't want to write an attack. I want to honor the complexity of what he was and what we were to each other. How do I approach this? What does the elegy form demand of me, and how do I write mourning that's honest about someone who hurt you?",
+      "expected_output": "Deep engagement with elegy form — the three movements, the anti-sentimentality discipline, the precision of accurate praise, contemporary models (Olds). Specific to complicated grief."
+    },
+    {
+      "id": 3,
+      "prompt": "Write a persona poem in the voice of Vermeer's Girl with a Pearl Earring — but make it genuinely literary, not just a voice exercise. The poem should do something that the painting cannot do. I want it to be the kind of poem that could be published in a serious literary journal — something with genuine ambiguity, a real turn, and stakes. Show me what you'd write and explain the craft decisions behind it.",
+      "expected_output": "A literary-grade persona/ekphrasis poem that demonstrates: the gap between what the speaker says and what the poem reveals, ekphrastic awareness of what the image cannot show, a genuine turn, compression, and specific craft vocabulary in the explanation."
+    }
+  ]
+}

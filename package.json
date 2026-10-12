@@ -1,0 +1,11 @@
+{
+  "name": "infiniteoc",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Source-backed OpenCode launcher and local mod framework",
+  "bin": { "infiniteoc": "bin/infiniteoc.mjs", "opendaemon": "bin/opendaemon.mjs" },
+  "scripts": { "start": "node bin/infiniteoc.mjs", "setup": "node bin/infiniteoc.mjs setup", "test": "node --test test/*.test.mjs mods/*/test.mjs" },
+  "engines": { "node": ">=22" }
+}
