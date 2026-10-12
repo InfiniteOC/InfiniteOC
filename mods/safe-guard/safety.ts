@@ -109,7 +109,7 @@ export const DANGEROUS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\bgit\s+clean\b[^|;&]*\s-\w*[fdx]/, "git clean deletes untracked files"],
   [/\bgit\s+(checkout|restore)\b[^|;&]*\s\.(\s|$)/, "discards all working tree changes"],
   [/\bgit\s+branch\b[^|;&]*\s-D\b/, "force-deletes a branch"],
-  [/\bgit\s+(stash\s+(drop|clear)|rebase|filter-branch|reflog\s+expire|merge|commit\b[^|;&]*--amend)/, "rewrites or merges history"],
+  [/\bgit\s+(stash\s+(drop|clear)|(rebase|merge)(?![\w-])|filter-branch|reflog\s+expire|commit\b[^|;&]*--amend)/, "rewrites or merges history"],
   [/\b(drop|truncate)\s+(table|database|schema)\b/i, "destructive SQL"],
   [/\bsudo\b|\bmkfs\b|\bdd\b[^|;&]*\bof=|\bchmod\s+-R\b|\bchown\s+-R\b/, "privileged or bulk system change"],
   [/\|\s*(sudo\s+)?(ba|z)?sh\b/, "pipes a download into a shell"],

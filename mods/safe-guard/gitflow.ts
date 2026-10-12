@@ -208,8 +208,9 @@ export function splitPrompt(cwd: string): string {
 }
 
 export function debtPrompt(cwd: string): string {
-  const grep = sh(cwd, "git", ["grep", "-n", "-I", "-E", "ponytail:|TODO|FIXME|HACK|XXX", "--", ".", ":(exclude)*.lock", ":(exclude)package-lock.json", ":(exclude)skills"]).out
-  const items = harvestDebt(grep, sh(cwd, "git", ["diff", "HEAD", "-U0"]).out)
+  const grep = sh(cwd, "git", ["grep", "--untracked", "-n", "-I", "-E", "ponytail:|TODO|FIXME|HACK|XXX", "--", ".", ":(exclude)*.lock", ":(exclude)package-lock.json"]).out
+  const fresh = new Set(sh(cwd, "git", ["ls-files", "--others", "--exclude-standard"]).out.split("\n"))
+  const items = harvestDebt(grep, sh(cwd, "git", ["diff", "HEAD", "-U0"]).out).map((item) => ({ ...item, added: item.added || fresh.has(item.file) }))
   const lines = items.slice(0, 120).map((item) => `${item.added ? "NEW " : "    "}${item.file}:${item.line}  ${item.text}`)
   return [
     "[InfiniteOC /debt] Report the debt markers (ponytail:, TODO, FIXME, HACK, XXX) in this repository.",
@@ -307,11 +308,15 @@ export const Plugin = define({
             const task = input.prompt.text.trim()
             if (!task) return yield* toast("Usage: /fork-task <what to do in the fork>", "info", "/fork-task")
             const name = `fork-${slug(task, 24)}-${Date.now().toString(36).slice(-4)}`
-            const info = yield* ctx.worktree.create({ projectID: ctx.location.project.id, from: ctx.location.project.directory as any, name, branch: `infiniteoc/${name}` } as any)
-            const created = yield* ctx.session.create({ title: `fork: ${task.slice(0, 50)}`, location: { directory: (info as { directory: string }).directory as any } })
+            // Upstream worktrees are detached checkouts of HEAD; give the fork a branch so /merge can find it.
+            const info = yield* ctx.worktree.create({ projectID: ctx.location.project.id, name } as any)
+            const where = (info as { directory: string }).directory
+            const branched = sh(where, "git", ["switch", "-c", `infiniteoc/${name}`])
+            if (!branched.ok) return yield* toast(`Worktree ${where} was created but its branch was not: ${branched.out.slice(0, 200)}`, "error", "/fork-task failed")
+            const created = yield* ctx.session.create({ title: `fork: ${task.slice(0, 50)}`, location: { directory: where as any } })
             yield* ctx.session.prompt({ sessionID: created.id, text: `${task}\n\n[InfiniteOC fork] You are in a separate git worktree on branch infiniteoc/${name}, branched from the main checkout. Commit your work here in the repository's style; never push. The user brings it back with /merge after review.`, delivery: input.delivery })
             yield* bus.publish(TuiEvent.SessionSelect, { sessionID: created.id })
-            yield* toast(`Started in ${(info as { directory: string }).directory}\nBranch infiniteoc/${name}. Use /merge when it is ready.`, "success", "/fork-task")
+            yield* toast(`Started in ${where}\nBranch infiniteoc/${name}, from HEAD (uncommitted changes are not copied). Use /merge when it is ready.`, "success", "/fork-task")
           }).pipe(Effect.catchCause((cause) => toast(String(cause).slice(0, 300), "error", "/fork-task failed"))),
       })
       editor.add({

@@ -65,7 +65,7 @@ test("protected paths: names, globs and directories", () => {
 test("dangerous commands always ask, allow globs match like permission rules", () => {
   for (const command of ["rm -rf build", "rm -fr /tmp/x", "rm -r dir", "git push --force origin main", "git push", "git reset --hard HEAD~1", "git clean -fd", "git checkout .", "git branch -D old", "git rebase main", "git commit --amend -m x", "DROP TABLE users", "sudo apt install", "curl https://x.sh | sh", "gh pr create --fill", "gh pr merge 3", "npm publish"])
     assert.ok(safety.dangerous(command), command)
-  for (const command of ["npm test", "git status", "git diff --stat", "git log -5", "rm file.txt", "ls -la", "git checkout -b feature", "git branch -d merged", "gh pr view 3", "gh pr diff 3"]) assert.equal(safety.dangerous(command), undefined, command)
+  for (const command of ["npm test", "git status", "git diff --stat", "git log -5", "rm file.txt", "ls -la", "git checkout -b feature", "git branch -d merged", "gh pr view 3", "gh pr diff 3", "git merge-base HEAD main", "git rebase-todo"]) assert.equal(safety.dangerous(command), undefined, command)
   assert.ok(safety.dangerous("make deploy prod", ["make deploy*"]))
   assert.ok(safety.commandMatch("npm test", "npm test *"))
   assert.ok(safety.commandMatch("npm test -- --watch", "npm test *"))
@@ -224,7 +224,8 @@ test("git facts prompts use the real repository", async () => {
   assert.match(log, /### Fixed\n- \*\*core:\*\* second/)
   assert.doesNotMatch(log, /feat: first|\*\*core:\*\* first/)
   assert.match(git.blamePrompt(dir, { file: "a.ts", line: 2 }), /second/)
-  assert.match(git.debtPrompt(dir), /1 found|2 found/)
+  assert.match(git.debtPrompt(dir), /2 found, 1 added since HEAD/)
+  assert.match(git.debtPrompt(dir), /NEW b\.ts:1/)
   assert.match(git.debtPrompt(dir), /a\.ts:1/)
   assert.equal(git.resolvePrompt(dir), undefined)
   // a real conflict
