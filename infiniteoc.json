@@ -10,7 +10,8 @@
     "./mods/prov-kit/index.mjs",
     "./mods/qual-checks/index.mjs",
     "./mods/safe-guard/index.mjs",
-    "./mods/tnav-nav/index.mjs"
+    "./mods/tnav-nav/index.mjs",
+    "./mods/tstat-status/index.mjs"
   ],
   "options": {
     "reducedMotion": false
