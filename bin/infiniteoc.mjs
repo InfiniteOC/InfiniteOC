@@ -2,7 +2,8 @@
 import { readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { config, prepare, launch, doctor, exists, home, run } from "../src/launcher.mjs"
-import { update } from "../src/updater.mjs"
+import { update, settle } from "../src/updater.mjs"
+import { loadSettings, settingsFile } from "../mods/infiniteoc/settings/settings-store.mjs"
 import { loadMods } from "../src/mod-loader.mjs"
 import { scaffoldFeature, checkFeatures, setFeatureEnabled } from "../src/feature-scaffold.mjs"
 
@@ -55,8 +56,11 @@ Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
     if (Object.values(report).some(check => !check.ok)) process.exitCode = 1
   } else if (args[0] === "update") {
     // InfiniteOC's own checkout only; stock OpenCode is never updated. The new code rebuilds in a fresh process.
-    const summary = await update({ home, saved: {}, explicit: true, motion: !settings.options?.reducedMotion })
-    if (summary) process.exitCode = await run(process.execPath, [join(home, "bin/infiniteoc.mjs"), "setup"])
+    // A settings file that cannot be read must fail the update: it may hold updates.requireSigned.
+    const saved = await loadSettings(settingsFile()).catch(error => { throw new Error(`${settingsFile()}: ${error.message}. Fix or delete it to restore defaults.`) })
+    const summary = await update({ home, saved, explicit: true, motion: !settings.options?.reducedMotion })
+    // If the new version does not build, the checkout returns to the previous commit and that is rebuilt.
+    if (summary) process.exitCode = (await settle(home, () => run(process.execPath, [join(home, "bin/infiniteoc.mjs"), "setup"]))).ok ? 0 : 1
   } else if (["setup", "rebuild"].includes(args[0])) {
     const result = await prepare(settings, args[0] === "rebuild")
     console.log(`[InfiniteOC] Ready: ${result.binary}`)

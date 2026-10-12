@@ -1,10 +1,10 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises"
+import { mkdtemp, rm, writeFile, readFile, chmod } from "node:fs/promises"
 import { execFileSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { update, inspect, updateMode } from "../src/updater.mjs"
+import { update, inspect, updateMode, settle, verifyTarget, requireSigned } from "../src/updater.mjs"
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }).trim()
 const sink = () => ({ isTTY: false, text: "", write(chunk) { this.text += chunk; return true } })
@@ -22,12 +22,12 @@ async function checkouts(t) {
   git(upstream, "commit", "--quiet", "-m", "First")
   git(upstream, "push", "--quiet", "-u", "origin", "main")
   git(root, "clone", "--quiet", origin, home)
-  const publish = async (message) => {
+  const publish = async (message, ...flags) => {
     await writeFile(join(upstream, "README.md"), `${message}\n`)
-    git(upstream, "commit", "--quiet", "-am", message)
+    git(upstream, "commit", "--quiet", "-am", message, ...flags)
     git(upstream, "push", "--quiet")
   }
-  return { home, publish }
+  return { home, publish, upstream, root }
 }
 
 test("explicit update fast-forwards to the remote branch and reports the commits", async (t) => {
@@ -77,4 +77,88 @@ test("not a git checkout or no tracked branch is handled without errors at launc
   assert.equal(updateMode({ updates: { mode: "ask" } }), "ask")
   assert.equal(updateMode({ updates: { mode: "bogus" } }), "auto")
   assert.equal(updateMode(undefined), "auto")
+})
+
+const quiet = () => ({ write() {} })
+
+test("a failed build after an update rolls back to the previous commit and rebuilds it", async (t) => {
+  const { home, publish } = await checkouts(t)
+  const before = git(home, "rev-parse", "HEAD")
+  await publish("Broken release")
+  assert.match(await update({ home, saved: {}, explicit: true, stream: sink() }), /\(1 commit\)$/)
+  assert.notEqual(git(home, "rev-parse", "HEAD"), before)
+  const builds = []
+  const result = await settle(home, async () => { builds.push(await readFile(join(home, "README.md"), "utf8")); return builds.length === 1 ? 2 : 0 }, { stream: quiet() })
+  assert.deepEqual([result.ok, result.rolledBack, result.restored], [false, true, true])
+  assert.deepEqual(builds, ["Broken release\n", "v1\n"], "the second build ran on the previous version")
+  assert.equal(git(home, "rev-parse", "HEAD"), before)
+  // The rolled-back target is not offered again automatically, but an explicit update retries it.
+  const stream = sink()
+  assert.equal(await update({ home, saved: {}, stream }), undefined)
+  assert.equal(await update({ home, saved: {}, explicit: true, stream: sink() }) !== undefined, true)
+})
+
+test("a successful build, an interrupted one or a moved checkout is never rolled back", async (t) => {
+  const { home, publish } = await checkouts(t)
+  await publish("Good release")
+  await update({ home, saved: {}, explicit: true, stream: sink() })
+  const head = git(home, "rev-parse", "HEAD")
+  assert.equal((await settle(home, async () => 0, { stream: quiet() })).ok, true)
+  assert.equal(JSON.parse(await readFile(join(home, ".runtime/update.json"), "utf8")).pending, undefined)
+  await publish("Second release")
+  await update({ home, saved: {}, explicit: true, stream: sink() })
+  assert.equal((await settle(home, async () => 130, { stream: quiet() })).rolledBack, undefined)
+  assert.notEqual(git(home, "rev-parse", "HEAD"), head)
+  // Edited after the update: failure reports it and leaves the tree alone.
+  await publish("Third release")
+  await update({ home, saved: {}, explicit: true, stream: sink() })
+  await writeFile(join(home, "README.md"), "my edit\n")
+  const kept = git(home, "rev-parse", "HEAD")
+  assert.equal((await settle(home, async () => 1, { stream: quiet() })).rolledBack, undefined)
+  assert.equal(git(home, "rev-parse", "HEAD"), kept)
+  assert.equal(await readFile(join(home, "README.md"), "utf8"), "my edit\n")
+})
+
+// Stands in for gpg so signatures can be exercised without any key: signs with a marker, and verifies only that marker.
+async function fakeGpg(root) {
+  const program = join(root, "fake-gpg")
+  await writeFile(program, `#!/bin/sh
+case "$*" in
+  *--verify*) sig=$(cat "$(printf '%s\\n' "$@" | grep -A1 -- --verify | tail -1)"); case "$sig" in *FAKESIG*) echo "[GNUPG:] NEWSIG"; echo "[GNUPG:] GOODSIG 0123456789ABCDEF t <t@t>"; echo "[GNUPG:] VALIDSIG 0123456789ABCDEF0123456789ABCDEF01234567 2026-01-01 1700000000 0 4 0 1 8 00 0123456789ABCDEF0123456789ABCDEF01234567"; echo "[GNUPG:] TRUST_ULTIMATE"; exit 0;; *) echo "[GNUPG:] BADSIG AAAA t <t@t>"; exit 1;; esac;;
+  *) cat >/dev/null; echo "-----BEGIN PGP SIGNATURE-----"; echo FAKESIG; echo "-----END PGP SIGNATURE-----"; echo "[GNUPG:] SIG_CREATED D 1 8 00 1 AAAA" >&2;;
+esac
+`)
+  await chmod(program, 0o755)
+  return program
+}
+
+test("requireSigned refuses an unsigned target and accepts a signed commit or tag", async (t) => {
+  const { home, publish, upstream, root } = await checkouts(t)
+  const program = await fakeGpg(root)
+  git(home, "config", "gpg.program", program)
+  const sign = ["-c", `gpg.program=${program}`]
+  const saved = { updates: { requireSigned: true } }
+  assert.equal(requireSigned(saved), true)
+  assert.equal(requireSigned({}), false)
+
+  await publish("Unsigned")
+  const before = git(home, "rev-parse", "HEAD")
+  await assert.rejects(update({ home, saved, explicit: true, stream: sink() }), /refused: .*not signed/)
+  assert.equal(git(home, "rev-parse", "HEAD"), before, "nothing moved")
+  const quietly = sink()
+  assert.equal(await update({ home, saved, stream: quietly }), undefined)
+  assert.match(quietly.text, /refused/)
+
+  await writeFile(join(upstream, "README.md"), "Signed\n")
+  git(upstream, ...sign, "commit", "--quiet", "-am", "Signed", "-S", "--gpg-sign=KEYLABEL")
+  git(upstream, "push", "--quiet")
+  assert.match(await update({ home, saved, explicit: true, stream: sink() }), /\(2 commits\)$/)
+  assert.equal(await readFile(join(home, "README.md"), "utf8"), "Signed\n")
+
+  // A signed annotated tag on an unsigned commit also qualifies.
+  await publish("Tagged")
+  git(upstream, ...sign, "-c", "user.signingkey=KEYLABEL", "tag", "-s", "-m", "release", "v1")
+  git(upstream, "push", "--quiet", "origin", "v1")
+  assert.match(await update({ home, saved, explicit: true, stream: sink() }), /\(1 commit\)$/)
+  assert.equal(await verifyTarget(home, "HEAD"), "signed tag v1")
 })

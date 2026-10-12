@@ -12,7 +12,7 @@ import { loadSettings, settingsFile } from "../mods/infiniteoc/settings/settings
 import { ensureDaemon, daemonPaths, digestTree } from "./opendaemon.mjs"
 import { daemonRequest } from "./daemon-client.mjs"
 import { installDaemonTool } from "./opendaemon-tool.mjs"
-import { update } from "./updater.mjs"
+import { update, settle } from "./updater.mjs"
 import { fx } from "./fx.mjs"
 
 export const home = resolve(dirname(fileURLToPath(import.meta.url)), "..")
@@ -205,9 +205,15 @@ export async function launch(args, settings) {
   const saved = await loadSettings(file).catch(error => { throw new Error(`${file}: ${error.message}. Fix or delete it to restore defaults.`) })
   // Self-update first; the updated launcher, mods and config then run (and rebuild) in a fresh process.
   if (process.env.INFINITEOC_UPDATED) notice(`Updated InfiniteOC ${process.env.INFINITEOC_UPDATED}`)
+  else if (process.env.INFINITEOC_ROLLBACK) notice(process.env.INFINITEOC_ROLLBACK)
   else {
     const summary = await update({ home, saved, motion: !settings.options?.reducedMotion })
-    if (summary) return run(process.execPath, [join(home, "bin/infiniteoc.mjs"), "--", ...args], { env: { ...process.env, INFINITEOC_UPDATED: summary } })
+    if (summary) {
+      // Build the new version first; if that fails the checkout is rolled back and the previous version launches.
+      const result = await settle(home, () => run(process.execPath, [join(home, "bin/infiniteoc.mjs"), "setup"]))
+      const env = { ...process.env, ...(result.ok ? { INFINITEOC_UPDATED: summary } : { INFINITEOC_ROLLBACK: `Update ${summary} did not build and was rolled back` }) }
+      return run(process.execPath, [join(home, "bin/infiniteoc.mjs"), "--", ...args], { env })
+    }
   }
   let prepared, hooks
   try {
@@ -230,7 +236,7 @@ export async function launch(args, settings) {
     // INFINITEOC_SKILLS: the bundled skill library, registered by mods/infiniteoc (mostly unlisted, loadable by ID).
     const context = { args: [...args], env: { ...traffic.env, INFINITEOC_SETTINGS_FILE: file, INFINITEOC: "1", OPENCODE_CLIENT: "InfiniteOC", OPENCODE_TUI_CHANNEL: "infiniteoc", INFINITEOC_UI_CLIENT: randomUUID(), INFINITEOC_SKILLS: join(home, "skills") }, cwd: process.cwd() }
     // Possibly inherited from an enclosing InfiniteOC session; only this launch's values may reach the TUI.
-    for (const key of ["INFINITEOC_DAEMON_SOCKET", "INFINITEOC_LIVE_MANIFEST", "INFINITEOC_NOTICE", "INFINITEOC_UPDATED"]) delete context.env[key]
+    for (const key of ["INFINITEOC_DAEMON_SOCKET", "INFINITEOC_LIVE_MANIFEST", "INFINITEOC_NOTICE", "INFINITEOC_UPDATED", "INFINITEOC_ROLLBACK"]) delete context.env[key]
     if (traffic.socks && !await probeSocks(traffic.socks.host, traffic.socks.port))
       notice(`${socksLabel(saved.traffic.mode, traffic.socks)} unreachable; requests will fail until it runs (change in /settings → InfiniteOC Settings → Traffic)`)
     try {
