@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-import { readdir } from "node:fs/promises"
+import { readdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { config, prepare, launch, doctor, doctorFix, exists, home, run } from "../src/launcher.mjs"
 import { update, settle } from "../src/updater.mjs"
 import { needsWizard, runWizard, terminalIO } from "../src/wizard.mjs"
+import { bench, format, parseConfig, TASKS } from "../src/bench.mjs"
 import { addPack, removePack } from "../src/packs.mjs"
 import { findTeamFile, readTeamFile, isTrusted } from "../src/team.mjs"
 import { loadSettings, saveSettings, settingsFile } from "../mods/infiniteoc/settings/settings-store.mjs"
@@ -23,6 +24,7 @@ try {
   infiniteoc wizard              Re-run the first-run setup (provider, model, theme, updates, ponytail)
   infiniteoc team [trust|revoke] Show or approve the project's infiniteoc.team.json
   infiniteoc update              Fast-forward this checkout to its remote branch, then rebuild
+  infiniteoc bench --a CFG --b CFG  Compare two configurations on a fixed task set (pass rate, tokens, time)
   infiniteoc mods                List configured mods (including installed packs)
   infiniteoc mod add URL         Install a mod pack from git, pinned by --commit and --sha256 (prompts if omitted)
   infiniteoc mod remove ID       Remove an installed pack
@@ -55,6 +57,27 @@ Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
       console.log(await setFeatureEnabled(home, id, true) ? `Enabled ${id} (backup: infiniteoc.json.bak). A running opendaemon publishes its live commands now; compiled parts apply on the next launch, which rebuilds automatically.` : `${id} is already enabled.`)
     } else if (action === "disable") console.log(await setFeatureEnabled(home, id, false) ? `Disabled ${id} (backup: infiniteoc.json.bak); the next launch rebuilds without it.` : `${id} is not enabled.`)
     else throw new Error(usage)
+  } else if (args[0] === "bench") {
+    const opt = (name) => args.includes(name) ? args[args.indexOf(name) + 1] : undefined
+    const usage = "Usage: infiniteoc bench --a model=P/M[,agent=X][,ponytail=LEVEL] --b model=P/M[,...] [--runs N] [--tasks FILE] [--timeout SECONDS] [--json] [--yes]"
+    if (!opt("--a") || !opt("--b")) throw new Error(usage)
+    const configs = [parseConfig(opt("--a")), parseConfig(opt("--b"))]
+    const tasks = opt("--tasks") ? JSON.parse(await readFile(opt("--tasks"), "utf8")) : TASKS
+    const runs = Number(opt("--runs") ?? 1)
+    if (!Number.isInteger(runs) || runs < 1 || runs > 20) throw new Error("--runs must be 1-20")
+    // Real providers cost money: say how much work this is and ask, unless --yes.
+    const trials = tasks.length * runs * 2
+    if (!args.includes("--yes")) {
+      if (!process.stdin.isTTY) throw new Error(`This runs ${trials} agent sessions with auto-approved tools against your configured providers. Add --yes to run it.`)
+      const io = terminalIO()
+      try {
+        if (!/^y/i.test(await io.ask(`Run ${trials} agent sessions (${tasks.length} tasks x ${runs} x 2 configurations, tools auto-approved in temp directories) against your configured providers? [y/N] `) ?? "")) throw new Error("Not run")
+      } finally { io.close() }
+    }
+    const { binary } = await prepare(settings)
+    const env = { ...process.env, INFINITEOC_SETTINGS_FILE: settingsFile(), INFINITEOC_HOME: home, INFINITEOC: "1", OPENCODE_CLIENT: "InfiniteOC", OPENCODE_TUI_CHANNEL: "infiniteoc", INFINITEOC_SKILLS: join(home, "skills") }
+    const results = await bench({ binary, env, configs, tasks, runs, timeout: Number(opt("--timeout") ?? 180) * 1000, progress: (config, trial) => console.error(`[bench] ${config.label}  ${trial.task}  ${trial.pass ? "pass" : "FAIL"}  ${(trial.ms / 1000).toFixed(1)}s`) })
+    console.log(args.includes("--json") ? JSON.stringify(results, null, 2) : format(results))
   } else if (args[0] === "mod") {
     const [, action, target, ...rest] = args
     const flag = (name) => rest.includes(name) ? rest[rest.indexOf(name) + 1] : undefined
