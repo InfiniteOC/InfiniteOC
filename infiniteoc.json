@@ -7,7 +7,8 @@
     "./mods/deep-deliberation/index.mjs",
     "./mods/auto-loop/index.mjs",
     "./mods/ctx-context/index.mjs",
-    "./mods/prov-kit/index.mjs"
+    "./mods/prov-kit/index.mjs",
+    "./mods/qual-checks/index.mjs"
   ],
   "options": {
     "reducedMotion": false
