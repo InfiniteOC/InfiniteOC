@@ -169,12 +169,24 @@ export const Plugin = define({
       })
     })
 
-    // ---- budget enforcement: refuse tool calls at the limit ----
+    // ---- budget enforcement: refuse tool calls at the limit and pause the run ----
+    // A model that ignores the refusal would otherwise keep paying for turns, so the run is interrupted too.
+    const paused = new Set<string>()
     yield* ctx.tool.hook("execute.before", (event) =>
       budgetOf(event.sessionID).pipe(
         // Fail open: an unreadable transcript must not block work.
         Effect.catchCause((cause) => Effect.logWarning("InfiniteOC budget check failed", { cause }).pipe(Effect.as(undefined))),
-        Effect.flatMap((budget) => (budget && lib.overBudget(budget.limit, budget.spent) ? Effect.fail(new Tool.Error({ message: lib.budgetRefusal(budget.limit, budget.spent) })) : Effect.void)),
+        Effect.flatMap((budget) => {
+          if (!budget || !lib.overBudget(budget.limit, budget.spent)) return Effect.void
+          const pause = paused.has(event.sessionID)
+            ? Effect.void
+            : Effect.sync(() => {
+                paused.add(event.sessionID)
+                // After the refusal is returned; resume: false keeps queued input from starting a new run.
+                Effect.runFork(Effect.sleep("200 millis").pipe(Effect.andThen(ctx.session.interrupt({ sessionID: event.sessionID, resume: false })), Effect.ignore))
+              }).pipe(Effect.andThen(toast("Budget", `${lib.money(budget.spent)} of ${lib.money(budget.limit)} spent: run paused. Raise it with /budget <amount>.`, "warning", 10000)))
+          return pause.pipe(Effect.andThen(Effect.fail(new Tool.Error({ message: lib.budgetRefusal(budget.limit, budget.spent) }))))
+        }),
       ),
     )
 
@@ -242,6 +254,7 @@ export const Plugin = define({
         if (event.type === "session.execution.interrupted" && (event.data.reason === "shutdown" || event.data.reason === "superseded")) return Effect.void
         const sessionID = event.data.sessionID
         return Effect.gen(function* () {
+          paused.delete(sessionID)
           const original = switched.get(sessionID)
           if (original) {
             switched.delete(sessionID)
