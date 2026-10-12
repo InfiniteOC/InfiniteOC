@@ -173,7 +173,19 @@ test("applies after mods/infiniteoc: plugin before /goal, guidance, battery defa
   assert.deepEqual(commands.map((command) => command.slash).sort(), ["envdiff", "local", "serve", "usage"])
   for (const command of commands) assert.match(command.source, /export (async )?function run\(/)
   assert.equal(files.get("packages/tui/src/infiniteoc-features/prov-lib.ts"), files.get("packages/core/src/plugin/infiniteoc-prov-lib.ts"))
-  assert.ok(hooks.some(([event]) => event === "beforeLaunch"))
+  const [, beforeLaunch] = hooks.find(([event]) => event === "beforeLaunch")
+  const env = process.env.INFINITEOC_BATTERY
+  try {
+    for (const [value, expected] of [["1", "1"], ["0", undefined]]) {
+      process.env.INFINITEOC_BATTERY = value
+      const context = { env: {} }
+      beforeLaunch(context)
+      assert.equal(context.env.INFINITEOC_BATTERY, expected)
+    }
+  } finally {
+    if (env === undefined) delete process.env.INFINITEOC_BATTERY
+    else process.env.INFINITEOC_BATTERY = env
+  }
 })
 
 test("anchors fail closed when /goal's registration is missing", async () => {

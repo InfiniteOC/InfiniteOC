@@ -46,6 +46,7 @@ export async function run(ctx: FeatureContext) {
     ctx.toast.show({ variant: "success", title: "Local models", message: `Added ${saved.id}. Restart InfiniteOC, then pick one of its models in /models. For offline use, run /routing local ${saved.id}/${saved.models[0]}.`, duration: 12000 })
   } catch (error) {
     // The store's own messages are safe to show; an existing provider is left untouched.
-    ctx.toast.show({ variant: "warning", title: "Local models", message: error instanceof Error ? error.message : "Could not save the provider." })
+    const message = error instanceof Error ? error.message : "Could not save the provider."
+    ctx.toast.show({ variant: "warning", title: "Local models", message: /already exists/.test(message) ? `Provider "${runtime.id}" is already configured; nothing was changed.` : message })
   }
 }
