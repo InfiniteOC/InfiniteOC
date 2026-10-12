@@ -269,7 +269,8 @@ export async function runCheck(opts: CheckOptions): Promise<CheckResult> {
       return result.result.value
     }
     const capture = async (viewport: ViewportSpec, scheme: Scheme, height?: number): Promise<Shot> => {
-      await cdp.send("Emulation.setDeviceMetricsOverride", { width: viewport.width, height: height ?? viewport.height, deviceScaleFactor: 1, mobile: viewport.mobile })
+      // Not mobile emulation: a page without a viewport meta tag would be laid out at 980px and its overflow at phone width would go unseen.
+      await cdp.send("Emulation.setDeviceMetricsOverride", { width: viewport.width, height: height ?? viewport.height, deviceScaleFactor: 1, mobile: false })
       await cdp.send("Emulation.setEmulatedMedia", { media: "screen", features: [{ name: "prefers-color-scheme", value: scheme }] })
       const loaded = cdp.waitFor("Page.loadEventFired", 20000)
       const nav = await cdp.send("Page.navigate", { url: opts.url })

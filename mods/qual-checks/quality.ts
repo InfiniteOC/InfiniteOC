@@ -36,6 +36,7 @@ const text = (value: string) => ({ content: [{ type: "text" as const, text: valu
 const image = (name: string, png: string) => ({ type: "file" as const, uri: `data:image/png;base64,${png}`, mime: "image/png", name })
 const asArray = (content: unknown): Tool.Content[] => (typeof content === "string" ? [{ type: "text", text: content }] : Array.isArray(content) ? [...content] : [])
 const fail = (error: unknown) => new Tool.Error({ message: error instanceof Error ? error.message : String(error) })
+const toolError = (error: unknown) => (error instanceof Tool.Error ? error : fail(error))
 const attempt = <A>(fn: () => Promise<A> | A) => Effect.tryPromise({ try: async () => fn(), catch: fail })
 
 /** The project-relative directory argument, kept inside the project. */
@@ -111,7 +112,7 @@ export const Plugin = define({
               }
               if (result.mockup) parts.push(image(`${result.mockup.shot.label}.png`, result.mockup.shot.png), image("diff-mockup.png", result.mockup.diff.png))
               return { content: parts }
-            }),
+            }).pipe(Effect.mapError(toolError)),
         })
 
         const scanTool = (name: string, description: string, pattern: RegExp, format: (files: ReturnType<typeof load>) => string) =>
@@ -178,7 +179,7 @@ export const Plugin = define({
               if (input.save_baseline || !before) writeBaseline(file, JSON.stringify(totals))
               const failed = result.exit ? `\nThe command exited with ${result.exit}: some tests failed, so coverage may be incomplete.` : ""
               return text(fmtDelta(before, totals) + failed)
-            }),
+            }).pipe(Effect.mapError(toolError)),
         })
 
         editor.add({
@@ -214,7 +215,7 @@ export const Plugin = define({
                   ? `SURVIVED: the tests still pass with ${where}. No test depends on this condition: add or strengthen a test for it. The file was restored (backup: ${backup}).`
                   : `killed: the tests fail with ${where}${mutated.timedOut ? " (timed out)" : ""}, so this line is covered. The file was restored (backup: ${backup}).\n${tail(mutated.output, 8)}`,
               )
-            }),
+            }).pipe(Effect.mapError(toolError)),
         })
 
         editor.add({
@@ -246,7 +247,7 @@ export const Plugin = define({
               const verdict = compareBench(before?.command === command ? before.ms : undefined, best, input.tolerance_pct ?? config?.tolerancePct ?? 15)
               if (input.save_baseline || !before || before.command !== command) writeBaseline(file, JSON.stringify({ ms: best, command }))
               return text(verdict.message)
-            }),
+            }).pipe(Effect.mapError(toolError)),
         })
       })
       .pipe(Effect.orDie)

@@ -16,7 +16,8 @@ export interface TestFirstState {
 }
 
 export type Entry =
-  | { kind: "start" | "stop" }
+  | { kind: "start" }
+  | { kind: "stop" }
   | { kind: "edit"; files: string[] }
   | { kind: "run"; run: Run }
 
