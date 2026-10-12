@@ -56,6 +56,10 @@ infiniteoc /path/to/project
 
 Mod paths are relative to the checkout root and order matters. `reducedMotion: true` makes Animations default to off (applied at build time); an Animations choice made in the TUI still wins. Traffic (proxy/Tor) and custom providers live under `/settings` → InfiniteOC Settings; see [mods/infiniteoc/settings/README.md](mods/infiniteoc/settings/README.md).
 
+## Launcher and distribution
+
+Installer, first-run wizard, update rollback and signed updates, `doctor --fix`, crash reports, `bench`, mod packs, team settings, dev-mode live reload and remote control are described in [LAUNCHER.md](LAUNCHER.md).
+
 ## Features, live reload and skills
 
 - New TUI slash commands: `infiniteoc feature new my-feature`; see [FEATURES.md](FEATURES.md). Agents start at [AGENTS.md](AGENTS.md).

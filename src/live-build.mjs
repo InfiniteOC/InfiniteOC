@@ -6,12 +6,13 @@ import { spawn } from "node:child_process"
 import { pathToFileURL } from "node:url"
 import { createHash } from "node:crypto"
 import { loadMods, applyMods } from "./mod-loader.mjs"
+import { packEntries } from "./packs.mjs"
 import { builtinSlashNames, claimSlashNames, safeError } from "./tui-features.mjs"
 
 export async function buildLive(base, output, revision, progress = () => {}, override) {
   progress("discovering", "Reading configured local mods")
   const config = JSON.parse(await readFile(path.join(base, "infiniteoc.json"), "utf8"))
-  const mods = await loadMods(config.mods, base)
+  const mods = await loadMods([...config.mods, ...(await packEntries(base)).entries], base)
   const result = override ? { featureSources: override } : await applyMods(mods, path.join(base, ".upstream"), config.options, true)
   if (result.featureSources.some(command => /(?:from\s*|import\s*\()["'](?:solid-js|@opentui|@opencode)/.test(command.source))) throw safeError("Live handlers cannot import framework modules; use supplied context")
   claimSlashNames(result.featureSources, await builtinSlashNames(path.join(base, ".upstream/packages/tui/src")))
@@ -34,10 +35,12 @@ export async function buildLive(base, output, revision, progress = () => {}, ove
       await writeFile(source, rewritten, { mode: 0o600 })
       await new Promise((resolve, reject) => {
         const child = spawn(path.join(base, ".tools/node_modules/.bin/bun"), ["build", source, "--target=bun", "--outfile", bundle], { stdio: ["ignore", "pipe", "pipe"] })
-        // Do not return compiler excerpts that can contain literals/secrets.
-        child.stdout.resume(); child.stderr.resume()
+        // Do not return compiler excerpts that can contain literals/secrets, except in dev mode (opendaemon dev), where they are the point.
+        const dev = process.env.INFINITEOC_LIVE_DEV === "1"
+        let diagnostics = ""
+        child.stdout.resume(); child.stderr.on("data", data => { if (dev) diagnostics = (diagnostics + data).slice(-1200) })
         child.on("error", reject)
-        child.on("exit", code => code === 0 ? resolve() : reject(safeError(`Cannot compile ${command.id}; check its syntax and imports (live handlers are ctx-only; UI components and framework imports belong in a source mod)`)))
+        child.on("exit", code => code === 0 ? resolve() : reject(safeError(`Cannot compile ${command.id}; check its syntax and imports (live handlers are ctx-only; UI components and framework imports belong in a source mod)${diagnostics ? `:\n${diagnostics.trim()}` : ""}`)))
       })
       const code = await readFile(bundle, "utf8")
       if (/from\s*["'](?:solid-js|@opentui|@opencode)|require\(["'](?:solid-js|@opentui|@opencode)/.test(code)) throw safeError("Live handlers must use the supplied context, not load another framework instance")

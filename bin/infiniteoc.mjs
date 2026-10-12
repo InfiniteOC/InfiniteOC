@@ -1,8 +1,14 @@
 #!/usr/bin/env node
-import { readdir } from "node:fs/promises"
+import { readdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
-import { config, prepare, launch, doctor, exists, home, run } from "../src/launcher.mjs"
-import { update } from "../src/updater.mjs"
+import { config, prepare, launch, doctor, doctorFix, exists, home, run } from "../src/launcher.mjs"
+import { update, settle } from "../src/updater.mjs"
+import { needsWizard, runWizard, terminalIO } from "../src/wizard.mjs"
+import { startRemote, remoteFile, isPrivate } from "../src/remote.mjs"
+import { bench, format, parseConfig, TASKS } from "../src/bench.mjs"
+import { addPack, removePack } from "../src/packs.mjs"
+import { findTeamFile, readTeamFile, isTrusted } from "../src/team.mjs"
+import { loadSettings, saveSettings, settingsFile } from "../mods/infiniteoc/settings/settings-store.mjs"
 import { loadMods } from "../src/mod-loader.mjs"
 import { scaffoldFeature, checkFeatures, setFeatureEnabled } from "../src/feature-scaffold.mjs"
 
@@ -16,9 +22,17 @@ try {
 
   infiniteoc setup               Fetch dependencies, apply mods, build isolated CLI
   infiniteoc rebuild             Reapply mods from pristine source and rebuild
+  infiniteoc wizard              Re-run the first-run setup (provider, model, theme, updates, ponytail)
+  infiniteoc team [trust|revoke] Show or approve the project's infiniteoc.team.json
   infiniteoc update              Fast-forward this checkout to its remote branch, then rebuild
-  infiniteoc mods                List configured mods
+  infiniteoc remote [--host IP] [--port N]  Phone page for sessions and permission prompts (opt-in, local network, token)
+  infiniteoc remote attach       Open the TUI on the backend the phone page watches
+  infiniteoc bench --a CFG --b CFG  Compare two configurations on a fixed task set (pass rate, tokens, time)
+  infiniteoc mods                List configured mods (including installed packs)
+  infiniteoc mod add URL         Install a mod pack from git, pinned by --commit and --sha256 (prompts if omitted)
+  infiniteoc mod remove ID       Remove an installed pack
   infiniteoc doctor [--json]     Read-only checks; never downloads or changes anything
+  infiniteoc doctor --fix        Repair: fetch missing tools, relink MCP paths, rebuild a stale build
   infiniteoc feature new ID      Create a typed, working TUI slash-command mod (not enabled)
   infiniteoc feature check ID    Check feature declarations and pinned UI integration
   infiniteoc feature enable ID   Check it, then append it to infiniteoc.json mods (keeps a .bak)
@@ -46,17 +60,104 @@ Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
       console.log(await setFeatureEnabled(home, id, true) ? `Enabled ${id} (backup: infiniteoc.json.bak). A running opendaemon publishes its live commands now; compiled parts apply on the next launch, which rebuilds automatically.` : `${id} is already enabled.`)
     } else if (action === "disable") console.log(await setFeatureEnabled(home, id, false) ? `Disabled ${id} (backup: infiniteoc.json.bak); the next launch rebuilds without it.` : `${id} is not enabled.`)
     else throw new Error(usage)
+  } else if (args[0] === "bench") {
+    const opt = (name) => args.includes(name) ? args[args.indexOf(name) + 1] : undefined
+    const usage = "Usage: infiniteoc bench --a model=P/M[,agent=X][,ponytail=LEVEL] --b model=P/M[,...] [--runs N] [--tasks FILE] [--timeout SECONDS] [--json] [--yes]"
+    if (!opt("--a") || !opt("--b")) throw new Error(usage)
+    const configs = [parseConfig(opt("--a")), parseConfig(opt("--b"))]
+    const tasks = opt("--tasks") ? JSON.parse(await readFile(opt("--tasks"), "utf8")) : TASKS
+    const runs = Number(opt("--runs") ?? 1)
+    if (!Number.isInteger(runs) || runs < 1 || runs > 20) throw new Error("--runs must be 1-20")
+    // Real providers cost money: say how much work this is and ask, unless --yes.
+    const trials = tasks.length * runs * 2
+    if (!args.includes("--yes")) {
+      if (!process.stdin.isTTY) throw new Error(`This runs ${trials} agent sessions with auto-approved tools against your configured providers. Add --yes to run it.`)
+      const io = terminalIO()
+      try {
+        if (!/^y/i.test(await io.ask(`Run ${trials} agent sessions (${tasks.length} tasks x ${runs} x 2 configurations, tools auto-approved in temp directories) against your configured providers? [y/N] `) ?? "")) throw new Error("Not run")
+      } finally { io.close() }
+    }
+    const { binary } = await prepare(settings)
+    const env = { ...process.env, INFINITEOC_SETTINGS_FILE: settingsFile(), INFINITEOC_HOME: home, INFINITEOC: "1", OPENCODE_CLIENT: "InfiniteOC", OPENCODE_TUI_CHANNEL: "infiniteoc", INFINITEOC_SKILLS: join(home, "skills") }
+    const results = await bench({ binary, env, configs, tasks, runs, timeout: Number(opt("--timeout") ?? 180) * 1000, progress: (config, trial) => console.error(`[bench] ${config.label}  ${trial.task}  ${trial.pass ? "pass" : "FAIL"}  ${(trial.ms / 1000).toFixed(1)}s`) })
+    console.log(args.includes("--json") ? JSON.stringify(results, null, 2) : format(results))
+  } else if (args[0] === "remote") {
+    const opt = (name) => args.includes(name) ? args[args.indexOf(name) + 1] : undefined
+    if (args[1] === "attach") {
+      // The TUI joins the backend that the phone page watches, so its permission prompts show up there too.
+      const state = await readFile(remoteFile(home), "utf8").then(JSON.parse, () => { throw new Error("No remote control is running; start it with infiniteoc remote") })
+      try { process.kill(state.pid, 0) } catch { throw new Error("The remote control that wrote this has stopped; start it again with infiniteoc remote") }
+      process.env.OPENCODE_PASSWORD = state.password
+      process.exitCode = await launch(["--server", state.backendUrl, ...args.slice(2)], settings)
+    } else {
+      const host = opt("--host")
+      if (host && !isPrivate(host)) throw new Error(`${host} is not a private network address; remote control is local network only`)
+      const { binary } = await prepare(settings)
+      const env = { ...process.env, INFINITEOC_SETTINGS_FILE: settingsFile(), INFINITEOC_HOME: home, INFINITEOC: "1", OPENCODE_CLIENT: "InfiniteOC", OPENCODE_TUI_CHANNEL: "infiniteoc", INFINITEOC_SKILLS: join(home, "skills") }
+      const remote = await startRemote({ home, binary, env, host, port: Number(opt("--port") ?? 0) })
+      console.log(`Remote control on ${remote.url} (local network only)\n  Open it on your phone, then enter this token:\n    ${remote.token}\n  or open ${remote.url}/#${remote.token}\n\nIt shows sessions and permission prompts of sessions that run on its backend:\n  infiniteoc remote attach     (in another terminal; opens the TUI on that backend)\nTraffic is plain HTTP: use a network you trust, or tunnel it. Ctrl+C stops it.`)
+      const stop = async () => { await remote.close(); process.exit(0) }
+      process.once("SIGINT", stop); process.once("SIGTERM", stop)
+      await remote.exited
+      await remote.close()
+      throw new Error("The OpenCode backend stopped")
+    }
+  } else if (args[0] === "mod") {
+    const [, action, target, ...rest] = args
+    const flag = (name) => rest.includes(name) ? rest[rest.indexOf(name) + 1] : undefined
+    const usage = "Usage: infiniteoc mod add GIT_URL [--commit FULL_SHA --sha256 DIGEST] | infiniteoc mod remove ID"
+    if (action === "add" && target) {
+      const tty = process.stdin.isTTY && process.stderr.isTTY
+      const io = tty ? terminalIO() : undefined
+      const confirm = io && (async (found) => {
+        console.error(`\nPack code runs with your permissions, like any mod. Review it first.\n  url     ${found.url}\n  commit  ${found.commit}\n  sha256  ${found.sha256}`)
+        return /^y/i.test(await io.ask("Install this exact version? [y/N] ") ?? "")
+      })
+      try {
+        const result = await addPack({ home, url: target, commit: flag("--commit"), sha256: flag("--sha256"), confirm, existing: (await loadMods(settings.mods, home)).map(mod => mod.id) })
+        console.log(`Installed ${result.id}\n  pin: --commit ${result.commit} --sha256 ${result.sha256}\nIt is built in on the next launch.`)
+      } finally { io?.close() }
+    } else if (action === "remove" && target) {
+      await removePack(home, target)
+      console.log(`Removed ${target}; the next launch rebuilds without it.`)
+    } else throw new Error(usage)
   } else if (args[0] === "mods") {
     for (const mod of await loadMods(settings.mods, home)) console.log(`${mod.id}@${mod.version ?? "local"}  ${mod.filename}`)
   } else if (args[0] === "doctor") {
-    const report = await doctor(settings)
-    if (args[1] === "--json") console.log(JSON.stringify(report, null, 2))
-    else for (const { ok, detail, hint } of Object.values(report)) console.log(ok ? `✓ ${detail}` : `✗ ${detail}\n    ${hint}`)
+    let report = await doctor(settings)
+    if (args.includes("--fix")) {
+      const did = await doctorFix(settings, report)
+      for (const line of did) console.error(`[InfiniteOC] doctor --fix: ${line}`)
+      if (!did.length) console.error("[InfiniteOC] doctor --fix: nothing to fix")
+      report = await doctor(settings)
+    }
+    if (args.includes("--json")) console.log(JSON.stringify(report, null, 2))
+    else for (const { ok, warn, detail, hint } of Object.values(report)) console.log(warn ? `! ${detail}\n    ${hint}` : ok ? `✓ ${detail}` : `✗ ${detail}\n    ${hint}`)
     if (Object.values(report).some(check => !check.ok)) process.exitCode = 1
+  } else if (args[0] === "wizard") {
+    const io = terminalIO()
+    try { await runWizard({ io }) } finally { io.close() }
+  } else if (args[0] === "team") {
+    const file = await findTeamFile(process.cwd())
+    if (!file) throw new Error("No infiniteoc.team.json in this directory or its parents (up to the git root)")
+    const team = await readTeamFile(file)
+    const saved = await loadSettings(settingsFile())
+    console.log(`${file}\n  sets: ${Object.keys(team.settings).join(", ") || "nothing"}${team.ignored.length ? `\n  ignored (not allowed): ${team.ignored.join(", ")}` : ""}\n  ${isTrusted(saved, team) ? "approved" : "not approved"}`)
+    if (args[1] === "trust") {
+      await saveSettings({ ...saved, team: { ...saved.team, trusted: { ...saved.team?.trusted, [file]: team.sha256 } } })
+      console.log("Approved. It applies from the next launch, until the file changes.")
+    } else if (args[1] === "revoke") {
+      const { [file]: _, ...rest } = saved.team?.trusted ?? {}
+      await saveSettings({ ...saved, team: { ...saved.team, trusted: rest } })
+      console.log("Approval removed.")
+    } else if (args[1]) throw new Error("Usage: infiniteoc team [trust|revoke]")
   } else if (args[0] === "update") {
     // InfiniteOC's own checkout only; stock OpenCode is never updated. The new code rebuilds in a fresh process.
-    const summary = await update({ home, saved: {}, explicit: true, motion: !settings.options?.reducedMotion })
-    if (summary) process.exitCode = await run(process.execPath, [join(home, "bin/infiniteoc.mjs"), "setup"])
+    // A settings file that cannot be read must fail the update: it may hold updates.requireSigned.
+    const saved = await loadSettings(settingsFile()).catch(error => { throw new Error(`${settingsFile()}: ${error.message}. Fix or delete it to restore defaults.`) })
+    const summary = await update({ home, saved, explicit: true, motion: !settings.options?.reducedMotion })
+    // If the new version does not build, the checkout returns to the previous commit and that is rebuilt.
+    if (summary) process.exitCode = (await settle(home, () => run(process.execPath, [join(home, "bin/infiniteoc.mjs"), "setup"]))).ok ? 0 : 1
   } else if (["setup", "rebuild"].includes(args[0])) {
     const result = await prepare(settings, args[0] === "rebuild")
     console.log(`[InfiniteOC] Ready: ${result.binary}`)

@@ -15,3 +15,5 @@ opencode.json
 .env
 *.pem
 *.key
+packs/
+infiniteoc.packs.json

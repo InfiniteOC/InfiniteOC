@@ -228,8 +228,10 @@ test("doctor is read-only and gives every failing check a hint", async t => {
   const before = await readdir(base)
   const result = cli(base, ["doctor", "--json"])
   const report = JSON.parse(result.stdout)
-  assert.deepEqual(Object.keys(report), ["platform", "node", "bun", "upstream", "build", "daemon", "socket", "settings", "socks"])
-  for (const name of ["bun", "upstream", "build", "socks"]) assert.equal(report[name].ok, false, name)
+  assert.deepEqual(Object.keys(report), ["platform", "node", "bun", "upstream", "build", "mcp", "daemon", "socket", "settings", "socks"])
+  for (const name of ["bun", "upstream", "socks"]) assert.equal(report[name].ok, false, name)
+  // A missing or stale build is a warning: the next launch rebuilds it, so it does not fail the report.
+  assert.deepEqual([report.build.ok, report.build.warn, report.build.fix], [true, true, "build"])
   assert.equal(report.settings.ok, true)
   // Idle is healthy: every launch starts the daemon.
   assert.deepEqual(report.daemon, { ok: true, detail: "opendaemon not running; the next launch starts it" })
@@ -238,8 +240,27 @@ test("doctor is read-only and gives every failing check a hint", async t => {
   assert.match(report.socket.detail, process.platform === "darwin" ? /\/104 bytes$/ : /\/107 bytes$/)
   for (const check of Object.values(report)) assert.ok(check.ok || check.hint, check.detail)
   assert.equal(result.status, 1)
-  assert.match(cli(base, ["doctor"]).stdout, /^✗ no finished build\n {4}next launch rebuilds$/m)
+
+  assert.match(cli(base, ["doctor"]).stdout, /^! no finished build\n {4}the next launch rebuilds; infiniteoc doctor --fix rebuilds now$/m)
   assert.deepEqual(await readdir(base), before)
+})
+
+test("a missing build and an MCP path that does not exist are warnings, and doctor --fix relinks MCP paths", async t => {
+  const base = await install(t)
+  await bootstrapped(base)
+  await rm(path.join(base, ".opendaemon"))
+  await mkdir(path.join(base, ".tools/gimp-mcp"), { recursive: true })
+  await writeFile(path.join(base, "opencode.json"), JSON.stringify({ mcp: { servers: { gimp: { type: "local", command: ["uv", "--directory", "/old/place/.tools/gimp-mcp"] }, other: { type: "local", command: ["/nowhere/tool.sh"] } } } }))
+  const warned = cli(base, ["doctor"])
+  assert.equal(warned.status, 0, warned.stdout)
+  assert.match(warned.stdout, /^! no finished build/m)
+  assert.match(warned.stdout, /^! MCP paths missing: gimp \/old\/place\/\.tools\/gimp-mcp; other \/nowhere\/tool\.sh/m)
+  // --fix relinks what exists in this install; it would also rebuild (nothing is connected), which this stub tree cannot do: reported, not fatal.
+  const fixed = cli(base, ["doctor", "--fix", "--json"])
+  assert.match(fixed.stderr, /doctor --fix: relinked 1 MCP path\(s\)/)
+  assert.match(fixed.stderr, /doctor --fix: rebuild failed: /)
+  assert.match(await readFile(path.join(base, "opencode.json"), "utf8"), /\{env:INFINITEOC_HOME\}\/\.tools\/gimp-mcp/)
+  assert.equal(JSON.parse(fixed.stdout).mcp.detail.includes("gimp"), false)
 })
 
 test("a bun that cannot run is bootstrapped again", async t => {

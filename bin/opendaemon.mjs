@@ -57,6 +57,8 @@ try {
   opendaemon notify TEXT              Send a notification to connected UIs
   opendaemon close-all-tabs           Close UI tabs, never delete stored sessions
   opendaemon auto on|off              Enable/disable local mod auto reload
+  opendaemon dev                      Dev mode: 250ms file checks, compile diagnostics, live log
+                                      (Ctrl+C leaves dev mode; the daemon keeps running)
   opendaemon temporary [CLIENT] FILE  Add/replace a temporary command from JSON
   opendaemon temporary-clear [CLIENT] Remove that UI's temporary commands
   opendaemon script [CLIENT] FILE     Run trusted JS/TS export run(ctx) once
@@ -98,7 +100,14 @@ cannot automatically undo side effects.`)
     else if (command === "temporary-clear" && args.length === 1) console.log(JSON.stringify(await daemonRequest(socket, "POST", "/temporary", { client: args[0], clear: true }), null, 2))
     else if (command === "script" && args.length === 2) console.log(JSON.stringify(await daemonRequest(socket, "POST", "/temporary", { client: args[0], run: true, command: { id: "test-script", title: "Temporary test script", slash: "test-script", source: await readFile(path.resolve(args[1]), "utf8") } }, 30000), null, 2))
     else if (command === "auto" && ["on", "off"].includes(args[0])) console.log(JSON.stringify(await daemonRequest(socket, "POST", "/auto", { enabled: args[0] === "on" }), null, 2))
-    else if (command === "watch") {
+    else if (command === "watch" || command === "dev") {
+      const dev = command === "dev"
+      if (dev) {
+        console.log(JSON.stringify(await daemonRequest(socket, "POST", "/dev", { enabled: true })))
+        // Leave dev mode (fast polling, diagnostics) when this command ends; the daemon and UIs are untouched.
+        const leave = () => daemonRequest(socket, "POST", "/dev", { enabled: false }, 1000).catch(() => {}).then(() => process.exit(0))
+        process.once("SIGINT", leave); process.once("SIGTERM", leave)
+      }
       let last = 0, startedAt, waiting = false
       for (;;) {
         try {
@@ -106,12 +115,12 @@ cannot automatically undo side effects.`)
           // A restarted daemon numbers its events from 1 again.
           if (status.startedAt !== startedAt) { startedAt = status.startedAt; last = 0 }
           waiting = false
-          for (const event of status.events) if (event.sequence > last) { console.log(json ? JSON.stringify(event) : line(event)); last = event.sequence }
+          for (const event of status.events) if (event.sequence > last) { console.log(json ? JSON.stringify(event) : line(event) + (dev && event.ms !== undefined ? `  (${event.ms}ms)` : "")); last = event.sequence }
         } catch {
           if (!waiting) console.error("waiting for opendaemon…")
           waiting = true
         }
-        await sleep(waiting ? 1000 : 500)
+        await sleep(waiting ? 1000 : dev ? 200 : 500)
       }
     } else throw new Error("Unknown command; use opendaemon --help")
   }

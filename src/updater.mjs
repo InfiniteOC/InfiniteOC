@@ -11,6 +11,8 @@ export const INTERVAL = 6 * 60 * 60 * 1000
 const COUNTDOWN = 5000
 
 export const updateMode = (saved) => (UPDATE_MODES.includes(saved?.updates?.mode) ? saved.updates.mode : "auto")
+/** Opt-in (settings.json "updates": {"requireSigned": true}): only fast-forward to a target git can verify as signed. */
+export const requireSigned = (saved) => saved?.updates?.requireSigned === true
 
 // Async so spinners keep animating while git works.
 function git(home, args, timeout = 15000) {
@@ -40,7 +42,7 @@ function git(home, args, timeout = 15000) {
 }
 
 /** What updating would bring, or undefined when this is not a git checkout. */
-export async function inspect(home, { fetch = true } = {}) {
+export async function inspect(home, { fetch = true, tags = false } = {}) {
   try {
     if (await git(home, ["rev-parse", "--is-inside-work-tree"]) !== "true") return undefined
   } catch {
@@ -52,7 +54,7 @@ export async function inspect(home, { fetch = true } = {}) {
   } catch {
     return { behind: 0, commits: [], blocked: "the current branch tracks no remote branch" }
   }
-  if (fetch) await git(home, ["fetch", "--quiet", "--no-tags"], 20000)
+  if (fetch) await git(home, ["fetch", "--quiet", tags ? "--tags" : "--no-tags"], 20000)
   const behind = Number(await git(home, ["rev-list", "--count", "HEAD..@{u}"]))
   const ahead = Number(await git(home, ["rev-list", "--count", "@{u}..HEAD"]))
   const dirty = await git(home, ["status", "--porcelain", "--untracked-files=no"]) !== ""
@@ -61,8 +63,26 @@ export async function inspect(home, { fetch = true } = {}) {
     behind,
     from: await git(home, ["rev-parse", "--short", "HEAD"]),
     to: await git(home, ["rev-parse", "--short", "@{u}"]),
+    fromFull: await git(home, ["rev-parse", "HEAD"]),
+    toFull: await git(home, ["rev-parse", "@{u}"]),
     commits: behind ? (await git(home, ["log", "--format=%s", "--max-count=6", "HEAD..@{u}"])).split("\n") : [],
     blocked: ahead ? "this checkout has local commits" : dirty ? "this checkout has uncommitted changes" : undefined,
+  }
+}
+
+/** Throws unless `ref` is a commit git verifies, or carries a tag git verifies. Returns what verified. */
+export async function verifyTarget(home, ref) {
+  try {
+    await git(home, ["verify-commit", ref])
+    return "signed commit"
+  } catch (commitError) {
+    for (const tag of (await git(home, ["tag", "--points-at", ref])).split("\n").filter(Boolean)) {
+      try {
+        await git(home, ["verify-tag", tag])
+        return `signed tag ${tag}`
+      } catch {}
+    }
+    throw new Error(`the update target is not signed or its signature does not verify (${commitError.message.replace(/^git verify-commit failed: /, "")})`)
   }
 }
 
@@ -126,10 +146,11 @@ export async function update({ home, saved, motion = true, explicit = false, str
   const state = await readState(home)
   if (!explicit && Date.now() - (state.checkedAt ?? 0) < INTERVAL) return undefined
   const ui = fx(stream, { motion })
+  const tags = requireSigned(saved)
   const interactive = ui.tty && !!process.stdin.isTTY
   let info
   try {
-    info = explicit ? await ui.spin("Checking for InfiniteOC updates", () => inspect(home)) : await inspect(home)
+    info = explicit ? await ui.spin("Checking for InfiniteOC updates", () => inspect(home, { tags })) : await inspect(home, { tags })
   } catch (error) {
     if (explicit) throw error
     // Offline or no access: stay quiet and try again next interval.
@@ -149,6 +170,21 @@ export async function update({ home, saved, motion = true, explicit = false, str
     const message = `InfiniteOC update available (${info.behind} commit${info.behind === 1 ? "" : "s"}), but ${info.blocked}; run git pull --ff-only in ${home}`
     if (explicit) throw new Error(message)
     ui.write(`${ui.dim(`[InfiniteOC] ${message}`)}\n`)
+    return undefined
+  }
+  const signed = requireSigned(saved)
+  if (signed) {
+    try {
+      await verifyTarget(home, info.toFull)
+    } catch (error) {
+      const message = `InfiniteOC update ${info.to} refused: ${error.message}. Set updates.requireSigned to false to allow unsigned updates`
+      if (explicit) throw new Error(message)
+      ui.write(`${ui.dim(`[InfiniteOC] ${message}`)}\n`)
+      return undefined
+    }
+  }
+  if (!explicit && state.skip === info.toFull) {
+    ui.write(`${ui.dim(`[InfiniteOC] Update ${info.to} failed to build on this machine earlier and was rolled back; run infiniteoc update to retry`)}\n`)
     return undefined
   }
   if (!explicit && !interactive) {
@@ -174,8 +210,39 @@ export async function update({ home, saved, motion = true, explicit = false, str
       return undefined
     }
   }
-  await ui.spin(`Updating to ${info.to}`, () => git(home, ["merge", "--ff-only", "--quiet", "@{u}"]))
+  // The exact commit that was inspected (and verified), not whatever the branch has since become.
+  await ui.spin(`Updating to ${info.to}`, () => git(home, ["merge", "--ff-only", "--quiet", info.toFull]))
+  await writeState(home, { ...(await readState(home)), pending: { from: info.fromFull, to: info.toFull } })
   const summary = `${info.from} → ${info.to} (${info.behind} commit${info.behind === 1 ? "" : "s"})`
   ui.write(`${ui.ok(`Updated InfiniteOC ${summary}`)}\n`)
   return summary
+}
+
+/**
+ * Runs `setup` (-> exit code) right after an update moved the checkout. If it fails, the checkout goes back to
+ * the commit it was fast-forwarded from and `setup` runs again to rebuild the previous version.
+ * Returns { ok, rolledBack?, restored?, code }. Never touches a checkout that moved or changed since the update.
+ */
+export async function settle(home, setup, { stream = process.stderr } = {}) {
+  const code = await setup()
+  const state = await readState(home)
+  const pending = state.pending
+  // A Ctrl+C is the user's choice, not a failed update.
+  if (code === 0 || !pending || code === 130 || code === 143) {
+    if (pending) await writeState(home, { ...state, pending: undefined })
+    return { ok: code === 0, code }
+  }
+  const head = await git(home, ["rev-parse", "HEAD"])
+  const dirty = await git(home, ["status", "--porcelain", "--untracked-files=no"]) !== ""
+  await writeState(home, { ...state, pending: undefined })
+  if (head !== pending.to || dirty) {
+    stream.write(`[InfiniteOC] The update failed to build, but this checkout changed since the update, so it was not rolled back\n`)
+    return { ok: false, code }
+  }
+  await git(home, ["reset", "--hard", "--quiet", pending.from])
+  await writeState(home, { ...(await readState(home)), skip: pending.to, rolledBack: { ...pending, at: new Date().toISOString() } })
+  stream.write(`[InfiniteOC] The update did not build (exit ${code}); rolled back to ${pending.from.slice(0, 7)} and rebuilding it\n`)
+  const restored = (await setup()) === 0
+  stream.write(restored ? `[InfiniteOC] Previous version restored. The failed update ${pending.to.slice(0, 7)} will not be retried automatically; run infiniteoc update to try again\n` : `[InfiniteOC] Rolled back to ${pending.from.slice(0, 7)}, but rebuilding it also failed; run infiniteoc doctor --fix\n`)
+  return { ok: false, rolledBack: true, restored, code }
 }
