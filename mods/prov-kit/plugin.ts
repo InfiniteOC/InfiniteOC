@@ -182,8 +182,8 @@ export const Plugin = define({
             ? Effect.void
             : Effect.sync(() => {
                 paused.add(event.sessionID)
-                // After the refusal is returned; resume: false keeps queued input from starting a new run.
-                Effect.runFork(Effect.sleep("200 millis").pipe(Effect.andThen(ctx.session.interrupt({ sessionID: event.sessionID, resume: false })), Effect.ignore))
+                // Detached: the interrupt must not wait on this fiber. resume: false keeps queued input from starting a new run.
+                Effect.runFork(ctx.session.interrupt({ sessionID: event.sessionID, resume: false }).pipe(Effect.ignore))
               }).pipe(Effect.andThen(toast("Budget", `${lib.money(budget.spent)} of ${lib.money(budget.limit)} spent: run paused. Raise it with /budget <amount>.`, "warning", 10000)))
           return pause.pipe(Effect.andThen(Effect.fail(new Tool.Error({ message: lib.budgetRefusal(budget.limit, budget.spent) }))))
         }),

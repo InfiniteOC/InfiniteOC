@@ -2,12 +2,15 @@ import type { FeatureContext } from "./api"
 import { providerConfigFile, saveProvider } from "../component/settings-store"
 import { parseLocalModels, type LocalRuntime } from "./prov-lib"
 
+// INFINITEOC_OLLAMA_URL / INFINITEOC_LMSTUDIO_URL (http://host:port) override the default loopback ports.
+const ollama = (process.env.INFINITEOC_OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/+$/, "")
+const lmstudio = (process.env.INFINITEOC_LMSTUDIO_URL || "http://127.0.0.1:1234").replace(/\/+$/, "")
 const RUNTIMES = [
-  { id: "ollama", name: "Ollama", root: "http://127.0.0.1:11434", probe: "/api/tags", baseURL: "http://127.0.0.1:11434/v1" },
-  { id: "lmstudio", name: "LM Studio", root: "http://127.0.0.1:1234", probe: "/v1/models", baseURL: "http://127.0.0.1:1234/v1" },
+  { id: "ollama", name: "Ollama", root: ollama, probe: "/api/tags", baseURL: `${ollama}/v1` },
+  { id: "lmstudio", name: "LM Studio", root: lmstudio, probe: "/v1/models", baseURL: `${lmstudio}/v1` },
 ] as const
 
-// Loopback only: nothing leaves the machine.
+// Loopback by default: nothing leaves the machine.
 async function detect(): Promise<LocalRuntime[]> {
   const found = await Promise.all(
     RUNTIMES.map(async (runtime) => {

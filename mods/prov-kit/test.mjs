@@ -99,6 +99,28 @@ test("free_port returns a port that can be bound", { skip }, async () => {
   await new Promise((resolve, reject) => createServer().once("error", reject).listen(port, "127.0.0.1", function () { this.close(resolve) }))
 })
 
+test("free_port honors INFINITEOC_PORT_RANGE and reports a full range", { skip }, async () => {
+  const { createServer } = await import("node:net")
+  const range = "19138-19139"
+  const first = await lib.freePort(range)
+  assert.ok(first >= 19138 && first <= 19139, String(first))
+  const held = []
+  for (const port of [19138, 19139]) held.push(await new Promise((resolve, reject) => { const server = createServer().once("error", reject); server.listen(port, "127.0.0.1", () => resolve(server)) }))
+  try {
+    await assert.rejects(lib.freePort(range), /No free port in 19138-19139/)
+  } finally {
+    for (const server of held) server.close()
+  }
+})
+
+test("long project paths are shortened in the usage table", { skip }, () => {
+  const long = "/Users/someone/Documents/Projects/a-very-long-directory-name/with/many/nested/segments/app"
+  const text = lib.formatUsage(lib.aggregateUsage([{ day: "2026-10-12", project: long, provider: "p", cost: 1 }]), "/nowhere")
+  const row = text.split("\n").find((line) => line.includes("segments/app"))
+  assert.ok(row.trim().split(/\s+/)[1].length <= 44, row)
+  assert.match(row, /\.\.\./)
+})
+
 test("model settings are written atomically, validated, and keep other keys", { skip }, async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "prov-"))
   const file = path.join(dir, "settings.json")

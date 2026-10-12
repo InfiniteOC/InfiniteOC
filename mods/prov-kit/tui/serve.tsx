@@ -3,13 +3,14 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { freePort } from "./prov-lib"
 
-type Server = { id: number; command: string; cwd: string; port: number; child: ChildProcess; log: string[]; code?: number | null }
+type Server = { id: number; command: string; cwd: string; port: number; child: ChildProcess; log: string[]; code?: number | string }
 // Module state would reset on a live reload; the processes must not be forgotten.
 const state: { servers: Server[]; next: number; hooked: boolean } = ((globalThis as any).__infiniteocServe ??= { servers: [], next: 1, hooked: false })
 const LOG_LINES = 500
 const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g
 
 const running = (server: Server) => server.code === undefined && server.child.exitCode === null
+const status = (server: Server) => (running(server) ? "running" : server.code === "SIGTERM" || server.code === "SIGKILL" ? "stopped" : `exited (${server.code})`)
 
 function defaultCommand() {
   try {
@@ -44,7 +45,7 @@ async function start(ctx: FeatureContext) {
   child.stdout!.on("data", collect)
   child.stderr!.on("data", collect)
   child.on("error", (error) => { server.log.push(`failed to start: ${error.message}`); server.code = -1 })
-  child.on("exit", (code) => { server.code = code ?? -1 })
+  child.on("exit", (code, signal) => { server.code = code ?? signal ?? -1 })
   state.servers.push(server)
   if (!state.hooked) {
     state.hooked = true
@@ -56,8 +57,9 @@ async function start(ctx: FeatureContext) {
 
 async function manage(ctx: FeatureContext, server: Server) {
   const choice = await ctx.ui.select({
-    title: `#${server.id} ${server.command}`,
+    title: `#${server.id} :${server.port} ${status(server)}`,
     options: [
+      { title: server.command, value: "info", description: server.cwd },
       { title: "View logs", value: "logs", description: `last ${Math.min(server.log.length, 40)} lines` },
       ...(running(server) ? [{ title: "Stop", value: "stop", description: "sends SIGTERM to the server's process group" }] : [{ title: "Remove from list", value: "remove" }]),
     ],
@@ -68,7 +70,7 @@ async function manage(ctx: FeatureContext, server: Server) {
   } else if (choice === "remove") state.servers.splice(state.servers.indexOf(server), 1)
   else if (choice === "logs") {
     ctx.ui.set({ size: "large" })
-    await ctx.ui.alert({ title: `#${server.id} :${server.port} ${running(server) ? "running" : `exited (${server.code})`}`, message: server.log.slice(-40).join("\n") || "No output yet." })
+    await ctx.ui.alert({ title: `#${server.id} :${server.port} ${status(server)}`, message: server.log.slice(-40).join("\n") || "No output yet." })
   }
 }
 
@@ -77,7 +79,7 @@ export async function run(ctx: FeatureContext) {
     title: "Dev servers",
     options: [
       { title: "Start a dev server", value: "start", description: defaultCommand() || "enter a command" },
-      ...state.servers.map((server) => ({ title: `#${server.id} :${server.port} ${running(server) ? "running" : `exited (${server.code})`}`, value: String(server.id), description: server.command })),
+      ...state.servers.map((server) => ({ title: `#${server.id} :${server.port} ${status(server)}`, value: String(server.id), description: server.command })),
     ],
   })
   if (choice === "start") return start(ctx)

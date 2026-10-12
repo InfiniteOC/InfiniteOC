@@ -135,15 +135,26 @@ export const onBattery = (pmset: string) => /drawing from 'Battery Power'/.test(
 
 // ---- free port, env diff, docker ----
 
-export function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
+const listenOn = (port: number): Promise<number> =>
+  new Promise((resolve, reject) => {
     const server = createServer()
     server.once("error", reject)
-    server.listen(0, "127.0.0.1", () => {
+    server.listen(port, "127.0.0.1", () => {
       const address = server.address()
       server.close(() => (address && typeof address === "object" ? resolve(address.port) : reject(new Error("no port"))))
     })
   })
+
+/** A port that is free right now: the OS's pick, or the first free one in INFINITEOC_PORT_RANGE ("19120-19139"). */
+export async function freePort(range: string | undefined = process.env.INFINITEOC_PORT_RANGE): Promise<number> {
+  const match = /^(\d+)-(\d+)$/.exec(range ?? "")
+  if (!match) return listenOn(0)
+  for (let port = Number(match[1]); port <= Number(match[2]); port++) {
+    try {
+      return await listenOn(port)
+    } catch {}
+  }
+  throw new Error(`No free port in ${range}`)
 }
 
 /** Variable names declared in a dotenv file: KEY=..., optionally `export KEY=`; comments and blanks skipped. */
@@ -240,7 +251,8 @@ export function formatUsage(usage: Usage, home = homedir()): string {
   const width = Math.max(...[...usage.days, ...usage.projects, ...usage.providers].map(([, value]) => money(value).length))
   const table = (title: string, rows: [string, number][], label = (key: string) => key) =>
     [title, ...rows.map(([key, value]) => `  ${money(value).padStart(width)}  ${label(key)}`)].join("\n")
-  const short = (dir: string) => (home && dir.startsWith(home) ? `~${dir.slice(home.length)}` : dir)
+  const shorten = (dir: string) => (home && dir.startsWith(home) ? `~${dir.slice(home.length)}` : dir)
+  const short = (dir: string) => (shorten(dir).length > 44 ? `...${shorten(dir).slice(-41)}` : shorten(dir))
   return [`Total ${money(usage.total)}`, table("By day", usage.days), table("By project", usage.projects, short), table("By provider", usage.providers)].join("\n\n")
 }
 
