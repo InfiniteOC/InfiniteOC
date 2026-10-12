@@ -1,7 +1,8 @@
 import { access, mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
 import type { Plugin } from "@opencode/plugin/tui"
-import { slug, toHtml, toMarkdown, type FileDiff, type Message } from "./logic"
+import { sessionChanges } from "./diffs"
+import { slug, toHtml, toMarkdown, type Message } from "./logic"
 
 const unwrap = (value: any) => (value && !Array.isArray(value) && "data" in value ? value.data : value)
 const exists = (file: string) => access(file).then(() => true, () => false)
@@ -21,7 +22,7 @@ export async function exportTranscript(context: Plugin.Context, sessionID: strin
   if (!format) return
   const info = context.data.session.get(sessionID)
   const exported = unwrap(await context.client.session.export({ sessionID }))
-  const diffs = (unwrap(await context.client.session.diff({ sessionID, context: 8 }).catch(() => [])) ?? []) as FileDiff[]
+  const diffs = await sessionChanges(context.client, sessionID).catch(() => [])
   const title = exported.info.title || info?.title || sessionID
   const directory = exported.info.location?.directory ?? info?.location.directory ?? process.cwd()
   const date = new Date().toISOString().slice(0, 10)

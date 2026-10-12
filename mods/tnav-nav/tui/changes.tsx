@@ -6,7 +6,7 @@ import type { PanelInput } from "@opencode/plugin/tui/context"
 import { PatchDiff } from "../../component/patch-diff"
 import { useThemes } from "../../context/theme"
 import { filetype } from "../../util/filetype"
-import type { FileDiff } from "./logic"
+import { sessionChanges } from "./diffs"
 
 const EDIT_TOOLS = new Set(["edit", "write", "apply_patch", "patch", "multiedit"])
 
@@ -29,10 +29,7 @@ export function ChangesPanel(props: { context: Plugin.Context; input: PanelInput
       )
     return `${sessionID()}:${done.join(",")}:${props.context.data.session.status(sessionID())}`
   })
-  const [diff] = createResource(signature, async () => {
-    const result: any = await props.context.client.session.diff({ sessionID: sessionID(), context: 8 })
-    return (Array.isArray(result) ? result : (result?.data ?? [])) as FileDiff[]
-  })
+  const [diff] = createResource(signature, () => sessionChanges(props.context.client, sessionID()))
   const files = () => diff.latest ?? []
   const total = createMemo(() => files().reduce((sum, file) => ({ add: sum.add + file.additions, del: sum.del + file.deletions }), { add: 0, del: 0 }))
   const current = () => files()[Math.min(selected(), files().length - 1)]

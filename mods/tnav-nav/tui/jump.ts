@@ -9,6 +9,18 @@ export function registerJump(sessionID: string, jump: (messageID: string) => voi
   }
 }
 
+/** Jump that first pages in older history until the target message is loaded. */
+export function loaderJump(deps: { has(id: string): boolean; more(): boolean; size(): number; loadMore(): Promise<void>; jump(id: string): void }) {
+  return async (messageID: string) => {
+    // Stops when a page adds nothing: the cursor can stay set after the last page.
+    for (let pages = 0, before = -1; pages < 500 && !deps.has(messageID) && deps.more() && deps.size() !== before; pages++) {
+      before = deps.size()
+      if (await deps.loadMore().then(() => false, () => true)) break
+    }
+    deps.jump(messageID)
+  }
+}
+
 export const lastJumped = (sessionID: string) => last.get(sessionID)
 
 /** Waits (up to ~4s) for the session view to mount, then jumps; repeats once after layout settles. */

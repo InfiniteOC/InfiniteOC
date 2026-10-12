@@ -56,7 +56,11 @@ export function SplitPanel(props: { context: Plugin.Context; input: PanelInput }
   const messages = () => props.context.data.session.message.list(id())
   const running = () => props.context.data.session.status(id()) === "running"
   let scroll: ScrollBoxRenderable | undefined
-  onMount(() => void props.context.data.session.message.sync(id()).catch(() => undefined))
+  onMount(() => {
+    // A session never opened in this TUI is not in the data store yet.
+    void props.context.data.session.sync(id()).catch(() => undefined)
+    void props.context.data.session.message.sync(id()).catch(() => undefined)
+  })
   type Row = { id: string; kind: "user" | "assistant" | "tool" | "error"; text: string }
   const rows = createMemo<Row[]>(() =>
     messages().flatMap((message): Row[] => {

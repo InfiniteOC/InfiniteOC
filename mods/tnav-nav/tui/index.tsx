@@ -32,14 +32,18 @@ function Commands(props: { context: Plugin.Context }) {
   }
   const failed = (title: string) => (error: unknown) =>
     context.ui.toast.show({ variant: "error", title, message: error instanceof Error ? error.message : String(error) })
+  // Opening a panel moves focus into it; the prompt keeps typing focus so the panel can stay up while you work.
+  // The panel claims focus a frame or two after it mounts, so the session pane takes it back twice.
+  const keepPromptFocus = () => [120, 400].forEach((ms) => setTimeout(() => context.keymap.dispatch("pane.focus.left"), ms))
   const togglePanel = (name: string) => {
     context.ui.dialog.clear()
     if (context.ui.panel.current()?.name === name) context.ui.panel.close()
     else if (!context.ui.panel.open(name)) context.ui.toast.show({ variant: "warning", message: "Open a session first." })
+    else keepPromptFocus()
   }
   const openSplit = (target: string) => {
     split.set(target)
-    context.ui.panel.open("split")
+    if (context.ui.panel.open("split")) keepPromptFocus()
   }
 
   const show = (render: () => any) => context.ui.dialog.show(render)
@@ -92,8 +96,8 @@ function Commands(props: { context: Plugin.Context }) {
         palette: true,
         run: () => show(() => <BookmarkList context={context} sessionID={sessionID()} />),
       },
-      { id: "tnav.bookmark.next", title: "Next bookmark", group: "Session", slash: { name: "mark-next" }, palette: true, enabled: inSession, bind: "alt+]", run: step(1) },
-      { id: "tnav.bookmark.prev", title: "Previous bookmark", group: "Session", slash: { name: "mark-prev" }, palette: true, enabled: inSession, bind: "alt+[", run: step(-1) },
+      { id: "tnav.bookmark.next", title: "Next bookmark", group: "Session", slash: { name: "mark-next" }, palette: true, enabled: inSession, bind: "alt+n", run: step(1) },
+      { id: "tnav.bookmark.prev", title: "Previous bookmark", group: "Session", slash: { name: "mark-prev" }, palette: true, enabled: inSession, bind: "alt+p", run: step(-1) },
       {
         id: "tnav.minimap",
         title: "Toggle session minimap",

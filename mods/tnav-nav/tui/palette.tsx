@@ -56,20 +56,17 @@ export function paletteExtras() {
         .slice(0, 8)
         .map((session) => ({
           title: session.title || session.id,
-          description: "Open session",
           category: "Sessions",
           searchText: `${text} ${session.title ?? ""}`,
           searchFooter: `Session ${Locale.time(session.time.updated)}`,
-          footer: Locale.time(session.time.updated),
           value: `tnav:session:${session.id}`,
           onSelect: open(session.id),
         }))
       const files = (fetched?.files ?? []).map((file: any) => ({
         title: file.path,
-        description: "Insert file reference in prompt",
         category: "Files",
         searchText: `${text} ${file.path}`,
-        searchFooter: "File",
+        searchFooter: "File, inserts @path",
         value: `tnav:file:${file.path}`,
         onSelect: (dialog: DialogContext) => {
           dialog.clear()
@@ -78,10 +75,9 @@ export function paletteExtras() {
       }))
       const find = {
         title: `Search message text for "${text}"`,
-        description: "Full-text search across all sessions",
         category: "Search",
         searchText: text,
-        searchFooter: "Full-text",
+        searchFooter: "All sessions",
         value: "tnav:find",
         onSelect: (dialog: DialogContext) => {
           dialog.clear()
