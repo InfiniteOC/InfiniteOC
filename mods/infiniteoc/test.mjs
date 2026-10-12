@@ -234,7 +234,13 @@ test("ponytail applies to coding turns only, honors levels and per-session stop"
   const dir = await mkdtemp(path.join(tmpdir(), "ponytail-"))
   t.after(() => rm(dir, { recursive: true, force: true }))
   await writeFile(path.join(dir, "ponytail.ts"), source.split("export const Plugin")[0].replace(/^import .*$/gm, "").replace('"__PONYTAIL_SKILL__"', JSON.stringify(skill)))
-  const { decide, rules, parseMode } = await import(path.join(dir, "ponytail.ts"))
+  const { decide, rules, parseMode, DEFAULT_MODE, readMode } = await import(path.join(dir, "ponytail.ts"))
+  assert.equal(DEFAULT_MODE, "off")
+  delete process.env.PONYTAIL_DEFAULT_MODE
+  assert.equal(readMode(), "off") // no state file in the stripped harness, no env override
+  process.env.PONYTAIL_DEFAULT_MODE = "auto"
+  assert.equal(readMode(), "auto")
+  delete process.env.PONYTAIL_DEFAULT_MODE
   const user = (text) => ({ role: "user", content: [{ type: "text", text }] })
   const edit = { role: "assistant", content: [{ type: "tool-call", id: "1", name: "edit", input: {} }] }
   const read = { role: "assistant", content: [{ type: "tool-call", id: "2", name: "read", input: {} }] }

@@ -1,5 +1,5 @@
 // InfiniteOC ponytail: the lazy-senior-dev ruleset from github.com/DietrichGebert/ponytail (MIT,
-// bundled in skills/ponytail*), on by default and applied only to turns that write code.
+// bundled in skills/ponytail*), off by default and applied only to turns that write code when enabled.
 // Written to packages/core/src/plugin/infiniteoc-ponytail.ts by mods/infiniteoc, which inlines the
 // skill body below. The block goes just before the turn's user message and is never persisted, so it
 // stays put across one turn's steps (prompt cache friendly) and costs nothing on chat turns.
@@ -16,6 +16,8 @@ const SKILL_BODY: string = "__PONYTAIL_SKILL__"
 
 export type Mode = "auto" | "off" | "lite" | "full" | "ultra"
 export type Level = Exclude<Mode, "auto" | "off">
+// Shipped default when no state file and no PONYTAIL_DEFAULT_MODE override exists.
+export const DEFAULT_MODE: Mode = "off"
 const MODES: ReadonlyArray<Mode> = ["auto", "off", "lite", "full", "ultra"]
 const LEVELS: ReadonlyArray<string> = ["lite", "full", "ultra"]
 // Agents that never write code get nothing.
@@ -72,11 +74,11 @@ export function decide(mode: Mode, agent: string, messages: ReadonlyArray<Messag
 }
 
 const statePath = () => path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), ".config"), "opencode", ".ponytail-active")
-const readMode = (): Mode => {
+export const readMode = (): Mode => {
   try {
-    return parseMode(readFileSync(statePath(), "utf8")) ?? parseMode(process.env.PONYTAIL_DEFAULT_MODE) ?? "auto"
+    return parseMode(readFileSync(statePath(), "utf8")) ?? parseMode(process.env.PONYTAIL_DEFAULT_MODE) ?? DEFAULT_MODE
   } catch {
-    return parseMode(process.env.PONYTAIL_DEFAULT_MODE) ?? "auto"
+    return parseMode(process.env.PONYTAIL_DEFAULT_MODE) ?? DEFAULT_MODE
   }
 }
 
