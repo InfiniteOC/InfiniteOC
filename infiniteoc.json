@@ -8,7 +8,8 @@
     "./mods/auto-loop/index.mjs",
     "./mods/ctx-context/index.mjs",
     "./mods/prov-kit/index.mjs",
-    "./mods/qual-checks/index.mjs"
+    "./mods/qual-checks/index.mjs",
+    "./mods/safe-guard/index.mjs"
   ],
   "options": {
     "reducedMotion": false
