@@ -5,7 +5,8 @@
     "./mods/clearall/index.mjs",
     "./mods/health/index.mjs",
     "./mods/deep-deliberation/index.mjs",
-    "./mods/auto-loop/index.mjs"
+    "./mods/auto-loop/index.mjs",
+    "./mods/ctx-context/index.mjs"
   ],
   "options": {
     "reducedMotion": false
