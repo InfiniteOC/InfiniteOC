@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>InfiniteOC remote</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header>
+  <h1>InfiniteOC</h1>
+  <span id="link" class="link" role="status">connecting</span>
+</header>
+<main>
+  <form id="login" hidden>
+    <label for="token">Access token</label>
+    <p>Printed in the terminal where <code>infiniteoc remote</code> is running.</p>
+    <input id="token" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+    <button class="primary" type="submit">Connect</button>
+    <p id="login-error" class="error" role="alert"></p>
+  </form>
+  <section id="app" hidden>
+    <h2>Waiting for you <span id="pending-count" class="count">0</span></h2>
+    <ul id="pending" class="stack"></ul>
+    <p id="pending-empty" class="empty">Nothing is waiting for approval.</p>
+    <h2>Sessions</h2>
+    <ul id="sessions" class="stack"></ul>
+    <p id="sessions-empty" class="empty" hidden>No sessions yet.</p>
+  </section>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

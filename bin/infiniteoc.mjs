@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { config, prepare, launch, doctor, doctorFix, exists, home, run } from "../src/launcher.mjs"
 import { update, settle } from "../src/updater.mjs"
 import { needsWizard, runWizard, terminalIO } from "../src/wizard.mjs"
+import { startRemote, remoteFile, isPrivate } from "../src/remote.mjs"
 import { bench, format, parseConfig, TASKS } from "../src/bench.mjs"
 import { addPack, removePack } from "../src/packs.mjs"
 import { findTeamFile, readTeamFile, isTrusted } from "../src/team.mjs"
@@ -24,6 +25,8 @@ try {
   infiniteoc wizard              Re-run the first-run setup (provider, model, theme, updates, ponytail)
   infiniteoc team [trust|revoke] Show or approve the project's infiniteoc.team.json
   infiniteoc update              Fast-forward this checkout to its remote branch, then rebuild
+  infiniteoc remote [--host IP] [--port N]  Phone page for sessions and permission prompts (opt-in, local network, token)
+  infiniteoc remote attach       Open the TUI on the backend the phone page watches
   infiniteoc bench --a CFG --b CFG  Compare two configurations on a fixed task set (pass rate, tokens, time)
   infiniteoc mods                List configured mods (including installed packs)
   infiniteoc mod add URL         Install a mod pack from git, pinned by --commit and --sha256 (prompts if omitted)
@@ -78,6 +81,27 @@ Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
     const env = { ...process.env, INFINITEOC_SETTINGS_FILE: settingsFile(), INFINITEOC_HOME: home, INFINITEOC: "1", OPENCODE_CLIENT: "InfiniteOC", OPENCODE_TUI_CHANNEL: "infiniteoc", INFINITEOC_SKILLS: join(home, "skills") }
     const results = await bench({ binary, env, configs, tasks, runs, timeout: Number(opt("--timeout") ?? 180) * 1000, progress: (config, trial) => console.error(`[bench] ${config.label}  ${trial.task}  ${trial.pass ? "pass" : "FAIL"}  ${(trial.ms / 1000).toFixed(1)}s`) })
     console.log(args.includes("--json") ? JSON.stringify(results, null, 2) : format(results))
+  } else if (args[0] === "remote") {
+    const opt = (name) => args.includes(name) ? args[args.indexOf(name) + 1] : undefined
+    if (args[1] === "attach") {
+      // The TUI joins the backend that the phone page watches, so its permission prompts show up there too.
+      const state = await readFile(remoteFile(home), "utf8").then(JSON.parse, () => { throw new Error("No remote control is running; start it with infiniteoc remote") })
+      try { process.kill(state.pid, 0) } catch { throw new Error("The remote control that wrote this has stopped; start it again with infiniteoc remote") }
+      process.env.OPENCODE_PASSWORD = state.password
+      process.exitCode = await launch(["--server", state.backendUrl, ...args.slice(2)], settings)
+    } else {
+      const host = opt("--host")
+      if (host && !isPrivate(host)) throw new Error(`${host} is not a private network address; remote control is local network only`)
+      const { binary } = await prepare(settings)
+      const env = { ...process.env, INFINITEOC_SETTINGS_FILE: settingsFile(), INFINITEOC_HOME: home, INFINITEOC: "1", OPENCODE_CLIENT: "InfiniteOC", OPENCODE_TUI_CHANNEL: "infiniteoc", INFINITEOC_SKILLS: join(home, "skills") }
+      const remote = await startRemote({ home, binary, env, host, port: Number(opt("--port") ?? 0) })
+      console.log(`Remote control on ${remote.url} (local network only)\n  Open it on your phone, then enter this token:\n    ${remote.token}\n  or open ${remote.url}/#${remote.token}\n\nIt shows sessions and permission prompts of sessions that run on its backend:\n  infiniteoc remote attach     (in another terminal; opens the TUI on that backend)\nTraffic is plain HTTP: use a network you trust, or tunnel it. Ctrl+C stops it.`)
+      const stop = async () => { await remote.close(); process.exit(0) }
+      process.once("SIGINT", stop); process.once("SIGTERM", stop)
+      await remote.exited
+      await remote.close()
+      throw new Error("The OpenCode backend stopped")
+    }
   } else if (args[0] === "mod") {
     const [, action, target, ...rest] = args
     const flag = (name) => rest.includes(name) ? rest[rest.indexOf(name) + 1] : undefined
