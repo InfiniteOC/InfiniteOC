@@ -127,8 +127,8 @@ Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
     let report = await doctor(settings)
     if (args.includes("--fix")) {
       const did = await doctorFix(settings, report)
-      for (const line of did) console.error(`[InfiniteOC] fixed: ${line}`)
-      if (!did.length) console.error("[InfiniteOC] nothing to fix")
+      for (const line of did) console.error(`[InfiniteOC] doctor --fix: ${line}`)
+      if (!did.length) console.error("[InfiniteOC] doctor --fix: nothing to fix")
       report = await doctor(settings)
     }
     if (args.includes("--json")) console.log(JSON.stringify(report, null, 2))

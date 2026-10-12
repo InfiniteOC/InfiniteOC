@@ -351,15 +351,18 @@ export async function doctor(settings) {
 export async function doctorFix(settings, report) {
   const did = []
   const fixes = new Set(Object.values(report).map(item => item.fix).filter(Boolean))
-  if (fixes.has("tools")) { await bootstrap(settings); did.push("fetched missing tools and upstream source") }
-  if (fixes.has("mcp")) {
+  // One failing step must not hide the others; its error is listed and the report is checked again afterwards.
+  const step = async (name, task) => { try { did.push(await task()) } catch (error) { did.push(`${name} failed: ${error.message}`) } }
+  if (fixes.has("tools")) await step("fetching tools", async () => { await bootstrap(settings); return "fetched missing tools and upstream source" })
+  if (fixes.has("mcp")) await step("relinking MCP paths", async () => {
     let count = 0
     for (const file of report.mcp.files) count += await repairPaths(file, home)
-    did.push(count ? `relinked ${count} MCP path(s) to ${home}/.tools` : "no MCP path could be relinked (the files do not exist in this install)")
-  }
-  if (fixes.has("build") || fixes.has("tools")) {
-    if (report.daemon?.clients > 0) did.push(`skipped the rebuild: ${report.daemon.clients} UI(s) are running; restart them, then run infiniteoc rebuild`)
-    else { await prepare(settings); did.push("rebuilt") }
-  }
+    return count ? `relinked ${count} MCP path(s) to ${home}/.tools` : "no MCP path could be relinked (the files do not exist in this install)"
+  })
+  if (fixes.has("build") || fixes.has("tools")) await step("rebuild", async () => {
+    if (report.daemon?.clients > 0) return `skipped the rebuild: ${report.daemon.clients} UI(s) are running; restart them, then run infiniteoc rebuild`
+    await prepare(settings)
+    return "rebuilt"
+  })
   return did
 }
