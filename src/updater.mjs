@@ -5,6 +5,7 @@ import { spawn } from "node:child_process"
 import { readFile, writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { fx } from "./fx.mjs"
+import { isOffline, onBattery } from "./netpower.mjs"
 
 export const UPDATE_MODES = ["auto", "ask", "off"]
 export const INTERVAL = 6 * 60 * 60 * 1000
@@ -145,6 +146,8 @@ export async function update({ home, saved, motion = true, explicit = false, str
   if (mode === "off") return undefined
   const state = await readState(home)
   if (!explicit && Date.now() - (state.checkedAt ?? 0) < INTERVAL) return undefined
+  // No network, or a laptop on battery: skip the background check (infiniteoc update still works).
+  if (!explicit && (isOffline() || onBattery())) return undefined
   const ui = fx(stream, { motion })
   const tags = requireSigned(saved)
   const interactive = ui.tty && !!process.stdin.isTTY

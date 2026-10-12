@@ -6,7 +6,8 @@
     "./mods/health/index.mjs",
     "./mods/deep-deliberation/index.mjs",
     "./mods/auto-loop/index.mjs",
-    "./mods/ctx-context/index.mjs"
+    "./mods/ctx-context/index.mjs",
+    "./mods/prov-kit/index.mjs"
   ],
   "options": {
     "reducedMotion": false
