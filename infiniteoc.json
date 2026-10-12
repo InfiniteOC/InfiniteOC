@@ -11,7 +11,8 @@
     "./mods/qual-checks/index.mjs",
     "./mods/safe-guard/index.mjs",
     "./mods/tnav-nav/index.mjs",
-    "./mods/tstat-status/index.mjs"
+    "./mods/tstat-status/index.mjs",
+    "./mods/rea/index.mjs"
   ],
   "options": {
     "reducedMotion": false
