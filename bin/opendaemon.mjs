@@ -108,7 +108,7 @@ cannot automatically undo side effects.`)
         const leave = () => daemonRequest(socket, "POST", "/dev", { enabled: false }, 1000).catch(() => {}).then(() => process.exit(0))
         process.once("SIGINT", leave); process.once("SIGTERM", leave)
       }
-      let last = 0, startedAt, waiting = false, reported
+      let last = 0, startedAt, waiting = false
       for (;;) {
         try {
           const status = await daemonRequest(socket, "GET", "/status")
@@ -116,8 +116,6 @@ cannot automatically undo side effects.`)
           if (status.startedAt !== startedAt) { startedAt = status.startedAt; last = 0 }
           waiting = false
           for (const event of status.events) if (event.sequence > last) { console.log(json ? JSON.stringify(event) : line(event) + (dev && event.ms !== undefined ? `  (${event.ms}ms)` : "")); last = event.sequence }
-          // Dev mode also prints why a reload failed, once per job.
-          if (dev && status.job?.status === "failed" && status.job.detail && reported !== status.job.id) { reported = status.job.id; console.log(json ? JSON.stringify({ error: status.job.detail }) : status.job.detail) }
         } catch {
           if (!waiting) console.error("waiting for opendaemon…")
           waiting = true
