@@ -9,7 +9,8 @@
     "./mods/ctx-context/index.mjs",
     "./mods/prov-kit/index.mjs",
     "./mods/qual-checks/index.mjs",
-    "./mods/safe-guard/index.mjs"
+    "./mods/safe-guard/index.mjs",
+    "./mods/tnav-nav/index.mjs"
   ],
   "options": {
     "reducedMotion": false
