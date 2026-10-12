@@ -50,9 +50,9 @@ export function terminalIO(input = process.stdin, output = process.stderr) {
     ask: (question, { secret = false } = {}) => new Promise((resolve) => {
       if (closed) return resolve(undefined)
       waiting.add(resolve)
-      output.write(question)
+      // The prompt goes through readline (a separate write would be wiped by its line refresh); muting starts after it is drawn.
+      rl.question(question, (answer) => { muted = false; waiting.delete(resolve); if (secret) output.write("\n"); resolve(answer.trim()) })
       muted = secret
-      rl.question("", (answer) => { muted = false; waiting.delete(resolve); if (secret) output.write("\n"); resolve(answer.trim()) })
     }),
     close: () => rl.close(),
   }

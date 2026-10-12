@@ -275,16 +275,15 @@ export async function launch(args, settings) {
     const tty = process.stdin.isTTY && process.stdout.isTTY ? spawnSync("stty", ["-g"], { stdio: ["inherit", "pipe", "ignore"], encoding: "utf8" }).stdout?.trim() : ""
     const startedAt = new Date()
     const code = await run(prepared.binary, context.args, { cwd: context.cwd, env: context.env })
-    if (isCrash(code, { tui: !!tty })) {
-      const report = await writeCrashReport({ home, code, args: context.args, env: context.env, socket: context.env.INFINITEOC_DAEMON_SOCKET, manifest: prepared.manifest, startedAt }).catch(() => undefined)
-      if (report) console.error(`[InfiniteOC] OpenCode crashed (exit ${code}). Crash report saved to ${report}`)
-    }
+    const crash = isCrash(code, { tui: !!tty }) ? await writeCrashReport({ home, code, args: context.args, env: context.env, socket: context.env.INFINITEOC_DAEMON_SOCKET, manifest: prepared.manifest, startedAt }).catch(() => undefined) : undefined
     if (tty && code > 128 && ![129, 130, 143].includes(code)) {
       spawnSync("stty", [tty], { stdio: ["inherit", "ignore", "ignore"] })
       // Main screen, cursor on, mouse/focus/paste/color-scheme reporting off, kitty keyboard flags popped, modifyOtherKeys off, any synchronized frame ended.
       process.stdout.write("\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[<u\x1b[>4;0m\x1b[?2031l\x1b[?2026l")
       console.error(`[InfiniteOC] OpenCode ended by a signal (exit ${code}); terminal restored`)
     }
+    // After the terminal is restored: written while the TUI's alternate screen is up, it would vanish with it.
+    if (crash) console.error(`[InfiniteOC] OpenCode crashed (exit ${code}). Crash report saved to ${crash}`)
     for (const mod of prepared.mods) if (mod.afterExit) await mod.afterExit({ ...context, code })
     await hooks.emit("afterExit", { ...context, code })
     return code
