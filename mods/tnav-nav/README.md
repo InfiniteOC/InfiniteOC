@@ -8,7 +8,7 @@ TUI navigation for InfiniteOC. One built-in TUI plugin (`infiniteoc.tnav`, writt
 | `/find <text>` | Full-text search over every stored session (message text, shell output, tool inputs). Enter opens the session as a tab and scrolls to the message. |
 | Command palette | While a filter is typed, also lists matching sessions, project files (inserts `@path` in the prompt) and a "search message text" hand-off to `/find`. Commands and settings were already searchable. |
 | `/tree` (`/branches`) | Fork tree of the current conversation (all forked conversations from home). First row forks from a message with the upstream fork picker. |
-| `/mark`, `/bookmarks` (`/marks`), `/mark-next`, `/mark-prev` | Bookmark user messages (also "Bookmark" in the message actions dialog), list them across sessions, step through them with `alt+]` / `alt+[`. Stored in the TUI storage as `tnav-bookmarks.json`. |
+| `/mark`, `/bookmarks` (`/marks`), `/mark-next`, `/mark-prev` | Bookmark user messages (also "Bookmark" in the message actions dialog), list them across sessions, step through them with `alt+n` / `alt+p`. Stored in the TUI storage as `tnav-bookmarks.json`. |
 | `/minimap` | Toggles the one-row strip above the prompt: a cell per message (user, assistant, edit `+`, error `x`, shell `$`, bookmark). Click a cell to jump. On by default. |
 | `/changes` (`/livediff`) | Side pane with the files this session changed and the diff of the selected file (upstream `PatchDiff`). Refreshes when an edit tool finishes. `j/k`, `space/b`, `f`, `q` while focused. |
 | `/title` | Edit the session title in place. Clicking the title in the sidebar does the same; when the sidebar is hidden the editor appears above the prompt. Enter saves, Esc cancels. |
