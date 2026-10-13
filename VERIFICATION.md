@@ -1,3 +1,18 @@
+# infinicode mod (October 13, 2026): unit-verified only, not built
+
+- Linux x64, Node v26.7.0. `npm test` and `mods/infinicode/test.mjs` (15 tests) pass; `feature check
+  infinicode` passes; every file the mod writes or patches (after all enabled mods, in order) parses
+  with Bun's transpiler; the generated red theme's categorical hues all exist.
+- Not done (the machine could not build OpenCode): `rebuild`, typecheck, starting the binary, any
+  model request. The catalog patch, theme fade and builtin plugin are not verified at runtime.
+- To verify after `infiniteoc rebuild`: `ctrl+t` on an Anthropic model reaches `InfiniCode` after
+  `max` and the footer label turns red; the theme fades (about 0.7 s) to red and back; with
+  Animations off it switches instantly; a model without variants (`/variants` was unavailable) now
+  offers InfiniCode; `/infinicode` twice returns to the earlier level; the settings file gets
+  `workflows.enabled: true` and `infinicode.workflowsBefore`, both reverted on leaving; the request
+  log shows the max-effort settings for `#infinicode`; restart keeps InfiniCode; disabling the
+  workflows mod makes the toast say workflows are unavailable.
+
 # workflows mod (October 13, 2026): unit-verified only, not built
 
 - Linux x64, Node v26.7.0. `npm test`: 397 tests, 396 pass, 1 skipped (pre-existing), 0 fail;
