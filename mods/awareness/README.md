@@ -17,24 +17,23 @@ for orientation, `ui_check`/`design_tokens`/`component_catalog` for UI,
 `mutation_check`/`coverage_delta`/`bench_guard`/`/testfirst`/`prune_scan`/`license_check`
 for verification. `infiniteoc {op,target?}` for status/mods/check and dev
 recipes; state-changing ops return user-run commands, never self-executed.
-Full shapes live in `tool_guide`, so the prompt stays small.
+`tool_guide {tool: 'parallel'}` states the concurrency rules the runner
+already enforces (same-block calls run concurrently; same-file edits
+serialize, so sequence those). Full shapes live in `tool_guide`, so the
+prompt stays small.
 All three tools are `codemode:false`; they add no permissions and change no behavior.
 
-## Enable (after `/yolo` merges)
+## Enable
 
-This commit adds only `mods/awareness/*` so it merges cleanly with
-`feat/yolo` (which touches `infiniteoc.json`, `README.md` and
-`mods/safe-guard/*`). It does **not** edit `infiniteoc.json` yet:
+Enabled on main alongside `hash-mentions` and `tool-perf`
+(`./mods/awareness/index.mjs` after `./mods/infiniteoc/index.mjs`).
+Verify with:
 
 ```sh
 node --test mods/awareness/test.mjs
 node bin/infiniteoc.mjs feature check awareness
-# after feat/yolo is in main:
-node bin/infiniteoc.mjs feature enable awareness
 ```
 
-`enable` checks first, appends `./mods/awareness/index.mjs` after
-`./mods/infiniteoc/index.mjs`, keeps `infiniteoc.json.bak`.
 Rollback: `node bin/infiniteoc.mjs feature disable awareness`, then restart.
 
 ## Tests

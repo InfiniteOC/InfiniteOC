@@ -75,6 +75,7 @@ export const TOOL_GUIDE: Record<string, string> = {
   prune_scan: "prune_scan {path?: dir} — unused files/exports candidates only, never deletes. Spot-check dynamic imports before presenting.",
   license_check: "license_check {path: 'vendor/foo'} — LICENSE/package.json/SPDX scan, permissive/copyleft/unknown + what is needed. Run when vendoring code.",
   infiniteoc: "infiniteoc {op?: 'status'|'mods'|'doctor'|'check'|'new'|'enable'|'disable'|'rebuild'|'update'|'bench'|'remote'|'mod'|'wizard'|'team'|'devflow'|'advantages'|'help', target?: '<mod-ID>'} — manage InfiniteOC and use its advantages. Read ops answer directly; recipes quote the terminal command for the user; user-only ops (update/bench/remote/mod/wizard) stop there. Never execute state-changing ops yourself.",
+  parallel: "parallel (guide entry — call tool_guide {tool: 'parallel'}) — Same-block independent calls run concurrently; reads and different-file writes need no sequencing. Rules: batch independent reads/searches in one block; never parallelize edits to the SAME file (per-file locks serialize them — sequence instead); each approval-gated call still prompts separately, so batch only what you would approve together; give disjoint multi-file chunks to parallel general subagents, never two writers on one file; dependent steps (find, then read, then edit, then check) stay sequential.",
 }
 
 /** The full cheat-sheet, or one entry; unknown names list what exists. */
@@ -113,7 +114,7 @@ export const INFINITEOC_OPS: Record<string, InfiniteocOp> = {
   wizard: { level: "user-only", run: "infiniteoc wizard", about: "Interactive first-run setup (provider, model, theme). A person answers; not an agent flow." },
   team: { level: "recipe", run: "infiniteoc team [trust|revoke]", about: "Show or approve the project's infiniteoc.team.json (traffic + updates only)." },
   devflow: { level: "read", run: "FEATURES.md", about: "The mod dev loop: new -> edit command.tsx -> check -> enable -> rebuild -> interact. Tabs are not sessions; persistent changes in mods/ only." },
-  advantages: { level: "read", run: "tool_guide", about: "InfiniteOC advantages for real projects: /goal autonomy, /ponytail minimal-code modes, /routing cheap/strong/fallback, /budget limits, memory+glossary+pins context, quality tools (ui_check, mutation_check, coverage_delta), safety gates. Call tool_guide {} for shapes." },
+  advantages: { level: "read", run: "tool_guide", about: "InfiniteOC advantages for real projects: /goal autonomy, /ponytail minimal-code modes, /routing cheap/strong/fallback, /budget limits, memory+glossary+pins context, quality tools (ui_check, mutation_check, coverage_delta), safety gates. Call tool_guide {} for shapes, tool_guide {tool: 'parallel'} for concurrency rules." },
   help: { level: "read", run: "infiniteoc tool: help", about: "This op list." },
 }
 
