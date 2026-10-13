@@ -17,11 +17,17 @@ Rules, mirroring the upstream `@` trigger:
 
 The popup's trigger character is read back from the prompt text at the stored
 index on every use (nothing is stored), so editing the trigger character
-while the popup is open stays correct. No commands, tools, permissions,
-provider code or session behavior are touched: seven `patchExact` edits in
-`packages/tui/src/component/prompt/autocomplete.tsx` and one new
+while the popup is open stays correct. Reference mode never lists slash
+commands, even with the trigger at position 0. No other commands, tools,
+permissions, provider code or session behavior are touched: nine `patchExact`
+edits in `packages/tui/src/component/prompt/autocomplete.tsx` and one new
 `hashTriggerIndex` in `packages/tui/src/prompt/display.ts` that mirrors
 `mentionTriggerIndex` exactly apart from the character.
+
+Speed: the network-backed file search fires 150 ms after the last keystroke
+(empty query fires immediately); skills, agents and alias matching stay
+instant. This removes the per-keystroke `file.find` roundtrip storm that made
+the popup feel laggy. Nothing about ranking, limits, or results changed.
 
 Tests, from the checkout root:
 

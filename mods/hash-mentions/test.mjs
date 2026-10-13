@@ -29,10 +29,14 @@ test("patches only the prompt UI, adds no commands, tools, or permission code", 
   assert.equal(writes.length, 0)
   assert.equal(commands.length, 0)
   assert.ok(patched.length > 0)
+  assert.equal(patched.length, patches.length)
   assert.deepEqual([...new Set(patched.map(([file]) => file))].sort(), [...files].sort())
   const added = patched.map(([, , after]) => after).join("\n")
-  assert.doesNotMatch(added, /Permission|tool\(|effect|allow|deny|exec|spawn/i)
+  assert.doesNotMatch(added, /Permission|tool\(|effect:\s*"|Effect\.|allow|deny|exec|spawn/i)
   assert.match(added, /hashTriggerIndex/)
+  // Debounced network search; local filtering stays on the instant signal.
+  assert.match(added, /debouncedSearch/)
+  assert.match(added, /query: debouncedSearch\(\)/)
 })
 
 test("anchors are unique in the pinned upstream and apply in order", { skip: !hasUpstream && hasUpstream }, async () => {
