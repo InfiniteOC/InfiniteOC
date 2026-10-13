@@ -13,7 +13,8 @@
     "./mods/tnav-nav/index.mjs",
     "./mods/tstat-status/index.mjs",
     "./mods/rea/index.mjs",
-    "./mods/workflows/index.mjs"
+    "./mods/workflows/index.mjs",
+    "./mods/infinicode/index.mjs"
   ],
   "options": {
     "reducedMotion": false
