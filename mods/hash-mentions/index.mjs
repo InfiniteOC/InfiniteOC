@@ -57,9 +57,11 @@ export function hashTriggerIndex(value: string, offset = promptOffsetWidth(value
     const nonFileOptions: AutocompleteOption[] =
       skillsOnly
         ? [...skillOptions(), ...referenceAliasesValue, ...agentsValue]
-        : store.index === 0
-          ? [...commandsValue]
-          : []`],
+        : store.visible === "reference"
+          ? []
+          : store.index === 0
+            ? [...commandsValue]
+            : []`],
   [`${tui}/component/prompt/autocomplete.tsx`, `    const charAfterCursor = displayCharAt(props.value, currentCursorOffset)
     const needsSpace = charAfterCursor !== " "
     const prefix = "@"`, `    const charAfterCursor = displayCharAt(props.value, currentCursorOffset)
