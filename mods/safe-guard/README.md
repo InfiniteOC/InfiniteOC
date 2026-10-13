@@ -41,6 +41,8 @@ file can tighten the rules, never grant commands or run hooks. `allow`, `hooks`,
   `git checkout .`, force branch delete, `rebase`, `merge`, `--amend`, destructive SQL, `sudo`,
   `dd of=`, `chmod -R`, `curl | sh`, `gh pr/issue/release` writes, `npm publish`, `kubectl delete`,
   plus your `ask` globs. Each command of a chain is checked separately.
+- Both gates set their message on every request they cover, including requests that were already
+  `ask`. The TUI's auto-approve (`--auto`, `/yolo`) uses that message to leave the request to you.
 - Allow list: globs like permission rules (`npm test*`). Every command in a chain must match.
 - Secret scan: a write, edit or patch whose new text has a private key block, an AWS, GitHub,
   Slack, Google, Stripe, Anthropic or OpenAI key, or a long quoted `secret/token/password =`

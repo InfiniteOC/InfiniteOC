@@ -15,7 +15,8 @@
     "./mods/rea/index.mjs",
     "./mods/awareness/index.mjs",
     "./mods/hash-mentions/index.mjs",
-    "./mods/tool-perf/index.mjs"
+    "./mods/tool-perf/index.mjs",
+    "./mods/yolo/index.mjs"
   ],
   "options": {
     "reducedMotion": false
