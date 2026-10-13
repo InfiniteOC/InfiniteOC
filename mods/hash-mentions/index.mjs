@@ -87,11 +87,40 @@ export function hashTriggerIndex(value: string, offset = promptOffsetWidth(value
   [`${tui}/component/prompt/autocomplete.tsx`, `    return "No matching files, agents, or references"`, `    return displayCharAt(props.value, store.index) === "#"
       ? "No matching files"
       : "No matching skills, agents, or references"`],
+  [`${tui}/component/prompt/autocomplete.tsx`, `  const [search, setSearch] = createSignal("")
+  createEffect(() => {
+    const next = filter()
+    setSearch(next ? next : "")
+  })`, `  const [search, setSearch] = createSignal("")
+  createEffect(() => {
+    const next = filter()
+    setSearch(next ? next : "")
+  })
+  // Debounce only the network-backed file search: without this every keystroke
+  // fires a full file.find roundtrip and re-renders the popup. Local filtering
+  // (skills, agents, aliases) keeps using search() and stays instant.
+  const [debouncedSearch, setDebouncedSearch] = createSignal("")
+  let searchTimer: ReturnType<typeof setTimeout> | undefined
+  createEffect(() => {
+    const next = search()
+    if (searchTimer) clearTimeout(searchTimer)
+    if (!next) {
+      setDebouncedSearch(next)
+      return
+    }
+    searchTimer = setTimeout(() => setDebouncedSearch(next), 150)
+  })
+  onCleanup(() => {
+    if (searchTimer) clearTimeout(searchTimer)
+  })`],
+  [`${tui}/component/prompt/autocomplete.tsx`, `  const [files] = createResource(
+    () => ({ query: search(), location: location.current, visible: store.visible }),`, `  const [files] = createResource(
+    () => ({ query: debouncedSearch(), location: location.current, visible: store.visible }),`],
 ]
 
 export default {
   id: "hash-mentions",
-  version: "1.0.0",
+  version: "1.1.0",
   async setup(api) {
     for (const [path, before, after] of patches) await api.patchExact(path, before, after)
   },
