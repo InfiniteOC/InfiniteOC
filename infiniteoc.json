@@ -19,7 +19,8 @@
     "./mods/yolo/index.mjs",
     "./mods/webui/index.mjs",
     "./mods/accounts/index.mjs",
-    "./mods/workflows/index.mjs"
+    "./mods/workflows/index.mjs",
+    "./mods/infinicode/index.mjs"
   ],
   "options": {
     "reducedMotion": false
