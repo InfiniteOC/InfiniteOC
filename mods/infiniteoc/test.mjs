@@ -160,7 +160,7 @@ test("configured Quick default resolves to one visible InfiniteOC primary withou
   assert.equal(agents[0].system, "Custom prompt")
   assert.equal(agents[1].system, undefined)
 })
-test("/goal keeps going until verified, pauses (not kills) on interrupt, and resumes", async (t) => {
+test("/goal keeps going until verified, pauses (not kills) on interrupt, and auto-resumes on the next message", async (t) => {
   // decide() is pure; load it without the plugin runtime by dropping imports and the Plugin export.
   const source = await readFile(new URL("./goal.ts", import.meta.url), "utf8")
   const dir = await mkdtemp(path.join(tmpdir(), "goal-"))
@@ -193,9 +193,15 @@ test("/goal keeps going until verified, pauses (not kills) on interrupt, and res
   assert.match(decide([start, reply("partial"), idle("failed")]).note, /error/)
   assert.deepEqual(decide([start, reply("x"), idle(), synthetic("[InfiniteOC goal: stopped]\nGoal stopped."), reply("later"), idle()]), { action: "none" })
   const pausedNote = (note) => synthetic(`[InfiniteOC goal: paused]\n${note}\nGoal: ${goal}`)
-  // A paused goal never auto-continues; only /goal resume restarts it.
+  // A paused goal never auto-continues on its own; only /goal resume restarts it.
   assert.deepEqual(decide([start, reply("x"), idle("interrupted"), pausedNote("Esc stopped."), reply("later"), idle()]), { action: "none" })
-  assert.deepEqual(decide([start, reply("x"), idle("interrupted"), pausedNote("Esc stopped."), user("a side question"), reply("answer"), idle()]), { action: "none" })
+  // ...but the user's next message unpauses it, through the normal flow.
+  assert.deepEqual(decide([start, reply("x"), idle("interrupted"), pausedNote("Esc stopped."), user("actually use sqlite"), reply("ok"), idle()]), { action: "continue", goal, turn: 1 })
+  assert.deepEqual(decide([start, reply("x"), idle("interrupted"), pausedNote("Esc stopped."), user("go on"), reply("done\nGOAL COMPLETE: tests pass"), idle()]), { action: "verify", goal, turn: 1 })
+  assert.deepEqual(
+    decide([start, reply("x"), idle("interrupted"), pausedNote("Esc stopped."), user("go on"), reply("half"), idle("interrupted")]).action,
+    "pause",
+  )
   assert.deepEqual(resumeDecision([user("hi")]), undefined)
   assert.deepEqual(resumeDecision([start, reply("x"), idle()]), undefined)
   assert.deepEqual(resumeDecision([start, reply("x"), idle("interrupted"), pausedNote("Esc stopped.")]), { goal, turn: 1 })
