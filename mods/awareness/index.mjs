@@ -6,7 +6,8 @@ Custom tools and how to call them (all codemode:false; batch independent calls i
 - Checks: project_checks {} before claiming build/test/lint commands; run what it returns. Secrets: env_diff {} (names only) instead of reading .env; never print values.
 - Orient: repo_map {path?,query?} before grepping; trace_lookup {trace} first on pasted errors; type_lookup {name} for installed APIs, never from memory.
 - UI: ui_check {target} before + after; design_tokens/component_catalog before writing UI. Tests: mutation_check {file,test_command,line?}; coverage_delta/bench_guard after changes; /testfirst gates edits; prune_scan/license_check for cleanup/vendoring.
-These add no permissions and change no behavior besides the two read-only tools.`
+- Manage: infiniteoc {op,target?} for status/mods/check and dev recipes; state-changing ops return user-run commands, never self-executed.
+These add no permissions and change no behavior besides the three read-only tools.`
 
 const MARKER = "// infiniteoc:guidance-extensions"
 
@@ -21,7 +22,7 @@ const file = (name) => readFile(new URL(name, import.meta.url), "utf8")
 
 export default {
   id: "awareness",
-  version: "1.0.0",
+  version: "1.1.0",
   async setup(api) {
     await api.write("packages/core/src/plugin/infiniteoc-awareness-lib.ts", await file("./lib.ts"))
     await api.write("packages/core/src/plugin/infiniteoc-awareness.ts", await file("./plugin.ts"))

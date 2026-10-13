@@ -101,12 +101,51 @@ test("guidance stays bounded and grants nothing", () => {
   assert.doesNotMatch(guidance, /effect\s*:\s*"allow"|"allow"|apiKey|secret\s*=/i)
 })
 
-test("plugin is read-only: two tools, no exec/writes/permission changes", () => {
+test("plugin is read-only: three tools, no exec/writes/permission changes", () => {
   assert.match(pluginSource, /name: "project_checks"/)
   assert.match(pluginSource, /name: "tool_guide"/)
+  assert.match(pluginSource, /name: "infiniteoc"/)
   assert.match(pluginSource, /codemode: false/)
   assert.doesNotMatch(pluginSource, /child_process|spawn\(|execFile|writeFileSync|renameSync|chmod|effect\s*=\s*"allow"/)
   assert.doesNotMatch(pluginSource, /safety\.ts|SAFETY_GATE|InfiniteOC safety settings/)
   // lib is pure: no fs, no network, no upstream imports.
   assert.doesNotMatch(libSource, /node:fs|node:child_process|fetch\(|@opencode\//)
+})
+
+test("toolGuide covers the infiniteoc manager", { skip }, () => {
+  assert.match(lib.toolGuide("infiniteoc"), /user-only|never execute/i)
+  assert.match(lib.toolGuide(), /infiniteoc \{op\?/)
+})
+
+test("findCheckout walks up to infiniteoc.json", { skip }, () => {
+  const exists = (dir) => dir === "/home/user/InfiniteOC"
+  assert.equal(lib.findCheckout("/home/user/InfiniteOC/mods/awareness", exists), "/home/user/InfiniteOC")
+  assert.equal(lib.findCheckout("/elsewhere/deep", exists), undefined)
+})
+
+test("readCheckout parses pin+mods and fails closed", { skip }, () => {
+  const info = lib.readCheckout("/c", JSON.stringify({ upstream: "v2.0.21", mods: ["./mods/a/index.mjs"] }), "feat/x")
+  assert.equal(info.dir, "/c")
+  assert.equal(info.upstream, "v2.0.21")
+  assert.deepEqual(info.mods, ["./mods/a/index.mjs"])
+  assert.match(lib.readCheckout("/c", undefined), /No infiniteoc.json/)
+  assert.match(lib.readCheckout("/c", "{oops"), /not strict JSON/)
+  assert.match(lib.readCheckout("/c", JSON.stringify({ mods: [] })), /no upstream string/)
+})
+
+test("infiniteoc dispatch: reads answer, recipes quote, user-only stops", { skip }, () => {
+  const status = { dir: "/c", upstream: "v2.0.21", mods: ["./mods/a/index.mjs"], branch: "main" }
+  assert.match(lib.infiniteoc(undefined, undefined, status), /Upstream pin: v2\.0\.21/)
+  assert.match(lib.infiniteoc("mods", undefined, status), /\./)
+  assert.match(lib.infiniteoc("help", undefined, status), /user-only ops stop there/)
+  assert.match(lib.infiniteoc("nope", undefined, status), /Unknown op/)
+  assert.match(lib.infiniteoc("check", undefined, status), /Usage.*target/)
+  assert.match(lib.infiniteoc("enable", "my-mod", status), /User runs: .*feature enable my-mod/)
+  assert.match(lib.infiniteoc("rebuild", undefined, status), /safe boundary.*User runs:/s)
+  for (const op of ["update", "bench", "remote", "mod", "wizard"]) {
+    const out = lib.infiniteoc(op, undefined, status)
+    assert.match(out, /Refused from agent context/, op)
+    assert.match(out, /User runs:/, op)
+  }
+  assert.match(lib.infiniteoc("status", undefined, "No infiniteoc.json in /x."), /No infiniteoc.json/)
 })
