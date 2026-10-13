@@ -117,6 +117,31 @@ test("toolGuide covers the infiniteoc manager", { skip }, () => {
   assert.match(lib.toolGuide(), /infiniteoc \{op\?/)
 })
 
+test("toolGuide documents parallel-call rules", { skip }, () => {
+  assert.match(lib.toolGuide("parallel"), /concurrently/)
+  assert.match(lib.toolGuide("parallel"), /SAME file/)
+  assert.match(lib.toolGuide("parallel"), /prompts separately/)
+  assert.match(lib.toolGuide(), /parallel \(guide entry/)
+})
+
+test("runner concurrency properties hold (regression guard)", async (t) => {
+  const root = new URL("../../.upstream/", import.meta.url)
+  const step = await readFile(new URL("packages/core/src/session/runner/step.ts", root), "utf8").catch(() => null)
+  const edit = await readFile(new URL("packages/core/src/tool/plugin/edit.ts", root), "utf8").catch(() => null)
+  if (!step || !edit) {
+    t.skip("run `node bin/infiniteoc.mjs setup` first")
+    return
+  }
+  // One fiber per tool-call, joined each turn: same-block calls run concurrently.
+  assert.match(step, /Effect\.forkScoped/)
+  assert.match(step, /Fiber\.awaitAll\(toolRuns/)
+  assert.match(step, /toolRuns\.push/)
+  // No global concurrency cap on tool execution.
+  assert.doesNotMatch(step, /maxConcurr|concurrency:\s*\d+/i)
+  // Same-file writes stay serialized through the per-path lock.
+  assert.match(edit, /fileMutation\.withLock\(\[FileAccess\.resolvePath/)
+})
+
 test("findCheckout walks up to infiniteoc.json", { skip }, () => {
   const exists = (dir) => dir === "/home/user/InfiniteOC"
   assert.equal(lib.findCheckout("/home/user/InfiniteOC/mods/awareness", exists), "/home/user/InfiniteOC")

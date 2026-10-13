@@ -22,7 +22,7 @@ const file = (name) => readFile(new URL(name, import.meta.url), "utf8")
 
 export default {
   id: "awareness",
-  version: "1.1.0",
+  version: "1.2.0",
   async setup(api) {
     await api.write("packages/core/src/plugin/infiniteoc-awareness-lib.ts", await file("./lib.ts"))
     await api.write("packages/core/src/plugin/infiniteoc-awareness.ts", await file("./plugin.ts"))
