@@ -2,7 +2,7 @@
 
 A source-backed OpenCode launcher and mod framework, pinned to **OpenCode v2.0.21**. It copies upstream into a disposable worktree, applies trusted JavaScript source mods, builds a separate CLI/TUI binary, and launches it without touching your installed stock OpenCode.
 
-Enabled mods: `infiniteoc` (purple/pink theme, animated wordmark, InfiniteOC as the default primary agent, settings UI, pinned-build guards; [README](mods/infiniteoc/README.md)), `clearall` ([/clearall](mods/clearall/README.md)), `health` ([/health](mods/health/README.md)) and `deep-deliberation` (adds planning guidance to the agent prompt). The agent keeps upstream's base prompt and gets InfiniteOC guidance per agent, `reviewer` and `researcher` subagents, and the bundled skill library (see [mods/infiniteoc/README.md](mods/infiniteoc/README.md)). No permission rules or approval requirements are weakened.
+Enabled mods: `infiniteoc` (purple/pink theme, animated wordmark, InfiniteOC as the default primary agent, settings UI, pinned-build guards; [README](mods/infiniteoc/README.md)), `clearall` ([/clearall](mods/clearall/README.md)), `health` ([/health](mods/health/README.md)), `yolo` ([/yolo](mods/yolo/README.md)) and `deep-deliberation` (adds planning guidance to the agent prompt). The agent keeps upstream's base prompt and gets InfiniteOC guidance per agent, `reviewer` and `researcher` subagents, and the bundled skill library (see [mods/infiniteoc/README.md](mods/infiniteoc/README.md)). No permission rules are weakened. `/yolo` is an explicit, confirmed, runtime-only opt-in that auto-approves `ask` prompts; `deny` rules and safe-guard's always-ask gates still hold.
 
 ## Requirements
 

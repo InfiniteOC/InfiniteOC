@@ -307,12 +307,14 @@ export const Plugin = define({
 
     // 1 + 2: permission evaluation. A rule that already denies never reaches this hook, and the hook
     // only turns allow into ask (or ask into allow for the user's own allow list), never past a deny.
+    // A gated ask always carries its message, even when it was already ask: the TUI's auto-approve
+    // (--auto, /yolo) recognizes these messages and leaves the request to the user.
     yield* ctx.permission.hook("evaluate", (event) =>
       Effect.sync(() => {
         const config = loadConfig(dir)
         if (event.action === "edit") {
           const hit = event.resources.find((resource) => isProtected(resource, config.protectedPaths))
-          if (hit && event.effect === "allow") {
+          if (hit && event.effect !== "deny") {
             event.effect = "ask"
             event.message = `${hit} is a protected path (InfiniteOC safety settings). Confirm to edit it.`
           }
@@ -322,7 +324,7 @@ export const Plugin = define({
         const touched = event.resources.find((resource) => shellTouchesProtected(resource, config.protectedPaths))
         const why = touched ? "writes to a protected path" : event.resources.map((resource) => dangerous(resource, config.ask)).find(Boolean)
         if (why) {
-          if (event.effect === "allow") {
+          if (event.effect !== "deny") {
             event.effect = "ask"
             event.message = `Always confirmed by InfiniteOC safety: ${why}.`
           }
