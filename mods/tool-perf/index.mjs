@@ -95,11 +95,18 @@ export const patches = [
                 yield* FileMutation.syncTextBom(environment.files, target.absolute, bom)
               }
               return result`, `              const result = yield* fileMutation.writeTextPreservingBom({ target, content: input.content })
-              // The post-write read only feeds the formatter sync below, so skip
-              // it when no formatter applies instead of re-reading every write.
+              // The sync needs the pre-format BOM flag. It is derived from values
+              // already in scope (preview read + split input) instead of re-reading:
+              // writeTextPreservingBom just wrote Bom.join(next.text, existingBom
+              // || next.bom), so outside racy external writes no fresh read can
+              // observe anything different. This also drops the post-write read
+              // entirely, including its racy failure path on unformatted writes.
               if (yield* formatter.file(target.absolute)) {
-                const bom = (yield* FileMutation.readText(environment.files, target.absolute)).bom
-                yield* FileMutation.syncTextBom(environment.files, target.absolute, bom)
+                yield* FileMutation.syncTextBom(
+                  environment.files,
+                  target.absolute,
+                  (current?.bom ?? false) || next.bom,
+                )
               }
               return result`],
 ]

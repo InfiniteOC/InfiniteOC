@@ -10,10 +10,12 @@ all three match tiers × `replaceAll` on/off):
 - `packages/core/src/tool/plugin/edit.ts` — replacement assembly is one
   forward segment join, O(n), instead of re-slicing the whole file per match
   (was O(n·m) on `replaceAll` with m matches).
-- `packages/core/src/tool/plugin/write.ts` — the post-write re-read moved
-  inside the formatter branch that consumes it; unformatted writes skip one
-  fs read. The formatter path still re-reads fresh, so BOM races behave
-  exactly as before.
+- `packages/core/src/tool/plugin/write.ts` — the post-write re-read is gone:
+  the formatter sync is fed `(current?.bom ?? false) || next.bom`, derived
+  from the preview read and split input already in scope. That is exactly what
+  `writeTextPreservingBom` wrote (`Bom.join(next.text, existingBom ||
+  next.bom)`), so the pre-format BOM contract holds without a second fs read
+  — including its racy failure path on unformatted writes.
 
 No messages, schemas, tool names, permission ordering, or outputs change.
 

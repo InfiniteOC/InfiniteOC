@@ -56,10 +56,11 @@ test("anchors are unique in the pinned upstream and apply in order", { skip: has
   // Security order preserved: the permission gate still precedes match failures.
   assert.ok(edit.indexOf("permission.assert({") < edit.indexOf("Could not find oldString in"))
   assert.ok(edit.indexOf("permission.assert({") < edit.indexOf("expected exactly one"))
-  // write.ts still reads exactly twice; the post-write read moved after the formatter check.
+  // write.ts: the post-write re-read is gone (preview read is the only one
+  // left); the sync is fed the derived pre-format flag instead.
   const write = sources.get(WRITE)
-  assert.equal(write.split("FileMutation.readText").length - 1, 2)
-  assert.ok(write.indexOf("formatter.file(target.absolute)") < write.lastIndexOf("FileMutation.readText"))
+  assert.equal(write.split("FileMutation.readText").length - 1, 1)
+  assert.match(write, /\(current\?\.bom \?\? false\) \|\| next\.bom/)
   assert.match(edit, /expectedNorm/)
   assert.match(edit, /parts\.join\(""\)/)
 })
