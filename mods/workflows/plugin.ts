@@ -94,6 +94,8 @@ type Run = {
   done: Deferred.Deferred<void>
   waiter: boolean
   finalized: boolean
+  /** Agents whose rules leave send_message/read_messages visible; the step prompt mentions them only then. */
+  messaging: Set<string>
 }
 
 // Process-wide: workflows started in any location of this server, and which child session is which step.
@@ -159,7 +161,8 @@ export const Plugin = define({
             `<workflow_message workflow="${run.wf.id}" from="${sent.from}" to="${sent.to}">\n${sent.text}\n</workflow_message>`,
             `Message from ${sent.from}`,
           )
-          M.markRead(run.wf, recipient, [sent.id])
+          // A run that ended meanwhile never sees the steer; keep it unread for read_messages / the final notice.
+          if (yield* active(sessionID)) M.markRead(run.wf, recipient, [sent.id])
         }
       })
 
@@ -206,6 +209,8 @@ export const Plugin = define({
               description: `Workflow ${run.wf.name} ${run.wf.status}`,
               text: D.finalText(run.wf, Math.max(run.settings.maxOutputChars, 4000) * 2, unread),
               metadata: { source: "workflow", workflowID: run.wf.id, state: run.wf.status },
+              // Whoever cancelled already knows; the result is there for the next turn without waking the agent.
+              ...(run.wf.status === "cancelled" || run.wf.status === "interrupted" ? { resume: false } : {}),
             })
             .pipe(Effect.catchCause((cause) => Effect.logWarning("InfiniteOC workflows: notification failed", { cause })))
         }
@@ -219,6 +224,8 @@ export const Plugin = define({
         if (run.wf.status === "running")
           for (const id of D.ready(run.wf, run.settings.maxParallel)) {
             const state = run.wf.state[id]
+            // Another fiber's pump may have started it between our forks.
+            if (state.status !== "pending") continue
             state.status = "running"
             state.startedAt = Date.now()
             yield* runStep(run, id).pipe(Effect.forkIn(scope, { startImmediately: true }))
@@ -245,7 +252,7 @@ export const Plugin = define({
         yield* persist(run)
         yield* sessions.prompt({
           sessionID: child.id,
-          text: D.stepPrompt({ workflow: run.wf, step, inbox, messaging: true, maxOutputChars: run.settings.maxOutputChars }),
+          text: D.stepPrompt({ workflow: run.wf, step, inbox, messaging: run.messaging.has(step.agent), maxOutputChars: run.settings.maxOutputChars }),
           resume: false,
         })
         if (state.status !== "running") return undefined
@@ -256,6 +263,10 @@ export const Plugin = define({
           metadata: { workflowID: run.wf.id, stepID: id },
           run: runChild(child.id),
         })
+        if (state.status !== "running") {
+          yield* stopSession(child.id)
+          return undefined
+        }
         return (yield* jobs.wait({ id: child.id })).info
       })
       return body.pipe(
@@ -288,16 +299,15 @@ export const Plugin = define({
             yield* pump(run)
           }),
         ),
+        // The plugin scope closed (location reload or shutdown): steps run as process-wide jobs, so stop
+        // every running one explicitly and record the end, instead of leaving children spending tokens.
         Effect.onInterrupt(() =>
-          Effect.sync(() => {
-            if (state.status !== "running") return
-            state.status = "cancelled"
-            state.error = "interrupted"
-            state.endedAt = Date.now()
+          Effect.gen(function* () {
+            if (run.finalized) return
+            const running = D.cancelAll(run.wf, Date.now(), "interrupted")
             run.wf.status = "interrupted"
-            try {
-              Store.saveWorkflow(run.wf)
-            } catch {}
+            for (const other of running) yield* stopSession(run.wf.state[other].sessionID)
+            yield* finalize(run)
           }),
         ),
       )
@@ -457,6 +467,11 @@ export const Plugin = define({
           done: yield* Deferred.make<void>(),
           waiter: input.wait === true,
           finalized: false,
+          messaging: new Set(
+            [...resolved.values()]
+              .filter((agent) => Permission.evaluate("workflow_message", "*", agent.permissions).effect !== "deny")
+              .map((agent) => agent.id as string),
+          ),
         }
         runs.set(workflow.id, run)
         yield* persist(run)
@@ -465,21 +480,26 @@ export const Plugin = define({
         yield* pump(run)
 
         if (input.wait === true) {
-          yield* Deferred.await(run.done).pipe(Effect.onInterrupt(() => Effect.sync(() => (run.waiter = false))))
-          return D.finalText(workflow, Math.max(current.maxOutputChars, 4000) * 2, M.take(workflow, M.MAIN, run.members))
+          // Like a foreground subagent: interrupting the waiting call stops the workflow (no wake-up follows).
+          yield* Deferred.await(run.done).pipe(Effect.onInterrupt(() => cancel(run, "the starting agent was interrupted")))
+          return { id: workflow.id, text: D.finalText(workflow, Math.max(current.maxOutputChars, 4000) * 2, M.take(workflow, M.MAIN, run.members)) }
         }
-        return [
+        const text = [
           D.statusText(workflow),
           "",
           `The workflow is running in the background (workflowID: ${workflow.id}). You will be notified automatically when it finishes.`,
           "DO NOT sleep, poll or duplicate its work; avoid the files and topics its steps own. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response.",
         ].join("\n")
+        return { id: workflow.id, text }
       })
 
     const workflowTool = (input: typeof Input.Type, context: any) =>
       Effect.gen(function* () {
         const sessionID = context.sessionID as string
-        if (input.action === "start") return yield* start(input, context)
+        if (input.action === "start") {
+          const started = yield* start(input, context)
+          return { content: started.text, metadata: { workflowID: started.id } }
+        }
         if (input.action === "list" || (input.action === "status" && !input.workflowID)) {
           const list = Store.listWorkflows(sessionID, 20).map((saved) => runs.get(saved.id)?.wf ?? saved)
           return list.length ? list.map(D.statusText).join("\n\n") : "This session has no workflows."
@@ -500,7 +520,7 @@ export const Plugin = define({
         if (input.stepID) return yield* cancelStep(run, input.stepID)
         yield* cancel(run, "cancelled by the starting agent")
         return D.statusText(run.wf)
-      }).pipe(Effect.map((content) => ({ content, metadata: { workflowID: input.workflowID } })))
+      }).pipe(Effect.map((result) => (typeof result === "string" ? { content: result, metadata: { workflowID: input.workflowID } } : result)))
 
     // ---- messaging --------------------------------------------------------------------------------
 
@@ -592,7 +612,7 @@ export const Plugin = define({
       })
       .pipe(Effect.orDie)
 
-    const hook = (event: SessionHooks["context"]) =>
+    const hook = (kind: "context" | "compaction" | "generate") => (event: SessionHooks["context"]) =>
       Effect.gen(function* () {
         const current = settings()
         if (!current.enabled) delete event.tools[TOOL]
@@ -624,10 +644,11 @@ export const Plugin = define({
           "",
           `Model tiers now: fast = ${current.models.fast}, strong = ${current.models.strong}, default = ${current.models.default}. At most ${current.maxParallel} steps run at once, ${current.maxSteps} steps per workflow.`,
         ].join("\n")
-        event.system.push(SystemPart.make(GUIDANCE))
+        // Compaction and side generations keep the same tool list (cache-stable) but not the guidance.
+        if (kind === "context") event.system.push(SystemPart.make(GUIDANCE))
       })
-    yield* ctx.session.hook("context", hook)
-    yield* ctx.session.hook("compaction", hook)
-    yield* ctx.session.hook("generate", hook)
+    yield* ctx.session.hook("context", hook("context"))
+    yield* ctx.session.hook("compaction", hook("compaction"))
+    yield* ctx.session.hook("generate", hook("generate"))
   }),
 })

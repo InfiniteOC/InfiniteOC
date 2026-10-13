@@ -40,12 +40,14 @@ dependencies, no cycles, at most `maxSteps` steps.
 `start` returns at once with the step table (each step's model and tier) and the
 `workflowID`; the agent keeps working. When the workflow ends, the starting session gets one
 synthetic `<workflow …>` message with every step's result and its unread messages, which
-wakes it exactly like a finished background subagent. `wait: true` blocks the tool call
-instead (if that call is interrupted the workflow continues and notifies normally). With
+wakes it exactly like a finished background subagent. A cancelled or interrupted workflow's
+notice is delivered without waking the agent (whoever cancelled already knows). `wait: true`
+blocks the tool call instead and, like a foreground subagent, interrupting that call (Esc)
+cancels the workflow. With
 `notify: "each"` a running starting agent also gets a short note per finished step.
 
-Guidance (the `[Workflows]` block) is added to the request only while the `workflow` tool
-is offered, so turning the flag off removes both.
+Guidance (the `[Workflows]` block) is added to agent-loop requests only while the `workflow`
+tool is offered, so turning the flag off removes both.
 
 ## Automatic model choice
 
@@ -126,8 +128,8 @@ For other mods (the InfiniCode effort) that turn workflows on:
   be addressed and the tools refuse callers outside a running workflow. At most 200 messages
   of 4000 characters per workflow.
 - Agents whose rules deny everything by default (`explore`, `researcher`) do not get
-  `send_message` / `read_messages`: messages to them still arrive in their session, and
-  their result reaches their dependents. Allow `workflow_message` for such an agent to let it
+  `send_message` / `read_messages`, and their step prompt does not mention them: messages to
+  them still arrive in their session, and their result reaches their dependents. Allow `workflow_message` for such an agent to let it
   send.
 - Cancelling interrupts only that workflow's running steps; sessions, results and history
   stay. Closing tabs never cancels anything.
@@ -167,8 +169,10 @@ after 7 days. Session history is never touched.
 
 ## Limits
 
-- **No restart recovery.** Workflows run in the server process. If it stops, running
-  workflows are marked `interrupted` at the next start; their child sessions stay in history
+- **No restart recovery.** Workflows run in the server process. When the location that runs
+  one is reloaded, its running steps are stopped and it ends `interrupted` (the starter gets a
+  non-waking notice). If the process stops, running workflows are marked `interrupted` at the
+  next start and the starter is not notified; their child sessions stay in history
   and can be continued with the `subagent` tool's `sessionID`. (Upstream recovers plain
   background subagents; it has no recovery hook for a multi-step plan.)
 - **Messages arrive at step boundaries.** A running recipient sees a message at its next model
@@ -187,4 +191,4 @@ ordering, failure propagation, optional steps, cancel), step prompts and summari
 mailbox, model choice, settings, the store and startup sweep, the flag helper, and the mod
 applied after every enabled mod onto pristine upstream (read from the pinned tag's git
 objects). The Effect plugin and TUI code are syntax-checked but not compiled or run here:
-rebuild and try a workflow before relying on it (see VERIFICATION.md).
+rebuild and try a workflow before relying on it; the checklist is in the root VERIFICATION.md.

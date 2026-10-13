@@ -1,3 +1,18 @@
+# workflows mod (October 13, 2026): unit-verified only, not built
+
+- Linux x64, Node v26.7.0. `npm test`: 397 tests, 396 pass, 1 skipped (pre-existing), 0 fail;
+  `mods/workflows/test.mjs` is 25 of them. `feature check workflows` and
+  `skills/infiniteoc-mod-development/scripts/check-mod.mjs` (all enabled mods in order plus
+  workflows) apply cleanly; every written and patched TS/TSX file parses with Bun's transpiler.
+- Not done (the machine could not build OpenCode): `rebuild`, typecheck, starting the binary,
+  any model request. Nothing about the Effect plugin or the TUI plugin is verified at runtime.
+- To verify after `infiniteoc rebuild`: turn on Workflows in `/settings`; ask for a 3-step
+  workflow (explore + researcher in parallel, reviewer after both) and check the reply comes
+  back immediately; the sidebar and footer show steps and models; the final `<workflow>`
+  notification arrives; `send_message` between two running steps; `/workflows` → Cancel
+  stops a running step; `/readonly on` refuses a workflow with a `general` step; turning the
+  flag off removes the tool from the next request.
+
 # macOS arm64 verification (October 8, 2026)
 
 - macOS arm64, Node v26.7.0, bootstrapped Bun 1.4.2, pinned upstream v2.0.21.

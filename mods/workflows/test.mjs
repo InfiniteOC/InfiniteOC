@@ -554,6 +554,11 @@ test("plugin keeps upstream's permission model: same check and visibility as sub
   assert.match(source, /run\.wf\.parentSessionID === sessionID && !run\.finalized/)
   // Steering into a session never wakes it; only the final notification does (like a background subagent).
   assert.match(source, /metadata: \{ source: "workflow" \}, resume: false \}/)
+  // Interruptions stop the steps (they run as process-wide jobs) instead of orphaning them.
+  assert.match(source, /Effect\.onInterrupt\(\(\) => cancel\(run, "the starting agent was interrupted"\)\)/)
+  assert.match(source, /const running = D\.cancelAll\(run\.wf, Date\.now\(\), "interrupted"\)\n\s+run\.wf\.status = "interrupted"\n\s+for \(const other of running\) yield\* stopSession/)
+  assert.match(source, /if \(state\.status !== "pending"\) continue/)
+  assert.match(source, /if \(kind === "context"\) event\.system\.push/)
 })
 
 test("flag.mjs: other mods read and flip workflows.enabled without touching other keys", async () => {
