@@ -31,9 +31,10 @@ const seconds = since => `${((Date.now() - since) / 1000).toFixed(1)}s`
 const socksLabel = (mode, socks) => `${mode === "tor" ? "Tor SOCKS" : "SOCKS proxy"} ${socks.host}:${socks.port}`
 let reducedMotion = false
 export async function exists(path) { try { await access(path); return true } catch { return false } }
-export function run(command, args, options = {}) {
+export function run(command, args, { onSpawn, ...options } = {}) {
   return new Promise((done, fail) => {
     const child = spawn(command, args, { stdio: "inherit", ...options })
+    onSpawn?.(child)
     const handlers = ["SIGINT", "SIGTERM"].map(signal => {
       const handler = () => child.kill(signal)
       // First in line: the child is signalled before the build lock's handler exits the process.
@@ -190,10 +191,12 @@ export async function prepare(settings, force = false) {
       return result
     })
     const env = { ...process.env, PATH: `${dirname(bun)}:${process.env.PATH}`, HUSKY: "0", OPENCODE_CHANNEL: "infiniteoc", OPENCODE_VERSION: `${settings.upstream.slice(1)}-infiniteoc` }
+    // The web UI (packages/app, a vite build embedded in the binary) is opt-in: it makes every build slower and hungrier.
+    const webUi = settings.options?.webUi === true
     await step("[3/4] Installing dependencies", () => checked(bun, ["install", "--frozen-lockfile"], { cwd: root, env }), true)
-    await step(`[4/4] Building ${target}`, () => checked(bun, ["run", "script/build.ts", "--single", "--skip-install", "--skip-web-ui"], { cwd: join(root, "packages/cli"), env }), true)
+    await step(`[4/4] Building ${target}${webUi ? " with the web UI" : ""}`, () => checked(bun, ["run", "script/build.ts", "--single", "--skip-install", ...(webUi ? [] : ["--skip-web-ui"])], { cwd: join(root, "packages/cli"), env }), true)
     if (!await exists(binary)) throw new Error(`Build missing expected ${target} artifact`)
-    manifest = { key, upstream: settings.upstream, builtAt: new Date().toISOString(), mods: mods.map(mod => mod.id), changes: applied.changes }
+    manifest = { key, upstream: settings.upstream, builtAt: new Date().toISOString(), mods: mods.map(mod => mod.id), webUi, changes: applied.changes }
     await writeFile(marker, JSON.stringify(manifest, null, 2))
     // launch() falls back to this when a later build fails; a hardlink survives the next rm of root.
     // Best-effort: losing the fallback must never fail a finished build.
@@ -208,14 +211,21 @@ export async function prepare(settings, force = false) {
     return { root, binary, mods, manifest }
   } finally { await release() }
 }
-export async function launch(args, settings) {
+/**
+ * Runs the InfiniteOC build with `args`. `options` (serve/web): `tui: false` skips terminal save/restore and treats
+ * a non-zero exit as an error rather than a crash; `env` is merged into the binary's environment (undefined deletes);
+ * `whileRunning({ signal, manifest })` runs beside the binary, `signal` aborts when it exits, and a throw stops it and
+ * fails the launch.
+ */
+export async function launch(args, settings, options = {}) {
+  const tui = options.tui ?? true
   const notices = []
   const notice = text => { notices.push(text); console.error(`[InfiniteOC] ${text}`) }
   const file = settingsFile()
   const unreadable = error => { throw new Error(`${file}: ${error.message}. Fix or delete it to restore defaults.`) }
   await loadSettings(file).catch(unreadable)
   // First launch on a terminal only (a TUI start, not a one-shot command).
-  if (!process.env.INFINITEOC_UPDATED && !args.some(arg => arg.startsWith("-")) && args.length <= 1 && await needsWizard()) {
+  if (tui && !process.env.INFINITEOC_UPDATED && !args.some(arg => arg.startsWith("-")) && args.length <= 1 && await needsWizard()) {
     const io = terminalIO()
     try { await runWizard({ io }) } finally { io.close() }
   }
@@ -250,7 +260,7 @@ export async function launch(args, settings) {
     if (!manifest || !await exists(join(good, "opencode"))) throw error
     console.error(`[InfiniteOC] ${error.message}`)
     notice(`Launching the previous build from ${manifest.builtAt}; fix the mod, then run infiniteoc rebuild`)
-    prepared = { binary: join(good, "opencode"), mods: [] }
+    prepared = { binary: join(good, "opencode"), mods: [], manifest }
     hooks = { emit: async () => {} }
   }
   const traffic = await applyTraffic(saved.traffic)
@@ -260,6 +270,7 @@ export async function launch(args, settings) {
     const context = { args: [...args], env: { ...traffic.env, INFINITEOC_SETTINGS_FILE: file, INFINITEOC_HOME: home, INFINITEOC: "1", OPENCODE_CLIENT: "InfiniteOC", OPENCODE_TUI_CHANNEL: "infiniteoc", INFINITEOC_UI_CLIENT: randomUUID(), INFINITEOC_SKILLS: join(home, "skills") }, cwd: process.cwd() }
     // Possibly inherited from an enclosing InfiniteOC session; only this launch's values may reach the TUI.
     for (const key of ["INFINITEOC_DAEMON_SOCKET", "INFINITEOC_LIVE_MANIFEST", "INFINITEOC_NOTICE", "INFINITEOC_UPDATED", "INFINITEOC_ROLLBACK"]) delete context.env[key]
+    for (const [key, value] of Object.entries(options.env ?? {})) if (value === undefined) delete context.env[key]; else context.env[key] = value
     if (traffic.socks && !await probeSocks(traffic.socks.host, traffic.socks.port))
       notice(`${socksLabel(saved.traffic.mode, traffic.socks)} unreachable; requests will fail until it runs (change in /settings → InfiniteOC Settings → Traffic)`)
     try {
@@ -272,9 +283,16 @@ export async function launch(args, settings) {
     for (const mod of prepared.mods) if (mod.beforeLaunch) await mod.beforeLaunch(context)
     await hooks.emit("beforeLaunch", context)
     // Saved before the TUI takes the terminal. It restores it on exit and INT/TERM/HUP; SIGKILL, SIGSEGV and native aborts skip that.
-    const tty = process.stdin.isTTY && process.stdout.isTTY ? spawnSync("stty", ["-g"], { stdio: ["inherit", "pipe", "ignore"], encoding: "utf8" }).stdout?.trim() : ""
+    const tty = tui && process.stdin.isTTY && process.stdout.isTTY ? spawnSync("stty", ["-g"], { stdio: ["inherit", "pipe", "ignore"], encoding: "utf8" }).stdout?.trim() : ""
     const startedAt = new Date()
-    const code = await run(prepared.binary, context.args, { cwd: context.cwd, env: context.env })
+    let child, failure
+    const exited = new AbortController()
+    const running = run(prepared.binary, context.args, { cwd: context.cwd, env: context.env, onSpawn: spawned => { child = spawned } })
+    const watching = options.whileRunning?.({ signal: exited.signal, manifest: prepared.manifest })
+      .catch(error => { failure = error; if (child?.exitCode === null && child.signalCode === null) child.kill("SIGTERM") })
+    const code = await running
+    exited.abort()
+    await watching
     const crash = isCrash(code, { tui: !!tty }) ? await writeCrashReport({ home, code, args: context.args, env: context.env, socket: context.env.INFINITEOC_DAEMON_SOCKET, manifest: prepared.manifest, startedAt }).catch(() => undefined) : undefined
     if (tty && code > 128 && ![129, 130, 143].includes(code)) {
       spawnSync("stty", [tty], { stdio: ["inherit", "ignore", "ignore"] })
@@ -286,6 +304,7 @@ export async function launch(args, settings) {
     if (crash) console.error(`[InfiniteOC] OpenCode crashed (exit ${code}). Crash report saved to ${crash}`)
     for (const mod of prepared.mods) if (mod.afterExit) await mod.afterExit({ ...context, code })
     await hooks.emit("afterExit", { ...context, code })
+    if (failure) throw failure
     return code
   } finally { await traffic.close() }
 }
@@ -307,6 +326,10 @@ export async function doctor(settings) {
     const fresh = built?.key === key && await exists(binary)
     if (fresh) check("build", true, `build from ${built.builtAt} is fresh`)
     else warn("build", built ? `build from ${built.builtAt} is stale` : "no finished build", "the next launch rebuilds; infiniteoc doctor --fix rebuilds now", { fix: "build" })
+    // serve needs only a build; web needs the opt-in web UI built into it.
+    if (settings.options?.webUi !== true) check("web", true, "web UI not in builds: infiniteoc serve (API) works, infiniteoc web offers to add it")
+    else if (fresh && built.webUi === true) check("web", true, "web UI built in: infiniteoc web is ready")
+    else warn("web", "web UI enabled but not built yet", "the next launch builds it in; infiniteoc doctor --fix rebuilds now", { fix: "build" })
   } catch (error) { check("build", false, `mods failed to load: ${error.message}`, "fix the mod") }
   // Optional tools (a missing GIMP or Roblox checkout) must not fail the whole report.
   const mcp = []

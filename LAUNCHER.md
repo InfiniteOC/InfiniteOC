@@ -98,3 +98,42 @@ password and a small front on your private-network address (private addresses on
 phone page and forwards exactly three operations: list sessions, list pending permission prompts, answer one
 with approve-once or deny. There is no "always" from the phone. It is plain HTTP, so use a network you trust or
 tunnel it. It only sees sessions that run on its backend, which is what `remote attach` starts.
+
+## serve and web
+
+```sh
+infiniteoc serve [--hostname H] [--port N] [--cors ORIGIN]...   # headless API
+infiniteoc web   [--hostname H] [--port N] [--no-open]           # API + web UI + one-time sign-in link
+```
+
+Both run upstream's `opencode serve` (the v2 API, and the web UI when it is built in) from the InfiniteOC build,
+through the same path as a TUI launch: the build cache, a rebuild when mods changed, the last-good fallback,
+mods' launch hooks, settings, traffic (proxy/Tor) and opendaemon. They also apply after `--`, so the rules below
+cannot be skipped by forwarding.
+
+- **Bind address**: `127.0.0.1` unless `--hostname` (alias `--host`) says otherwise. Without `--port` the launcher
+  picks upstream's choice itself (4096, else the next free port) so it knows the URL.
+- **Password**: upstream's server auth (HTTP Basic, user `opencode`) is always on. The password is
+  `OPENCODE_PASSWORD` (or the legacy `OPENCODE_SERVER_PASSWORD`) if set, else a random 32-character one that is
+  printed once. The server process drops it from its environment after reading it (`mods/webui`; upstream does
+  that only for `--stdio`), so the agent's shell tools do not inherit it.
+- **Off loopback** (`0.0.0.0`, `::`, a LAN address, ...): a warning says the server is reachable from other
+  machines, gives the agent's power to anyone with the password and is plain HTTP; a typed password under 16
+  characters is refused before anything starts. Put TLS (a reverse proxy) or an SSH tunnel in front for anything
+  but a network you trust.
+- **Checked, not assumed**: once the server answers, the launcher sends a request without a password and one with a
+  wrong password. Unless both get 401 it stops the server and fails (a build or mod that disabled auth never stays
+  up).
+- **CORS**: upstream allows `http://localhost:*`, `http://127.0.0.1:*`, its desktop app and `https://*.opencode.ai`
+  origins; `--cors` adds exact origins. Every one of them still needs the password.
+- `--service` (OpenCode's background service, shared with stock OpenCode) and `--stdio` are refused.
+
+The web UI is opt-in because upstream compiles it (a vite build of `packages/app`) into the binary: `"options":
+{"webUi": true}` in `infiniteoc.json` drops `--skip-web-ui` from the build, and the fingerprint change rebuilds on
+the next launch. `infiniteoc web` asks to set it on a terminal (keeping `infiniteoc.json.bak`) and otherwise says
+how. Once the server is up it prints a one-time sign-in link (upstream pairing, `/auth/connect/CODE`; it sets a
+session cookie) and opens it with `open`/`xdg-open` where there is a desktop (`--no-open` skips that), plus a second
+link for other devices when listening on all interfaces. A build without the web UI (for example the last-good
+fallback from before it was enabled) is detected and stopped with that hint. `mods/webui` gives the page
+InfiniteOC's purple/pink theme and title. Connect a TUI with `OPENCODE_PASSWORD=... infiniteoc --server URL`.
+`infiniteoc doctor` reports whether the web UI is enabled and built.

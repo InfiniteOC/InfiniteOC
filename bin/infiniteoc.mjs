@@ -11,6 +11,7 @@ import { findTeamFile, readTeamFile, isTrusted } from "../src/team.mjs"
 import { loadSettings, saveSettings, settingsFile } from "../mods/infiniteoc/settings/settings-store.mjs"
 import { loadMods } from "../src/mod-loader.mjs"
 import { scaffoldFeature, checkFeatures, setFeatureEnabled } from "../src/feature-scaffold.mjs"
+import { serve, enableWebUi } from "../src/serve.mjs"
 
 try {
   const args = process.argv.slice(2)
@@ -27,6 +28,8 @@ try {
   infiniteoc update              Fast-forward this checkout to its remote branch, then rebuild
   infiniteoc remote [--host IP] [--port N]  Phone page for sessions and permission prompts (opt-in, local network, token)
   infiniteoc remote attach       Open the TUI on the backend the phone page watches
+  infiniteoc serve [--hostname H] [--port N] [--cors ORIGIN]  Headless API server of this build (127.0.0.1, password required)
+  infiniteoc web [--hostname H] [--port N] [--no-open]        The same server with the web UI, plus a one-time browser sign-in link
   infiniteoc bench --a CFG --b CFG  Compare two configurations on a fixed task set (pass rate, tokens, time)
   infiniteoc mods                List configured mods (including installed packs)
   infiniteoc mod add URL         Install a mod pack from git, pinned by --commit and --sha256 (prompts if omitted)
@@ -168,7 +171,23 @@ Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
     // effect lets only its global settings precede a subcommand (--[no-]print-logs [bool], --log-level <level>, or --flag=value); any other flag there fails the parse or runs a built-in action instead.
     const command = forwarded.find((arg, i) => !/^--((no-)?print-logs|log-level)(=|$)/.test(arg) && forwarded[i - 1] !== "--log-level" && !(forwarded[i - 1] === "--print-logs" && /^(true|false|yes|no|on|off|[01yn])$/.test(arg)))
     if (["uninstall", "upgrade", "update"].includes(command)) throw new Error(`${command} refused: it would act on your stock OpenCode install and the sessions, credentials and config InfiniteOC shares with it. Update InfiniteOC with infiniteoc update; remove it by deleting this checkout. For OpenCode itself run stock opencode ${command}.`)
-    process.exitCode = await launch(forwarded, settings)
+    if (command === "serve" || command === "web") {
+      // Also after --: the bind address and password policy must not be skippable.
+      const at = forwarded.indexOf(command)
+      let current = settings
+      if (command === "web" && settings.options?.webUi !== true) {
+        const hint = `The web UI is not part of InfiniteOC builds (it makes every build slower and use more memory). Add "webUi": true to "options" in ${join(home, "infiniteoc.json")}, or run infiniteoc serve for the API alone.`
+        if (!process.stdin.isTTY || !process.stderr.isTTY) throw new Error(hint)
+        const io = terminalIO()
+        try {
+          if (!/^y/i.test(await io.ask("The web UI is not part of InfiniteOC builds yet. Add it? Every build then also compiles the web app (slower, needs more memory). [y/N] ") ?? "")) throw new Error(hint)
+        } finally { io.close() }
+        await enableWebUi(home)
+        console.error("[InfiniteOC] Added \"webUi\": true to infiniteoc.json options (backup: infiniteoc.json.bak); building it in now.")
+        current = await config()
+      }
+      process.exitCode = await serve({ mode: command, prefix: forwarded.slice(0, at), args: forwarded.slice(at + 1), settings: current, launch })
+    } else process.exitCode = await launch(forwarded, settings)
   }
 } catch (error) {
   console.error(`[InfiniteOC] ${error.message}`)
