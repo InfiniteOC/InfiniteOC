@@ -224,7 +224,7 @@ test("bundled mod applies through the real loader to a minimal copy of pinned up
   }
   const mods = await loadMods(["mods/infiniteoc/index.mjs"], repository)
   const { changes } = await applyMods(mods, root, { reducedMotion: true })
-  assert.equal(changes.length, 41)
+  assert.equal(changes.length, 42)
   assert.ok(changes.every(({ mod }) => mod === "infiniteoc"))
   const read = (path) => readFile(join(root, path), "utf8")
   const theme = JSON.parse(await read("packages/tui/src/theme/assets/v2/infiniteoc.json"))

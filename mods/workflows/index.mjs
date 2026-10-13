@@ -52,7 +52,8 @@ export default {
     const enabled = buildDefault(api.options)
     const settings = settingsSource(await file("settings.ts"), enabled)
 
-    // Server: pure modules plus the plugin, registered right after upstream's subagent tool.
+    // Server: pure modules plus the plugin, registered right after upstream's subagent tool. The plugin
+    // imports mods/infiniteoc's background registry (core/src/infiniteoc/background.ts) so /goal waits for runs.
     await api.write(`${CORE}/infiniteoc-wf-settings.ts`, settings)
     for (const name of ["dag", "mailbox", "models", "store"]) await api.write(`${CORE}/infiniteoc-wf-${name}.ts`, relink(await file(`${name}.ts`), coreNames))
     await api.write(`${CORE}/infiniteoc-workflows.ts`, relink(await file("plugin.ts"), coreNames))

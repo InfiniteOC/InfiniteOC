@@ -86,11 +86,14 @@ test("applies after every enabled mod on pristine upstream: plugin, tool registr
   assert.match(plugin, /from "\.\/infiniteoc-wf-dag\.js"/)
   assert.match(plugin, /options: \{ codemode: false, permission: "subagent" \}/)
   assert.doesNotMatch(plugin, /from "\.\/[\w-]+\.ts"/)
-  // Every upstream module the plugin imports exists in the pinned source.
+  // Every module the plugin imports exists in the pinned source or was written by an earlier mod.
   for (const [, rel] of plugin.matchAll(/from "(\.\.\/[^"]+)\.js"/g)) {
     const target = path.posix.join("packages/core/src/plugin", `${rel}.ts`)
-    assert.doesNotThrow(() => pristine(target), target)
+    if (!files.has(target)) assert.doesNotThrow(() => pristine(target), target)
   }
+  // /goal waits for workflows through mods/infiniteoc's background registry.
+  assert.match(plugin, /import \* as Background from "\.\.\/infiniteoc\/background\.js"/)
+  assert.ok(files.has("packages/core/src/infiniteoc/background.ts"))
 
   const builtins = files.get("packages/tui/src/plugin/builtins.ts")
   assert.match(builtins, /import InfiniteocWorkflows from "\.\.\/feature-plugins\/system\/infiniteoc-workflows"/)
@@ -128,7 +131,7 @@ test("without safe-guard the readonly patch is skipped; a missing anchor fails c
   assert.equal(files.has("packages/core/src/plugin/infiniteoc-safety.ts"), false)
   assert.ok(files.has("packages/core/src/plugin/infiniteoc-workflows.ts"))
 
-  // The settings dialog comes from mods/infiniteoc; without it this mod refuses to guess.
+  // The settings dialog (and the background registry) come from mods/infiniteoc; without it this mod refuses to guess.
   const bare = memoryApi()
   await assert.rejects(mod.setup(bare.api), /dialog-infiniteoc|ENOENT|exists|fatal|Command failed/i)
   // Applying twice cannot silently double-register the plugin.
@@ -349,6 +352,121 @@ test("status and final texts show each step's model and tier; unread messages re
 })
 
 // ---- mailbox --------------------------------------------------------------------------------------
+
+/** Answers a status call the way the plugin does, on a fake clock: statusWait, then re-read every second. */
+function statusCall({ checks, slot, look, wait, timeout, clock }) {
+  let list = look()
+  const live = () => list.some((workflow) => workflow.status === "running")
+  const from = D.progressKey(list)
+  let key = from
+  const plan = D.statusWait({ previous: checks.get(slot), key, live: live(), wait, timeout, now: clock.now })
+  let slept = 0
+  if (plan)
+    while (key === from && live() && clock.now < plan.deadline) {
+      clock.now += 1000
+      slept++
+      list = look()
+      key = D.progressKey(list)
+    }
+  checks.set(slot, { key, at: clock.now })
+  const text = plan && key === from ? D.unchangedText(list, clock.now - plan.since, plan.waited) : list.map(D.statusText).join("\n\n")
+  return { text, slept }
+}
+
+test("status: a repeated check with no change gets the short answer, and back-to-back repeats are slowed", () => {
+  const { steps } = plan([{ id: "a", prompt: "x" }, { id: "b", prompt: "y", needs: ["a"] }])
+  const wf = { id: "wf_s", name: "w", parentSessionID: "p", status: "running", createdAt: 0, steps, state: D.initialState(steps), messages: [] }
+  Object.assign(wf.state.a, { status: "running", startedAt: 1 })
+  const clock = { now: 100_000 }
+  const checks = new Map()
+  const call = (over = {}) => statusCall({ checks, slot: "p:wf_s", look: () => [wf], clock, ...over })
+  // The clock is not progress: the same statuses compare equal even though running times grow.
+  const key = D.progressKey([wf])
+  assert.notEqual(D.stepLine(wf, steps[0]), D.stepLine({ ...wf, state: { ...wf.state, a: { ...wf.state.a, startedAt: 50_000 } } }, steps[0]))
+  assert.equal(D.progressKey([{ ...wf, state: { ...wf.state, a: { ...wf.state.a, startedAt: 50_000 } } }]), key)
+
+  const first = call()
+  assert.match(first.text, /Workflow wf_s "w": running \(0\/2 steps finished\)/)
+  assert.equal(first.slept, 0)
+  // Called again right away: waits out the cooldown (10s from the last check), then says so briefly.
+  const second = call()
+  assert.equal(second.slept, D.STATUS_COOLDOWN_MS / 1000)
+  assert.match(second.text, /^No change since your last check 10s ago; still running:\n- wf_s "w": 0\/2 steps finished, running a\n/)
+  assert.match(second.text, /notified automatically when a workflow finishes[\s\S]*do not poll[\s\S]*wait: true/)
+  assert.doesNotMatch(second.text, /- a: running/)
+  // A repeat long after the last check answers at once, still short.
+  clock.now += 60_000
+  const third = call()
+  assert.equal(third.slept, 0)
+  assert.match(third.text, /^No change since your last check 60s ago/)
+  // Something changed: the full view again.
+  Object.assign(wf.state.a, { status: "completed", endedAt: clock.now })
+  Object.assign(wf.state.b, { status: "running", startedAt: clock.now })
+  assert.match(call().text, /- a: completed/)
+  // A new message counts as a change too.
+  wf.messages.push({ id: 1, from: "b", to: "main", text: "hi", at: clock.now, readBy: [] })
+  assert.match(call().text, /^Workflow wf_s/)
+  // Finished workflows never wait and always get the full view.
+  wf.status = "completed"
+  for (const id of ["b"]) Object.assign(wf.state[id], { status: "completed" })
+  const done = call()
+  assert.equal(done.slept, 0)
+  assert.match(done.text, /^Workflow wf_s "w": completed/)
+  assert.match(call().text, /^Workflow wf_s "w": completed/)
+})
+
+test("status wait: returns as soon as something changes, or after the timeout with the short answer", () => {
+  const { steps } = plan([{ id: "a", prompt: "x" }])
+  const make = () => ({ id: "wf_w", name: "w", parentSessionID: "p", status: "running", createdAt: 0, steps, state: D.initialState(steps), messages: [] })
+  const clock = { now: 0 }
+  // The step finishes on the fourth re-read: the wait returns then, with the full view.
+  let wf = make()
+  let reads = 0
+  const changed = statusCall({ checks: new Map(), slot: "p:wf_w", wait: true, timeout: 60, clock, look: () => {
+    if (++reads === 4) Object.assign(wf.state.a, { status: "completed" }), (wf.status = "completed")
+    return [wf]
+  } })
+  assert.equal(changed.slept, 3)
+  assert.match(changed.text, /^Workflow wf_w "w": completed/)
+  // Nothing changes: it gives up at the timeout and says how long it waited.
+  wf = make()
+  const quiet = statusCall({ checks: new Map(), slot: "p:wf_w", wait: true, timeout: 5, clock, look: () => [wf] })
+  assert.equal(quiet.slept, 5)
+  assert.match(quiet.text, /^No change after waiting 5s; still running:/)
+  // Limits: default, at most MAX_STATUS_WAIT_SECONDS, at least 1, garbage falls back to the default.
+  const wait = (timeout) => D.statusWait({ key: "k", live: true, wait: true, timeout, now: 0 }).deadline / 1000
+  assert.equal(wait(undefined), D.DEFAULT_STATUS_WAIT_SECONDS)
+  assert.equal(wait(10_000), D.MAX_STATUS_WAIT_SECONDS)
+  assert.equal(wait(0), 1)
+  assert.equal(wait(Number.NaN), D.DEFAULT_STATUS_WAIT_SECONDS)
+  // A finished workflow never blocks, even with wait: true.
+  assert.equal(D.statusWait({ key: "k", live: false, wait: true, now: 0 }), undefined)
+  assert.equal(D.statusWait({ previous: { key: "k", at: 0 }, key: "k", live: false, now: 0 }), undefined)
+  assert.equal(D.statusWait({ previous: { key: "old", at: 0 }, key: "k", live: true, now: 0 }), undefined)
+})
+
+test("plugin: /goal sees running workflows, step ends and messages for main; status discourages polling", async () => {
+  const source = await readFile(new URL("./plugin.ts", import.meta.url), "utf8")
+  // The registry source: this session's background workflows (a waiting start blocks its own turn).
+  assert.match(source, /Background\.register\(\(sessionID\) =>\n\s+\[\.\.\.runs\.values\(\)\]\n\s+\.filter\(\(run\) => run\.wf\.parentSessionID === sessionID && !run\.finalized && !run\.waiter\)/)
+  // A message for an idle main is kept unread (unchanged) and wakes a holding goal.
+  assert.match(source, /if \(recipient === M\.MAIN\)\n\s+Background\.signal\(run\.wf\.parentSessionID, "wake", `workflow step \$\{sent\.from\} sent you a message \(read_messages\)`\)\n\s+continue/)
+  // A step end is progress, or a wake when the user asked for per-step notifications.
+  assert.match(source, /\} else \{\n\s+\/\/ .*\n\s+Background\.signal\(\n\s+run\.wf\.parentSessionID,\n\s+run\.settings\.notify === "each" \? "wake" : "progress",/)
+  // status and list go through the polling-aware answer; start counts as the first check.
+  assert.match(source, /if \(input\.action === "list" \|\| input\.action === "status"\) return yield\* status\(sessionID, input\)/)
+  assert.match(source, /const plan = D\.statusWait\(\{ previous: checks\.get\(slot\), key, live: live\(\), wait: input\.action === "status" && input\.wait === true, timeout: input\.timeout, now: Date\.now\(\) \}\)/)
+  assert.match(source, /if \(plan && key === from\) return D\.unchangedText\(list, Date\.now\(\) - plan\.since, plan\.waited\)/)
+  assert.match(source, /checks\.set\(`\$\{context\.sessionID\}:\$\{workflow\.id\}`, \{ key: D\.progressKey\(\[workflow\]\), at: Date\.now\(\) \}\)/)
+  assert.match(source, /timeout: Schema\.optionalKey\(Schema\.Number\)/)
+  // The guidance: start, keep working or end the turn, check only for a reason.
+  const guidance = source.slice(source.indexOf("export const GUIDANCE"), source.indexOf("const Step ="))
+  assert.match(guidance, /end your turn/)
+  assert.match(guidance, /that notification wakes you, also under \/goal/)
+  assert.match(guidance, /Do not poll/)
+  assert.match(guidance, /Check status only for a reason: the user asks, it has been silent far longer than its steps should take, or you need one step's result early/)
+  assert.match(guidance, /wait: true blocks once until something changes/)
+})
 
 test("mailbox: scoped to members, direct and broadcast delivery, read tracking and limits", () => {
   const box = { messages: [] }

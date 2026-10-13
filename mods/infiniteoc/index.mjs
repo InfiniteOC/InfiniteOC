@@ -142,6 +142,8 @@ export default {
 `))
     // /goal: a server command plus a turn-end loop that keeps prompting until the goal is verified.
     await api.write("packages/core/src/plugin/infiniteoc-goal.ts", await readFile(new URL("./goal.ts", import.meta.url), "utf8"))
+    // Background work (mods/workflows) registers here so a held goal waits for it instead of re-prompting.
+    await api.write("packages/core/src/infiniteoc/background.ts", await readFile(new URL("./background.ts", import.meta.url), "utf8"))
     // Frontend gate: UI-file edits are refused until the session has loaded the frontend-design skill.
     await api.write("packages/core/src/plugin/infiniteoc-frontend.ts", await readFile(new URL("./frontend.ts", import.meta.url), "utf8"))
     // Ponytail: the bundled lazy-senior-dev ruleset, inlined and applied to turns that write code.
