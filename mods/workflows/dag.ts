@@ -328,3 +328,44 @@ export function finalText(workflow: Workflow, maxTotal: number, unread: Workflow
     `Read the results above before acting on them; they are claims to verify. Full step output: workflow action "result" with workflowID ${workflow.id}.`,
   ].join("\n")
 }
+
+export const STATUS_COOLDOWN_MS = 10_000
+export const MAX_STATUS_WAIT_SECONDS = 300
+export const DEFAULT_STATUS_WAIT_SECONDS = 120
+export type Check = { readonly key: string; readonly at: number }
+
+/**
+ * How long a status call waits for a change before it answers, or undefined to answer now.
+ * wait: true blocks until a change or the timeout; an identical repeat of the previous check waits out
+ * the rest of a short cooldown, so a polling loop slows down. Finished workflows never wait.
+ */
+export function statusWait(input: { previous?: Check; key: string; live: boolean; wait?: boolean; timeout?: number; now: number }) {
+  if (!input.live) return undefined
+  if (input.wait) {
+    const requested = Number.isFinite(input.timeout) ? Math.floor(input.timeout!) : DEFAULT_STATUS_WAIT_SECONDS
+    const seconds = Math.max(1, Math.min(MAX_STATUS_WAIT_SECONDS, requested))
+    return { deadline: input.now + seconds * 1000, since: input.now, waited: true }
+  }
+  if (input.previous?.key === input.key) return { deadline: input.previous.at + STATUS_COOLDOWN_MS, since: input.previous.at, waited: false }
+  return undefined
+}
+
+/** What a progress check can see change: statuses and messages, not the clock, so re-asking compares equal. */
+export const progressKey = (workflows: ReadonlyArray<Workflow>) =>
+  JSON.stringify(workflows.map((workflow) => [workflow.id, workflow.status, workflow.steps.map((step) => workflow.state[step.id].status), workflow.messages.length]))
+
+/** The short answer to a status check that saw nothing new, so a repeated check costs little and says why to stop. */
+export function unchangedText(workflows: ReadonlyArray<Workflow>, sinceMs: number, waited = false) {
+  const lines = workflows
+    .filter((workflow) => workflow.status === "running")
+    .map((workflow) => {
+      const done = workflow.steps.filter((step) => isFinished(workflow.state[step.id].status)).length
+      const running = workflow.steps.filter((step) => workflow.state[step.id].status === "running").map((step) => step.id)
+      return `- ${workflow.id} "${workflow.name}": ${done}/${workflow.steps.length} steps finished${running.length ? `, running ${running.join(", ")}` : ""}`
+    })
+  return [
+    `${waited ? "No change after waiting" : "No change since your last check"} ${Math.max(0, Math.round(sinceMs / 1000))}s${waited ? "" : " ago"}; still running:`,
+    ...lines,
+    "You are notified automatically when a workflow finishes (and when a step messages you), so do not poll. Work on something else or end your turn. If you cannot continue without its next step, call status once with wait: true.",
+  ].join("\n")
+}

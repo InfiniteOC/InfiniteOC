@@ -28,7 +28,8 @@ async function apply(reducedMotion = false, files = new Map()) {
 
 test("applies against local source, preserving all permission-rule code", async () => {
   const files = await apply()
-  assert.equal(files.size, 38)
+  assert.equal(files.size, 39)
+  assert.equal(files.get("packages/core/src/infiniteoc/background.ts"), await readFile(new URL("./background.ts", import.meta.url), "utf8"))
   const file = "packages/core/src/plugin/agent.ts"
   const original = await readFile(path.join(root, file), "utf8")
   const rules = (source) => source.split("\n").filter((line) => /\.permissions|action:|resource:|effect:|Permission\.merge/.test(line))
@@ -220,6 +221,114 @@ test("/goal keeps going until verified, pauses (not kills) on interrupt, and aut
   // A new /goal resets the counters.
   assert.deepEqual(decide([...capped, user(startText("next")), reply("x"), idle()]), { action: "continue", goal: "next", turn: 1 })
   for (const text of [startText(goal), continueText(goal, 3), verifyText(goal)]) assert.match(text, /GOAL (COMPLETE|VERIFIED)/)
+})
+
+test("goal holds while background work runs instead of re-prompting, without burning turns", async (t) => {
+  const source = await readFile(new URL("./goal.ts", import.meta.url), "utf8")
+  const dir = await mkdtemp(path.join(tmpdir(), "goal-hold-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(path.join(dir, "goal.ts"), source.split("export const Plugin")[0].replace(/^import .*$/gm, ""))
+  const { decide, holdStep, startText, continueText, HOLD_TIMEOUT_MS, HOLD_SETTLE_MS, MAX_CONTINUATIONS } = await import(path.join(dir, "goal.ts"))
+  const user = (text) => ({ type: "user", text })
+  const synthetic = (text) => ({ type: "synthetic", text })
+  const reply = (text) => ({ type: "assistant", content: [{ type: "text", text }] })
+  const idle = () => ({ type: "idle", outcome: "succeeded" })
+  const goal = "ship it"
+  const now = 1_000_000
+  const hold = { goal, turn: 3, generation: 7, cursor: 10, deadline: now + HOLD_TIMEOUT_MS, work: ['workflow "w"'] }
+  const tick = (over = {}) => holdStep(hold, { now: now + 2000, generation: 7, active: false, signals: [], work: ['workflow "w"'], ...over })
+
+  // Nothing new: keep waiting, no prompt.
+  assert.equal(tick().action, "wait")
+  // A run started (the completion notice woke the session, or the user typed): that run's end decides.
+  assert.deepEqual(tick({ generation: 8 }), { action: "drop" })
+  assert.deepEqual(tick({ active: true }), { action: "drop" })
+  // A message for main (or a per-step notification) wakes the goal right away.
+  const woke = tick({ signals: [{ seq: 11, kind: "wake", reason: "workflow step a sent you a message (read_messages)" }] })
+  assert.equal(woke.action, "resume")
+  assert.match(woke.note, /step a sent you a message/)
+  // Signals the hold already saw do not count again.
+  assert.equal(tick({ signals: [{ seq: 10, kind: "wake", reason: "old" }] }).action, "wait")
+  // Progress (a step finished) restarts the no-progress clock instead of waking.
+  const later = now + HOLD_TIMEOUT_MS - 1000
+  const progressed = holdStep(hold, { now: later, generation: 7, active: false, signals: [{ seq: 12, kind: "progress", reason: "step a completed" }], work: ['workflow "w"'] })
+  assert.equal(progressed.action, "wait")
+  assert.equal(progressed.hold.cursor, 12)
+  assert.equal(progressed.hold.deadline, later + HOLD_TIMEOUT_MS)
+  // Safety timeout: a stuck workflow cannot stall the goal forever.
+  const timedOut = tick({ now: now + HOLD_TIMEOUT_MS })
+  assert.equal(timedOut.action, "resume")
+  assert.match(timedOut.note, /still running \(workflow "w"\) and nothing changed for 5 minutes/)
+  assert.match(timedOut.note, /Check its status once/)
+  // Work that ended without waking the session (a cancel notice is quiet) resumes after a short settle.
+  const settling = tick({ work: [] })
+  assert.equal(settling.action, "wait")
+  assert.equal(settling.hold.settledAt, now + 2000)
+  assert.equal(holdStep(settling.hold, { now: now + 2000 + HOLD_SETTLE_MS, generation: 7, active: false, signals: [], work: [] }).action, "resume")
+  // Work that shows up again clears the settle mark.
+  assert.equal(holdStep(settling.hold, { now: now + 3000, generation: 7, active: false, signals: [], work: ["x"] }).hold.settledAt, undefined)
+
+  // Turn counting: a hold adds no control message, so the run the completion notice starts is the
+  // same continuation the goal would have prompted, and a resumed hold counts exactly one turn.
+  const start = user(startText(goal))
+  const notice = synthetic('<workflow id="wf_1" name="w" state="completed">\n</workflow>')
+  assert.deepEqual(decide([start, reply("started a workflow, waiting"), idle()]), { action: "continue", goal, turn: 1 })
+  assert.deepEqual(decide([start, reply("started a workflow, waiting"), idle(), notice, reply("read the results"), idle()]), { action: "continue", goal, turn: 1 })
+  const resumed = continueText(goal, 1, timedOut.note)
+  assert.match(resumed, /^\[InfiniteOC goal: continue\]\nGoal: ship it\n\nContinuation 1 of 20\. Background work is still running/)
+  assert.deepEqual(decide([start, reply("x"), idle(), synthetic(resumed), reply("checked once"), idle()]), { action: "continue", goal, turn: 2 })
+  assert.equal(continueText(goal, 2), continueText(goal, 2, undefined))
+  assert.equal(MAX_CONTINUATIONS, 20)
+  // The protocol tells the agent that ending the turn is the way to wait.
+  assert.match(startText(goal), /end your turn instead of checking on it: the goal waits/)
+})
+
+test("goal plugin: holds only plain continues, a run start or /goal stop ends a hold, upstream subagents count", async () => {
+  const source = await readFile(new URL("./goal.ts", import.meta.url), "utf8")
+  const plugin = source.slice(source.indexOf("export const Plugin"))
+  assert.match(plugin, /if \(decision\.action === "verify"\) return prompt\n/)
+  assert.match(plugin, /backgroundWork\(sessionID\)\.pipe\(\n\s+Effect\.flatMap\(\(pending\) => \(pending\.length \? startHold\(sessionID, decision, pending\) : prompt/)
+  assert.match(plugin, /event\.type === "session\.execution\.started"\) \{\n\s+generations\.set[\s\S]{0,120}holds\.delete\(event\.data\.sessionID\)/)
+  assert.match(plugin, /\/\^\(stop\|off\|cancel\)\$\/i\.test\(goal\)\) \{\n\s+holds\.delete\(input\.sessionID\)/)
+  // Upstream background subagents: the stored record must belong to this session and its job still run.
+  assert.match(plugin, /item\.recovery\.kind !== "subagent" \|\| item\.recovery\.parentSessionID !== sessionID/)
+  assert.match(plugin, /\(yield\* jobs\.get\(item\.id\)\)\?\.status === "running"/)
+  // The hold is a cheap in-process check; it never prompts the model while waiting.
+  const watch = plugin.slice(plugin.indexOf("const watchHold"), plugin.indexOf("const startHold"))
+  assert.match(watch, /Effect\.sleep\("2 seconds"\)/)
+  assert.equal(watch.split("resumeHeld(").length, 2)
+  // Every module the plugin imports exists in pinned upstream or is written by this mod.
+  for (const [, rel] of source.matchAll(/from "(\.\.\/[^"]+)\.js"/g)) {
+    const target = path.join(root, "packages/core/src/plugin", `${rel}.ts`)
+    if (rel === "../infiniteoc/background") continue
+    await access(target)
+  }
+})
+
+test("background registry: sources per session, failing sources ignored, signals after a cursor", async () => {
+  const B = await import("./background.ts")
+  const remove = B.register((sessionID) => (sessionID === "ses_a" ? [{ label: 'workflow "w"' }] : []))
+  const broken = B.register(() => {
+    throw new Error("boom")
+  })
+  try {
+    assert.deepEqual(B.running("ses_a"), [{ label: 'workflow "w"' }])
+    assert.deepEqual(B.running("ses_b"), [])
+    const cursor = B.cursor()
+    B.signal("ses_a", "progress", "step a completed")
+    B.signal("ses_b", "wake", "other session")
+    B.signal("ses_a", "wake", "message")
+    assert.deepEqual(B.since("ses_a", cursor).map((item) => [item.kind, item.reason]), [["progress", "step a completed"], ["wake", "message"]])
+    assert.deepEqual(B.since("ses_a", B.cursor()), [])
+    for (let i = 0; i < 50; i++) B.signal("ses_a", "progress", String(i))
+    assert.equal(B.since("ses_a", 0).length, 20)
+    B.forget("ses_a")
+    assert.deepEqual(B.since("ses_a", 0), [])
+  } finally {
+    remove()
+    broken()
+  }
+  assert.deepEqual(B.running("ses_a"), [])
 })
 
 test("goal footer shows paused goals instead of dropping them", async () => {

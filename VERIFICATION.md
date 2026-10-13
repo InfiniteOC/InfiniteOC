@@ -1,3 +1,18 @@
+# workflow polling under /goal (October 13, 2026): unit-verified only, not built
+
+- Linux x64, Node v26.7.0. `npm test`: 478 tests, 477 pass, 1 skipped (pre-existing: no Chrome),
+  0 fail. `feature check workflows` and `feature check infiniteoc` pass; the changed TS files
+  (`mods/infiniteoc/goal.ts`, `background.ts`, `mods/workflows/plugin.ts`, `dag.ts`) parse with
+  Node's type stripping. Not done: `rebuild`, typecheck, any model request; the goal hold and the
+  polling-aware `status` are verified only through their pure logic and source checks.
+- To verify after `infiniteoc rebuild`: `/goal` a task that starts a background workflow of a
+  few slow steps; after the agent ends its turn the toast says the goal is waiting and no
+  `Goal: continue` message appears until the `<workflow>` notice wakes it, after which the goal
+  goes on (footer turn count is unchanged by the wait). Call `status` twice in one turn: the
+  second answer is the short "No change since your last check". `status` with `wait: true`
+  returns when a step finishes. A step that never ends resumes the goal after 5 minutes with
+  the "still running" note.
+
 # infinicode mod (October 13, 2026): unit-verified only, not built
 
 - Linux x64, Node v26.7.0. `npm test` and `mods/infinicode/test.mjs` (15 tests) pass; `feature check

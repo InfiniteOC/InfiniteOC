@@ -24,6 +24,7 @@ import { Permission } from "../permission.js"
 import { Session } from "../session.js"
 import { SessionSchema } from "../session/schema.js"
 import { SubagentCompletion } from "../session/subagent-completion.js"
+import * as Background from "../infiniteoc/background.js"
 import * as D from "./dag.ts"
 import * as M from "./mailbox.ts"
 import * as Models from "./models.ts"
@@ -38,7 +39,8 @@ const MAX_WAIT_SECONDS = 120
 
 export const GUIDANCE = `[Workflows]
 For work that splits into several subagent tasks, prefer one workflow call over separate subagent calls. Declare the steps: an id, the agent, a self-contained prompt and needs (the ids it depends on). Independent steps run in parallel, dependent ones in order, and each step receives the results of the steps it needs (or place one with {{steps.<id>}} in its prompt). Mark a step optional when the rest can go on without it.
-- It runs in the background: keep working on non-overlapping tasks or tell the user what you launched. You are notified when it finishes; do not poll. Use action "status" only when a progress check changes what you do next, and "cancel" to stop it.
+- It runs in the background. Start it, then keep working on non-overlapping tasks, or tell the user what you launched and end your turn. You are notified automatically when it finishes (and when a step messages you), and that notification wakes you, also under /goal. Do not poll: a status check that finds nothing new only says so.
+- Check status only for a reason: the user asks, it has been silent far longer than its steps should take, or you need one step's result early (then status with wait: true blocks once until something changes, instead of repeated checks). "cancel" stops it.
 - Leave model unset: the framework picks per step (a fast model for search, grep and summaries; the strongest available for planning, review and hard reasoning) from the models the user has configured. Set kind to steer that, or model only when the user asks for a model.
 - Steps can talk: send_message(to, text) to a step id, "main" (you) or "all", and read_messages. Messages to you arrive while you work and with the final notification.
 - Results are claims: check the important ones before reporting. Use the plain subagent tool for one quick task.`
@@ -69,7 +71,11 @@ export const Input = Schema.Struct({
   name: Schema.optionalKey(Schema.String).annotate({ description: "start: a short name for the workflow." }),
   steps: Schema.optionalKey(Schema.Array(Step)).annotate({ description: "start: the steps." }),
   wait: Schema.optionalKey(Schema.Boolean).annotate({
-    description: "start: block until it finishes and return the results. Default false (background).",
+    description:
+      "start: block until it finishes and return the results. status: block until something changes (a step finishes, a message for you, the end) or timeout passes. Default false; you are notified when it finishes anyway.",
+  }),
+  timeout: Schema.optionalKey(Schema.Number).annotate({
+    description: `status with wait: most seconds to wait (default ${D.DEFAULT_STATUS_WAIT_SECONDS}, at most ${D.MAX_STATUS_WAIT_SECONDS}).`,
   }),
   workflowID: Schema.optionalKey(Schema.String).annotate({ description: "status, result, cancel: the workflow. status without it lists them." }),
   stepID: Schema.optionalKey(Schema.String).annotate({ description: "result: one step's full output. cancel: stop only this step (its dependents are skipped)." }),
@@ -102,6 +108,14 @@ type Run = {
 const runs = new Map<string, Run>()
 const membership = new Map<string, { run: Run; member: string }>()
 let swept = false
+
+// mods/infiniteoc's /goal asks this before re-prompting a turn that ended, and holds while a session's
+// background workflows run (a waiting start blocks its turn, so it never needs a hold).
+Background.register((sessionID) =>
+  [...runs.values()]
+    .filter((run) => run.wf.parentSessionID === sessionID && !run.finalized && !run.waiter)
+    .map((run) => ({ label: `workflow "${run.wf.name}"` })),
+)
 
 const failure = (message: string, error?: unknown) => new ToolFailure({ message, ...(error === undefined ? {} : { error }) })
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error))
@@ -144,6 +158,9 @@ export const Plugin = define({
     const active = (sessionID: string | undefined) =>
       sessionID === undefined ? Effect.succeed(false) : sessions.active.pipe(Effect.map((set) => set.has(sessionID as SessionSchema.ID)))
 
+    // The last status answer per session and target (start counts as one), so an identical repeat gets the short reply.
+    const checks = new Map<string, D.Check>()
+
     // ---- steering messages into running sessions --------------------------------------------------
 
     const push = (sessionID: string, text: string, description: string) =>
@@ -155,7 +172,12 @@ export const Plugin = define({
         for (const recipient of M.recipients(sent, run.members)) {
           const sessionID = recipient === M.MAIN ? run.wf.parentSessionID : run.wf.state[recipient]?.sessionID
           const running = recipient === M.MAIN || run.wf.state[recipient]?.status === "running"
-          if (!running || !(yield* active(sessionID))) continue
+          if (!running || !(yield* active(sessionID))) {
+            // An idle starter reads it later; a /goal holding for this workflow wakes it for the message.
+            if (recipient === M.MAIN)
+              Background.signal(run.wf.parentSessionID, "wake", `workflow step ${sent.from} sent you a message (read_messages)`)
+            continue
+          }
           yield* push(
             sessionID!,
             `<workflow_message workflow="${run.wf.id}" from="${sent.from}" to="${sent.to}">\n${sent.text}\n</workflow_message>`,
@@ -290,12 +312,20 @@ export const Plugin = define({
               state.error = info.error ?? info.status
             }
             state.endedAt = Date.now()
-            if (run.settings.notify === "each" && (yield* active(run.wf.parentSessionID)))
+            if (run.settings.notify === "each" && (yield* active(run.wf.parentSessionID))) {
               yield* push(
                 run.wf.parentSessionID,
                 `<workflow_step workflow="${run.wf.id}" step="${id}" status="${state.status}">\n${D.stepResult(run.wf, id, 2000)}\n</workflow_step>`,
                 `Workflow step ${id} ${state.status}`,
               )
+            } else {
+              // A /goal holding for this workflow: per-step notifications wake it, otherwise it only learns the work is alive.
+              Background.signal(
+                run.wf.parentSessionID,
+                run.settings.notify === "each" ? "wake" : "progress",
+                `step ${id} of workflow ${run.wf.id} ${state.status} (its output: workflow action "result" with stepID ${id})`,
+              )
+            }
             yield* pump(run)
           }),
         ),
@@ -484,13 +514,41 @@ export const Plugin = define({
           yield* Deferred.await(run.done).pipe(Effect.onInterrupt(() => cancel(run, "the starting agent was interrupted")))
           return { id: workflow.id, text: D.finalText(workflow, Math.max(current.maxOutputChars, 4000) * 2, M.take(workflow, M.MAIN, run.members)) }
         }
+        checks.set(`${context.sessionID}:${workflow.id}`, { key: D.progressKey([workflow]), at: Date.now() })
         const text = [
           D.statusText(workflow),
           "",
           `The workflow is running in the background (workflowID: ${workflow.id}). You will be notified automatically when it finishes.`,
-          "DO NOT sleep, poll or duplicate its work; avoid the files and topics its steps own. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response.",
+          "DO NOT sleep, poll or duplicate its work; avoid the files and topics its steps own. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response; the notification wakes you (under /goal too).",
         ].join("\n")
         return { id: workflow.id, text }
+      })
+
+    /** status and list: the full view when something changed, a short "no change" when polled. */
+    const status = (sessionID: string, input: typeof Input.Type) =>
+      Effect.gen(function* () {
+        const target = input.action === "status" ? input.workflowID : undefined
+        const look = () => {
+          if (!target) return Store.listWorkflows(sessionID, 20).map((saved) => runs.get(saved.id)?.wf ?? saved)
+          const workflow = owned(sessionID, target)
+          return workflow ? [workflow] : []
+        }
+        let list = look()
+        if (target && list.length === 0) return yield* failure(`Unknown workflow "${target}" for this session. Use action "list".`)
+        const live = () => list.some((workflow) => workflow.status === "running")
+        const slot = `${sessionID}:${target ?? "*"}`
+        const from = D.progressKey(list)
+        let key = from
+        const plan = D.statusWait({ previous: checks.get(slot), key, live: live(), wait: input.action === "status" && input.wait === true, timeout: input.timeout, now: Date.now() })
+        if (plan)
+          while (key === from && live() && Date.now() < plan.deadline) {
+            yield* Effect.sleep("1 second")
+            list = look()
+            key = D.progressKey(list)
+          }
+        checks.set(slot, { key, at: Date.now() })
+        if (plan && key === from) return D.unchangedText(list, Date.now() - plan.since, plan.waited)
+        return list.length ? list.map(D.statusText).join("\n\n") : "This session has no workflows."
       })
 
     const workflowTool = (input: typeof Input.Type, context: any) =>
@@ -500,13 +558,9 @@ export const Plugin = define({
           const started = yield* start(input, context)
           return { content: started.text, metadata: { workflowID: started.id } }
         }
-        if (input.action === "list" || (input.action === "status" && !input.workflowID)) {
-          const list = Store.listWorkflows(sessionID, 20).map((saved) => runs.get(saved.id)?.wf ?? saved)
-          return list.length ? list.map(D.statusText).join("\n\n") : "This session has no workflows."
-        }
+        if (input.action === "list" || input.action === "status") return yield* status(sessionID, input)
         const workflow = owned(sessionID, input.workflowID)
         if (!workflow) return yield* failure(`Unknown workflow "${input.workflowID ?? ""}" for this session. Use action "list".`)
-        if (input.action === "status") return D.statusText(workflow)
         if (input.action === "result") {
           if (input.stepID) {
             const state = workflow.state[input.stepID]
@@ -589,7 +643,7 @@ export const Plugin = define({
           options: { codemode: false, permission: "subagent" },
           description: [
             "Runs a workflow: several subagent steps with dependencies (a DAG). Independent steps run in parallel, dependent steps in order, and each step gets the results of the steps it needs.",
-            "It runs in the background by default and you are notified when it finishes; the steps can message each other and you.",
+            "It runs in the background by default and you are notified when it finishes, so do not poll it; the steps can message each other and you.",
             "Each step gets a model chosen for its kind of work unless you set one.",
           ].join("\n"),
           input: Input,

@@ -18,7 +18,7 @@ are cost decisions the user (or the InfiniCode mod, see the contract below) shou
 
 | Tool | Who sees it | What it does |
 | --- | --- | --- |
-| `workflow` | Agents that may spawn subagents (permission action `subagent` not wholly denied), only while `workflows.enabled` is true | `start` a workflow (`name`, `steps`, optional `wait`); `status` / `result` / `cancel` one (`workflowID`, optional `stepID`); `list` this session's workflows |
+| `workflow` | Agents that may spawn subagents (permission action `subagent` not wholly denied), only while `workflows.enabled` is true | `start` a workflow (`name`, `steps`, optional `wait`); `status` one (`workflowID`; optional `wait` + `timeout`, see below) or all; `result` / `cancel` one (`workflowID`, optional `stepID`); `list` this session's workflows |
 | `send_message` | Steps of a running workflow and the agent that started it (permission action `workflow_message`) | Message a step id, `"main"` (the starting agent) or `"all"` |
 | `read_messages` | Same | Read unread messages; `wait` up to 120 s for one |
 
@@ -45,6 +45,29 @@ notice is delivered without waking the agent (whoever cancelled already knows). 
 blocks the tool call instead and, like a foreground subagent, interrupting that call (Esc)
 cancels the workflow. With
 `notify: "each"` a running starting agent also gets a short note per finished step.
+
+### Waiting instead of polling
+
+The guidance and the `start` output tell the agent to keep working or end its turn: the
+completion notice wakes it. `status` is for when there is a reason to check (the user asks, a
+long silence, one step's result is needed early), and polling is made pointless:
+
+- `status` remembers the last answer per session and target (`start` counts as the first). A
+  repeat that finds nothing changed (same workflow and step statuses, no new message; running
+  times do not count) gets a short `No change since your last check Ns ago; still running: …
+  do not poll` instead of the full table. A back-to-back repeat first waits out the rest of a
+  10 s cooldown for a change, so a polling loop slows down instead of spinning. A finished
+  workflow always gets the full view at once.
+- `status` with `wait: true` is one blocking check: it returns the full view as soon as
+  something changes (a step finishes, a message arrives, the workflow ends), or the short
+  answer after `timeout` seconds (default 120, 1 to 300). Esc interrupts it like any tool call.
+- Under `/goal`, a turn that ends while a background workflow runs is not re-prompted (see
+  [mods/infiniteoc](../infiniteoc/README.md)). The plugin reports its running, non-waiting
+  workflows to mods/infiniteoc's background registry (`core/src/infiniteoc/background.ts`)
+  and signals it: a message for an idle starting agent wakes the held goal (the message
+  itself stays unread for `read_messages`), a finished step counts as progress (a wake with
+  `notify: "each"`). The completion notice wakes the session as before. Outside `/goal` those
+  signals have no effect.
 
 Guidance (the `[Workflows]` block) is added to agent-loop requests only while the `workflow`
 tool is offered, so turning the flag off removes both.
@@ -155,6 +178,7 @@ For other mods (the InfiniCode effort) that turn workflows on:
 | `packages/tui/src/feature-plugins/system/infiniteoc-workflows.tsx` | Sidebar and footer plugin, listed after `Notifications,` in `plugin/builtins.ts` |
 | `packages/tui/src/infiniteoc-features/workflows-{dag,settings,store}.ts` | Shared with `/workflows` |
 | `packages/tui/src/component/dialog-infiniteoc.tsx` (+ `workflows-settings.ts`) | The Workflows row; needs mods/infiniteoc first |
+| `packages/core/src/infiniteoc/background.ts` (imported, not written) | mods/infiniteoc's background registry for `/goal`; another reason this mod needs mods/infiniteoc first |
 
 Runtime primitives are upstream's, the same the `subagent` tool uses: a step is
 `Session.create({parentID, agent, model})`, `Session.prompt({resume: false})` and a
@@ -188,7 +212,9 @@ after 7 days. Session history is never touched.
 
 `node --test mods/workflows/test.mjs`: plan validation, scheduling (parallelism limit,
 ordering, failure propagation, optional steps, cancel), step prompts and summaries, the
-mailbox, model choice, settings, the store and startup sweep, the flag helper, and the mod
+mailbox, model choice, settings, the store and startup sweep, the flag helper, the
+polling-aware `status` (short no-change answer, cooldown, `wait` on change and timeout, driven
+the way the plugin drives it on a fake clock), the `/goal` signals, and the mod
 applied after every enabled mod onto pristine upstream (read from the pinned tag's git
 objects). The Effect plugin and TUI code are syntax-checked but not compiled or run here:
 rebuild and try a workflow before relying on it; the checklist is in the root VERIFICATION.md.
