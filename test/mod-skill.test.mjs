@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdtemp, mkdir, writeFile, readFile, cp, access, rm } from "node:fs/promises"
+import { mkdtemp, mkdir, writeFile, readFile, cp, access, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { checkMod } from "../skills/infiniteoc-mod-development/scripts/check-mod.mjs"
@@ -36,6 +36,26 @@ test("checker applies ordered mods in a disposable tree without mutating upstrea
     await writeFile(join(dir, ".upstream/fixture.txt"), "missing\n")
     await assert.rejects(checkMod(join(skill, "examples/patch-fixture.mjs"), dir), /source anchor/)
     assert.equal(await readFile(join(dir, ".upstream/fixture.txt"), "utf8"), "missing\n")
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+// Regression: fs.cp copies a symlinked .upstream (every git worktree shares one) as the link itself, so the mods were
+// applied to the shared pristine source instead of the copy.
+test("checker copies a symlinked .upstream instead of patching what it points to", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "infiniteoc-skill-test-"))
+  try {
+    await mkdir(join(dir, "checkout/src"), { recursive: true })
+    await mkdir(join(dir, "shared"))
+    await symlink(join(dir, "shared"), join(dir, "checkout/.upstream"))
+    await cp(join(home, "src/mod-loader.mjs"), join(dir, "checkout/src/mod-loader.mjs"))
+    await cp(join(home, "src/tui-features.mjs"), join(dir, "checkout/src/tui-features.mjs"))
+    await writeFile(join(dir, "shared/fixture.txt"), "old\n")
+    await writeFile(join(dir, "checkout/infiniteoc.json"), JSON.stringify({ mods: [] }))
+    const result = await checkMod(join(skill, "examples/patch-fixture.mjs"), join(dir, "checkout"))
+    assert.deepEqual(result.changes, [{ mod: "infiniteoc-skill-smoke-fixture", path: "fixture.txt", action: "patch" }])
+    assert.equal(await readFile(join(dir, "shared/fixture.txt"), "utf8"), "old\n")
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

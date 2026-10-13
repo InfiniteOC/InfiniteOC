@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises"
+import { cp, mkdtemp, readFile, realpath, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { resolve, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -19,7 +19,9 @@ export async function checkMod(candidate, launcher = fileURLToPath(new URL("../.
   const temporary = await mkdtemp(join(tmpdir(), "infiniteoc-check-mod-"))
   const root = join(temporary, "source")
   try {
-    await cp(join(base, ".upstream"), root, {
+    // Resolved first: fs.cp copies a symlinked .upstream (shared by git worktrees) as the link, and the mods would then
+    // patch the pristine source it points to.
+    await cp(await realpath(join(base, ".upstream")), root, {
       recursive: true,
       filter: path => !["node_modules", ".git"].includes(path.split("/").at(-1)),
     })
