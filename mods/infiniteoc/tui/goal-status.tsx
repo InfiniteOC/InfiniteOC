@@ -17,7 +17,13 @@ export function goalState(messages: ReadonlyArray<Message>) {
     const goal = /^Goal: (.*)$/m.exec(message.text)?.[1]?.trim()
     if (!goal) return undefined
     const continuation = /Continuation (\d+) of (\d+)/.exec(message.text)
-    const step = message.text.startsWith("[InfiniteOC goal: verify]") ? "verify" : continuation ? `${continuation[1]}/${continuation[2]}` : "on"
+    const step = message.text.startsWith("[InfiniteOC goal: paused]")
+      ? "paused"
+      : message.text.startsWith("[InfiniteOC goal: verify]")
+        ? "verify"
+        : continuation
+          ? `${continuation[1]}/${continuation[2]}`
+          : "on"
     return { goal, step }
   }
   return undefined

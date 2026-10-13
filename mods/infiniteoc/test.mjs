@@ -160,13 +160,13 @@ test("configured Quick default resolves to one visible InfiniteOC primary withou
   assert.equal(agents[0].system, "Custom prompt")
   assert.equal(agents[1].system, undefined)
 })
-test("/goal keeps going until the goal is verified, and stops on interrupt, block or cap", async (t) => {
+test("/goal keeps going until verified, pauses (not kills) on interrupt, and resumes", async (t) => {
   // decide() is pure; load it without the plugin runtime by dropping imports and the Plugin export.
   const source = await readFile(new URL("./goal.ts", import.meta.url), "utf8")
   const dir = await mkdtemp(path.join(tmpdir(), "goal-"))
   t.after(() => rm(dir, { recursive: true, force: true }))
   await writeFile(path.join(dir, "goal.ts"), source.split("export const Plugin")[0].replace(/^import .*$/gm, ""))
-  const { decide, startText, continueText, verifyText, MAX_CONTINUATIONS } = await import(path.join(dir, "goal.ts"))
+  const { decide, resumeDecision, startText, continueText, verifyText, MAX_CONTINUATIONS } = await import(path.join(dir, "goal.ts"))
   const user = (text) => ({ type: "user", text })
   const synthetic = (text) => ({ type: "synthetic", text })
   const reply = (text) => ({ type: "assistant", content: [{ type: "text", text }] })
@@ -185,9 +185,25 @@ test("/goal keeps going until the goal is verified, and stops on interrupt, bloc
   const twice = [start, reply("GOAL COMPLETE"), idle(), synthetic(verifyText(goal)), reply("GOAL COMPLETE"), idle(), synthetic(verifyText(goal)), reply("GOAL COMPLETE"), idle()]
   assert.equal(decide(twice).action, "finish")
   assert.match(decide([start, reply("GOAL BLOCKED: need a token"), idle()]).note, /needs your input/)
-  assert.match(decide([start, reply("partial"), idle("interrupted")]).note, /interrupted/)
+  assert.deepEqual(decide([start, reply("GOAL BLOCKED: need a token"), idle()]).action, "pause")
+  const interrupted = decide([start, reply("partial"), idle("interrupted")])
+  assert.deepEqual(interrupted.action, "pause")
+  assert.match(interrupted.note, /Esc stopped this turn/)
+  assert.match(interrupted.note, /\/goal resume/)
   assert.match(decide([start, reply("partial"), idle("failed")]).note, /error/)
   assert.deepEqual(decide([start, reply("x"), idle(), synthetic("[InfiniteOC goal: stopped]\nGoal stopped."), reply("later"), idle()]), { action: "none" })
+  const pausedNote = (note) => synthetic(`[InfiniteOC goal: paused]\n${note}\nGoal: ${goal}`)
+  // A paused goal never auto-continues; only /goal resume restarts it.
+  assert.deepEqual(decide([start, reply("x"), idle("interrupted"), pausedNote("Esc stopped."), reply("later"), idle()]), { action: "none" })
+  assert.deepEqual(decide([start, reply("x"), idle("interrupted"), pausedNote("Esc stopped."), user("a side question"), reply("answer"), idle()]), { action: "none" })
+  assert.deepEqual(resumeDecision([user("hi")]), undefined)
+  assert.deepEqual(resumeDecision([start, reply("x"), idle()]), undefined)
+  assert.deepEqual(resumeDecision([start, reply("x"), idle("interrupted"), pausedNote("Esc stopped.")]), { goal, turn: 1 })
+  assert.deepEqual(
+    resumeDecision([start, reply("x"), idle(), synthetic(continueText(goal, 1)), reply("y"), idle("interrupted"), pausedNote("Esc stopped.")]),
+    { goal, turn: 2 },
+  )
+  assert.deepEqual(resumeDecision([start, reply("x"), idle(), synthetic("[InfiniteOC goal: stopped]\nGoal stopped.")]), undefined)
   assert.deepEqual(decide([start, reply("GOAL VERIFIED"), idle(), synthetic("[InfiniteOC goal: finished]\nGoal finished."), user("thanks"), reply("ok"), idle()]), { action: "none" })
   const capped = [start, reply("x"), idle()]
   for (let turn = 1; turn <= MAX_CONTINUATIONS; turn++) capped.push(synthetic(continueText(goal, turn)), reply("x"), idle())
@@ -195,6 +211,12 @@ test("/goal keeps going until the goal is verified, and stops on interrupt, bloc
   // A new /goal resets the counters.
   assert.deepEqual(decide([...capped, user(startText("next")), reply("x"), idle()]), { action: "continue", goal: "next", turn: 1 })
   for (const text of [startText(goal), continueText(goal, 3), verifyText(goal)]) assert.match(text, /GOAL (COMPLETE|VERIFIED)/)
+})
+
+test("goal footer shows paused goals instead of dropping them", async () => {
+  const footer = await readFile(new URL("./tui/goal-status.tsx", import.meta.url), "utf8")
+  assert.match(footer, /\[InfiniteOC goal: paused\]/)
+  assert.match(footer, /"paused"/)
 })
 
 test("frontend gate covers UI files from edit, write and patch, and names the skill", async (t) => {
