@@ -228,7 +228,7 @@ test("doctor is read-only and gives every failing check a hint", async t => {
   const before = await readdir(base)
   const result = cli(base, ["doctor", "--json"])
   const report = JSON.parse(result.stdout)
-  assert.deepEqual(Object.keys(report), ["platform", "node", "bun", "upstream", "build", "mcp", "daemon", "socket", "settings", "socks"])
+  assert.deepEqual(Object.keys(report), ["platform", "node", "bun", "upstream", "build", "web", "mcp", "daemon", "socket", "settings", "socks"])
   for (const name of ["bun", "upstream", "socks"]) assert.equal(report[name].ok, false, name)
   // A missing or stale build is a warning: the next launch rebuilds it, so it does not fail the report.
   assert.deepEqual([report.build.ok, report.build.warn, report.build.fix], [true, true, "build"])

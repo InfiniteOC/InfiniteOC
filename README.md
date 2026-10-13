@@ -2,7 +2,7 @@
 
 A source-backed OpenCode launcher and mod framework, pinned to **OpenCode v2.0.21**. It copies upstream into a disposable worktree, applies trusted JavaScript source mods, builds a separate CLI/TUI binary, and launches it without touching your installed stock OpenCode.
 
-Enabled mods: `infiniteoc` (purple/pink theme, animated wordmark, InfiniteOC as the default primary agent, settings UI, pinned-build guards; [README](mods/infiniteoc/README.md)), `clearall` ([/clearall](mods/clearall/README.md)), `health` ([/health](mods/health/README.md)) and `deep-deliberation` (adds planning guidance to the agent prompt). The agent keeps upstream's base prompt and gets InfiniteOC guidance per agent, `reviewer` and `researcher` subagents, and the bundled skill library (see [mods/infiniteoc/README.md](mods/infiniteoc/README.md)). No permission rules or approval requirements are weakened.
+Enabled mods: `infiniteoc` (purple/pink theme, animated wordmark, InfiniteOC as the default primary agent, settings UI, pinned-build guards; [README](mods/infiniteoc/README.md)), `clearall` ([/clearall](mods/clearall/README.md)), `health` ([/health](mods/health/README.md)), `deep-deliberation` (adds planning guidance to the agent prompt) and `webui` (InfiniteOC's purple/pink theme and title for the web UI of `infiniteoc web`; [README](mods/webui/README.md)). The agent keeps upstream's base prompt and gets InfiniteOC guidance per agent, `reviewer` and `researcher` subagents, and the bundled skill library (see [mods/infiniteoc/README.md](mods/infiniteoc/README.md)). No permission rules or approval requirements are weakened.
 
 ## Requirements
 
@@ -25,8 +25,10 @@ infiniteoc /path/to/project
 | `setup` | Prepare and build, reusing a cached binary when possible. |
 | `rebuild` | Recreate the worktree from pristine upstream, reapply mods, rebuild. |
 | `mods` | List configured mods (importing them — only enable trusted mods). |
-| `doctor [--json]` | Read-only ✓/✗ checks (platform, tools, upstream, build, daemon, settings, Tor/SOCKS); exits 1 on any ✗. |
+| `doctor [--json]` | Read-only ✓/✗ checks (platform, tools, upstream, build, web UI, daemon, settings, Tor/SOCKS); exits 1 on any ✗. |
 | `feature new\|check\|enable\|disable ID` | Scaffold, check, or add/remove `mods/ID` in `infiniteoc.json` (enable checks first; both keep `infiniteoc.json.bak`). See [FEATURES.md](FEATURES.md). |
+| `serve [--hostname H] [--port N] [--cors ORIGIN]` | Headless API server of the InfiniteOC build (upstream `opencode serve`): 127.0.0.1 by default, always password-protected; off loopback it warns and refuses an `OPENCODE_PASSWORD` under 16 characters. See [LAUNCHER.md](LAUNCHER.md#serve-and-web). |
+| `web [--hostname H] [--port N] [--no-open]` | The same server with the web UI (opt-in `options.webUi`, built into the binary) and a one-time browser sign-in link. |
 | `[directory/args]` | Launch (private server unless `--server URL`). |
 | `-- [args]` | Forward arguments to OpenCode. |
 
@@ -54,7 +56,7 @@ infiniteoc /path/to/project
 }
 ```
 
-Mod paths are relative to the checkout root and order matters. `reducedMotion: true` makes Animations default to off (applied at build time); an Animations choice made in the TUI still wins. Traffic (proxy/Tor) and custom providers live under `/settings` → InfiniteOC Settings; see [mods/infiniteoc/settings/README.md](mods/infiniteoc/settings/README.md).
+Mod paths are relative to the checkout root and order matters. `reducedMotion: true` makes Animations default to off (applied at build time); an Animations choice made in the TUI still wins. `webUi: true` builds upstream's web UI into the binary for `infiniteoc web` (off by default: it makes every build slower and use more memory; `infiniteoc web` offers to turn it on). Traffic (proxy/Tor) and custom providers live under `/settings` → InfiniteOC Settings; see [mods/infiniteoc/settings/README.md](mods/infiniteoc/settings/README.md).
 
 ## Launcher and distribution
 

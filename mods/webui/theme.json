@@ -1,0 +1,53 @@
+{
+  "$schema": "https://opencode.ai/desktop-theme.json",
+  "name": "InfiniteOC",
+  "id": "infiniteoc",
+  "light": {
+    "palette": {
+      "neutral": "#fbf7fd",
+      "ink": "#21102b",
+      "primary": "#9333ea",
+      "accent": "#db2777",
+      "success": "#16a34a",
+      "warning": "#a16207",
+      "error": "#dc2626",
+      "info": "#0369a1",
+      "interactive": "#9333ea",
+      "diffAdd": "#bbf7d0",
+      "diffDelete": "#fbcfe8"
+    },
+    "overrides": {
+      "syntax-comment": "#876996",
+      "syntax-keyword": "#be185d",
+      "syntax-string": "#15803d",
+      "syntax-primitive": "#7e22ce",
+      "syntax-property": "#0369a1",
+      "syntax-type": "#9333ea",
+      "syntax-constant": "#db2777"
+    }
+  },
+  "dark": {
+    "palette": {
+      "neutral": "#160f1d",
+      "ink": "#fff5ff",
+      "primary": "#c084fc",
+      "accent": "#f472b6",
+      "success": "#4ade80",
+      "warning": "#facc15",
+      "error": "#f87171",
+      "info": "#7dd3fc",
+      "interactive": "#a864db",
+      "diffAdd": "#2fb27d",
+      "diffDelete": "#d45a9b"
+    },
+    "overrides": {
+      "syntax-comment": "#a78bbd",
+      "syntax-keyword": "#f472b6",
+      "syntax-string": "#86efac",
+      "syntax-primitive": "#c084fc",
+      "syntax-property": "#7dd3fc",
+      "syntax-type": "#d8b4fe",
+      "syntax-constant": "#f9a8d4"
+    }
+  }
+}
