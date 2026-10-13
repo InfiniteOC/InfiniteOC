@@ -202,6 +202,9 @@ test("/goal keeps going until verified, pauses (not kills) on interrupt, and aut
     decide([start, reply("x"), idle("interrupted"), pausedNote("Esc stopped."), user("go on"), reply("half"), idle("interrupted")]).action,
     "pause",
   )
+  // Raced order: the message typed during the interrupt lands before the
+  // pause note, and still resumes at the next run end.
+  assert.deepEqual(decide([start, reply("x"), idle(), user("oh wait"), pausedNote("Esc stopped."), reply("ok"), idle()]), { action: "continue", goal, turn: 1 })
   assert.deepEqual(resumeDecision([user("hi")]), undefined)
   assert.deepEqual(resumeDecision([start, reply("x"), idle()]), undefined)
   assert.deepEqual(resumeDecision([start, reply("x"), idle("interrupted"), pausedNote("Esc stopped.")]), { goal, turn: 1 })
@@ -223,6 +226,13 @@ test("goal footer shows paused goals instead of dropping them", async () => {
   const footer = await readFile(new URL("./tui/goal-status.tsx", import.meta.url), "utf8")
   assert.match(footer, /\[InfiniteOC goal: paused\]/)
   assert.match(footer, /"paused"/)
+})
+
+test("pausing is quiet: transcript note and footer only, no toast", async () => {
+  const source = await readFile(new URL("./goal.ts", import.meta.url), "utf8")
+  const pauseBranch = source.slice(source.indexOf('if (decision.action === "pause")'), source.indexOf('if (decision.action === "finish")'))
+  assert.match(pauseBranch, /note\(sessionID, PAUSED/)
+  assert.doesNotMatch(pauseBranch, /ToastShow/)
 })
 
 test("frontend gate covers UI files from edit, write and patch, and names the skill", async (t) => {

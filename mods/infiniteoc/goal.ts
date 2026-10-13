@@ -93,10 +93,15 @@ export function decide(messages: ReadonlyArray<SessionMessage.Info>): Decision {
   const goal = controlGoal(last.message)
   if (!goal) return { action: "none" }
   const after = messages.slice(last.index + 1)
-  // A paused goal restarts on the user's next message and stays dormant
-  // otherwise, so answering a question never silently drops it, and silence
-  // never silently resumes it.
-  if (last.kind === "paused" && !after.some((message) => message.type === "user" && !controlKind(message))) return { action: "none" }
+  // A paused goal restarts on user input after its last active control and
+  // stays dormant otherwise, so answering a question never silently drops it,
+  // and silence never silently resumes it. Anchoring on the active control
+  // (not the pause note) also covers the race where the pause note lands
+  // after a message typed during the interrupt.
+  if (last.kind === "paused") {
+    const anchor = controls.findLast((control) => control.kind === "start" || control.kind === "continue" || control.kind === "verify")?.index ?? -1
+    if (!messages.slice(anchor + 1).some((message) => message.type === "user" && !controlKind(message))) return { action: "none" }
+  }
   const reply = after.findLast((message) => message.type === "assistant")
   // Our own request is queued but its run has not produced a reply yet.
   if (!reply) return { action: "none" }
@@ -174,14 +179,9 @@ export const Plugin = define({
             const decision = decide(messages)
             if (decision.action === "none") return Effect.void
             if (decision.action === "pause")
-              return bus
-                .publish(TuiEvent.ToastShow, {
-                  title: "Goal paused",
-                  message: `${decision.note} The goal stays resumable; nothing was discarded.`,
-                  variant: "warning",
-                  duration: 8000,
-                })
-                .pipe(Effect.andThen(note(sessionID, PAUSED, `${decision.note}\nGoal: ${decision.goal}`)))
+              // No toast: the transcript note and the footer carry the state.
+              // Pausing is quiet by design; finishing and errors still toast.
+              return note(sessionID, PAUSED, `${decision.note}\nGoal: ${decision.goal}`)
             if (decision.action === "finish")
               return bus
                 .publish(TuiEvent.ToastShow, {
