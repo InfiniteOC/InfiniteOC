@@ -18,7 +18,8 @@
     "./mods/tool-perf/index.mjs",
     "./mods/yolo/index.mjs",
     "./mods/webui/index.mjs",
-    "./mods/accounts/index.mjs"
+    "./mods/accounts/index.mjs",
+    "./mods/workflows/index.mjs"
   ],
   "options": {
     "reducedMotion": false

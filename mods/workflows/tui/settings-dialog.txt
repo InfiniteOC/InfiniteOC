@@ -1,0 +1,26 @@
+  // mods/workflows: the `workflows` key of this settings file; the server reads it on every request.
+  function workflowsSettings() {
+    const current = workflowsNormalize((state() as Record<string, any> | undefined)?.workflows)
+    const save = async (key: string, value: string) => {
+      const loaded = (await loadSettings()) as Record<string, any>
+      const result = workflowsChange(loaded.workflows, key, value)
+      if ("error" in result) throw new Error(result.error)
+      await saveSettings({ ...loaded, workflows: result.next } as any)
+      home(`Workflows: ${key} saved · applies to the next request`)
+    }
+    choose("Workflows", [
+      { title: current.enabled ? "Turn off" : "Turn on", value: "enabled", description: "workflow tool, background steps, messages between subagents", footer: current.enabled ? "on" : "off" },
+      { title: "Fast model", value: "models.fast", description: "search, grep, summaries", footer: current.models.fast },
+      { title: "Strong model", value: "models.strong", description: "planning, review, hard reasoning", footer: current.models.strong },
+      { title: "Default model", value: "models.default", description: "implementation and other steps", footer: current.models.default },
+      { title: "Parallel steps", value: "maxParallel", description: "steps of one workflow at a time", footer: String(current.maxParallel) },
+      { title: "Notify", value: "notify", description: "end: once per workflow · each: also a note per finished step", footer: current.notify },
+    ], (key) => {
+      if (key === "enabled") return save("enabled", current.enabled ? "off" : "on")
+      if (key === "notify") return save("notify", current.notify === "end" ? "each" : "end")
+      const tier = key.startsWith("models.") ? (key.slice(7) as "fast" | "strong" | "default") : undefined
+      prompt(`Workflows · ${key}`, tier ? current.models[tier] : String(current.maxParallel),
+        tier ? `${tier === "default" ? "inherit" : "auto, inherit"} or provider/model[#variant]. Only models you have configured are used; an unavailable one falls back to automatic.` : "1–8",
+        (value) => save(key, value))
+    })
+  }
