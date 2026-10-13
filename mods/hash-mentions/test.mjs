@@ -51,6 +51,8 @@ test("anchors are unique in the pinned upstream and apply in order", { skip: !ha
   assert.equal(hash.replaceAll("#", "@"), at.replace("mentionTriggerIndex", "hashTriggerIndex"))
   assert.match(complete, /const triggerChar = displayCharAt\(props\.value, store\.index\)/)
   assert.match(complete, /filesOnly \? fileSearch\.options : \[\]/)
+  // Reference mode never falls through to slash commands, even at index 0.
+  assert.match(complete, /store\.visible === "reference"\n          \? \[\]/)
   assert.match(complete, /referenceMatch = createMemo\(\(\) => \{\n    if \(store\.visible !== "reference" \|\| displayCharAt\(props\.value, store\.index\) !== "@"\) return/)
   assert.match(complete, /const prefix = displayCharAt\(props\.value, store\.index\) === "#" \? "#" : "@"/)
   assert.match(complete, /const expandPrefix = displayCharAt\(props\.value, store\.index\) === "#" \? "#" : "@"/)
