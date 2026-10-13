@@ -12,7 +12,10 @@
     "./mods/safe-guard/index.mjs",
     "./mods/tnav-nav/index.mjs",
     "./mods/tstat-status/index.mjs",
-    "./mods/rea/index.mjs"
+    "./mods/rea/index.mjs",
+    "./mods/awareness/index.mjs",
+    "./mods/hash-mentions/index.mjs",
+    "./mods/tool-perf/index.mjs"
   ],
   "options": {
     "reducedMotion": false
