@@ -12,7 +12,8 @@
     "./mods/safe-guard/index.mjs",
     "./mods/tnav-nav/index.mjs",
     "./mods/tstat-status/index.mjs",
-    "./mods/rea/index.mjs"
+    "./mods/rea/index.mjs",
+    "./mods/workflows/index.mjs"
   ],
   "options": {
     "reducedMotion": false
