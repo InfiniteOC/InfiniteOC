@@ -89,10 +89,14 @@ export function resumeDecision(messages: ReadonlyArray<SessionMessage.Info>): { 
 export function decide(messages: ReadonlyArray<SessionMessage.Info>): Decision {
   const controls = controlList(messages)
   const last = controls.at(-1)
-  if (!last || last.kind === "stopped" || last.kind === "finished" || last.kind === "paused") return { action: "none" }
+  if (!last || last.kind === "stopped" || last.kind === "finished") return { action: "none" }
   const goal = controlGoal(last.message)
   if (!goal) return { action: "none" }
   const after = messages.slice(last.index + 1)
+  // A paused goal restarts on the user's next message and stays dormant
+  // otherwise, so answering a question never silently drops it, and silence
+  // never silently resumes it.
+  if (last.kind === "paused" && !after.some((message) => message.type === "user" && !controlKind(message))) return { action: "none" }
   const reply = after.findLast((message) => message.type === "assistant")
   // Our own request is queued but its run has not produced a reply yet.
   if (!reply) return { action: "none" }
