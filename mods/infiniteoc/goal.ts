@@ -17,6 +17,7 @@ const CONTINUE = "[InfiniteOC goal: continue]"
 const VERIFY = "[InfiniteOC goal: verify]"
 const STOPPED = "[InfiniteOC goal: stopped]"
 const FINISHED = "[InfiniteOC goal: finished]"
+const PAUSED = "[InfiniteOC goal: paused]"
 
 const protocol = [
   "Work on this autonomously until it is completely done; you will be prompted to continue after each turn.",
@@ -34,12 +35,13 @@ export const continueText = (goal: string, turn: number) =>
 export const verifyText = (goal: string) =>
   `${VERIFY}\nGoal: ${goal}\n\nYou marked the goal complete. Verify that independently before finishing: re-read the requirements, re-run the tests, type checks and build, exercise the actual behavior, and for nontrivial changes ask the reviewer subagent to review the diff. Fix anything you find. If it is truly done, end with \`GOAL VERIFIED: <evidence>\`; otherwise keep working and report \`GOAL COMPLETE\` again when it is.`
 
-type Kind = "start" | "continue" | "verify" | "stopped" | "finished"
+type Kind = "start" | "continue" | "verify" | "stopped" | "finished" | "paused"
 const kinds: ReadonlyArray<readonly [string, Kind]> = [
   [CONTINUE, "continue"],
   [VERIFY, "verify"],
   [STOPPED, "stopped"],
   [FINISHED, "finished"],
+  [PAUSED, "paused"],
   [START, "start"],
 ]
 
@@ -58,31 +60,51 @@ const controlKind = (message: SessionMessage.Info): Kind | undefined => {
 export type Decision =
   | { readonly action: "none" }
   | { readonly action: "continue" | "verify"; readonly goal: string; readonly turn: number }
+  | { readonly action: "pause"; readonly goal: string; readonly note: string }
   | { readonly action: "finish"; readonly note: string }
 
-/** Pure: what to do when a session run ends, given its transcript. */
-export function decide(messages: ReadonlyArray<SessionMessage.Info>): Decision {
-  const controls = messages.flatMap((message, index) => {
+/** Pure: control messages in order. Esc pauses instead of killing the goal. */
+const controlList = (messages: ReadonlyArray<SessionMessage.Info>) =>
+  messages.flatMap((message, index) => {
     const kind = controlKind(message)
     return kind ? [{ kind, index, message }] : []
   })
+
+const controlGoal = (message: SessionMessage.Info) =>
+  /^Goal: (.*)$/m.exec(messageText(message))?.[1]?.trim()
+
+/** Pure: resume a paused goal, or undefined when the transcript has none. */
+export function resumeDecision(messages: ReadonlyArray<SessionMessage.Info>): { goal: string; turn: number } | undefined {
+  const controls = controlList(messages)
   const last = controls.at(-1)
-  if (!last || last.kind === "stopped" || last.kind === "finished") return { action: "none" }
-  const goal = /^Goal: (.*)$/m.exec(messageText(last.message))?.[1]?.trim()
+  if (!last || last.kind !== "paused") return undefined
+  const goal = controlGoal(last.message)
+  if (!goal) return undefined
+  const start = controls.findLast((control) => control.kind === "start")?.index ?? -1
+  const turn = controls.filter((control) => control.index > start && control.kind === "continue").length + 1
+  return { goal, turn }
+}
+
+/** Pure: what to do when a session run ends, given its transcript. */
+export function decide(messages: ReadonlyArray<SessionMessage.Info>): Decision {
+  const controls = controlList(messages)
+  const last = controls.at(-1)
+  if (!last || last.kind === "stopped" || last.kind === "finished" || last.kind === "paused") return { action: "none" }
+  const goal = controlGoal(last.message)
   if (!goal) return { action: "none" }
   const after = messages.slice(last.index + 1)
   const reply = after.findLast((message) => message.type === "assistant")
   // Our own request is queued but its run has not produced a reply yet.
   if (!reply) return { action: "none" }
   const idle = after.findLast((message) => message.type === "idle")
-  if (idle?.type === "idle" && idle.outcome === "interrupted") return { action: "finish", note: "Goal stopped: the turn was interrupted. Run /goal again to resume." }
+  if (idle?.type === "idle" && idle.outcome === "interrupted") return { action: "pause", goal, note: "Goal paused: Esc stopped this turn. /goal resume to continue, /goal stop to end it." }
   if (idle?.type === "idle" && idle.outcome === "failed") return { action: "finish", note: "Goal stopped after an error. Fix it, then run /goal again." }
   const text = messageText(reply)
   const start = controls.findLast((control) => control.kind === "start")?.index ?? -1
   const since = controls.filter((control) => control.index > start)
   const continues = since.filter((control) => control.kind === "continue").length
   const verifies = since.filter((control) => control.kind === "verify").length
-  if (/GOAL BLOCKED/.test(text)) return { action: "finish", note: "Goal paused: the agent needs your input (see GOAL BLOCKED above)." }
+  if (/GOAL BLOCKED/.test(text)) return { action: "pause", goal, note: "Goal paused: the agent needs your input (see GOAL BLOCKED above). Answer it, then /goal resume." }
   if (/GOAL VERIFIED/.test(text) || (/GOAL COMPLETE/.test(text) && verifies >= MAX_VERIFICATIONS))
     return { action: "finish", note: "Goal finished: completed and verified." }
   if (/GOAL COMPLETE/.test(text)) return { action: "verify", goal, turn: verifies + 1 }
@@ -102,11 +124,32 @@ export const Plugin = define({
     yield* ctx.command.transform((editor) => {
       editor.add({
         name: "goal",
-        description: "work until a goal is done and verified · /goal stop",
+        description: "work until a goal is done and verified · /goal resume|stop",
         execute: (input) => {
           const goal = input.prompt.text.trim()
           if (/^(stop|off|cancel)$/i.test(goal)) return note(input.sessionID, STOPPED, "Goal stopped.").pipe(Effect.asVoid)
-          if (!goal) return note(input.sessionID, STOPPED, "Usage: /goal <what done means>, and /goal stop to end it.").pipe(Effect.asVoid)
+          if (/^(resume|continue|retry)$/i.test(goal))
+            return ctx.session.context({ sessionID: input.sessionID }).pipe(
+              Effect.flatMap((messages) => {
+                const resumed = resumeDecision(messages)
+                if (!resumed)
+                  return bus.publish(TuiEvent.ToastShow, {
+                    title: "Goal",
+                    message: "No paused goal to resume. Start one with /goal <what done means>.",
+                    variant: "info",
+                    duration: 6000,
+                  })
+                return ctx.session.synthetic({
+                  sessionID: input.sessionID,
+                  text: continueText(resumed.goal, resumed.turn),
+                  description: `Goal: resume ${resumed.turn}/${MAX_CONTINUATIONS}`,
+                  resume: true,
+                })
+              }),
+              Effect.catchCause((cause) => Effect.logWarning("InfiniteOC goal resume failed", { cause })),
+              Effect.asVoid,
+            )
+          if (!goal) return note(input.sessionID, STOPPED, "Usage: /goal <what done means>, /goal resume to continue a paused goal, and /goal stop to end it.").pipe(Effect.asVoid)
           return ctx.session
             .prompt({ ...input.prompt, sessionID: input.sessionID, text: startText(goal), delivery: input.delivery })
             .pipe(Effect.asVoid)
@@ -126,6 +169,15 @@ export const Plugin = define({
           Effect.flatMap((messages) => {
             const decision = decide(messages)
             if (decision.action === "none") return Effect.void
+            if (decision.action === "pause")
+              return bus
+                .publish(TuiEvent.ToastShow, {
+                  title: "Goal paused",
+                  message: `${decision.note} The goal stays resumable; nothing was discarded.`,
+                  variant: "warning",
+                  duration: 8000,
+                })
+                .pipe(Effect.andThen(note(sessionID, PAUSED, `${decision.note}\nGoal: ${decision.goal}`)))
             if (decision.action === "finish")
               return bus
                 .publish(TuiEvent.ToastShow, {
