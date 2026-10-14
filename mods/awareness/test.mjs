@@ -124,6 +124,13 @@ test("toolGuide documents parallel-call rules", { skip }, () => {
   assert.match(lib.toolGuide(), /parallel \(guide entry/)
 })
 
+test("toolGuide documents the agent display", { skip }, () => {
+  assert.match(lib.toolGuide("agent_display"), /agent_display \{action/)
+  assert.match(lib.toolGuide("agent_display"), /:99/)
+  assert.match(lib.toolGuide("agent_display"), /shell permission/)
+  assert.match(lib.toolGuide(), /agent_display \{action/)
+})
+
 test("runner concurrency properties hold (regression guard)", async (t) => {
   const root = new URL("../../.upstream/", import.meta.url)
   const step = await readFile(new URL("packages/core/src/session/runner/step.ts", root), "utf8").catch(() => null)
