@@ -27,6 +27,33 @@ export const dataDir = (env: Record<string, string | undefined> = process.env) =
   path.join(env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"), "infiniteoc", "agent-display")
 export const statusFile = (env: Record<string, string | undefined> = process.env) => path.join(dataDir(env), "status.json")
 export const frameFile = (env: Record<string, string | undefined> = process.env) => path.join(dataDir(env), "frame.png")
+export const settingsFile = (env: Record<string, string | undefined> = process.env) => path.join(dataDir(env), "settings.json")
+
+/** The user's choices for the display, set from /display. Separate from status.json, which the server
+ * rewrites all the time. `realistic`: input moves like a person (gliding pointer, human typing, a beat
+ * between steps) so it reads as someone using a computer; off by default because it is slower. */
+export type Settings = { realistic: boolean }
+export function readSettings(env: Record<string, string | undefined> = process.env): Settings {
+  try {
+    const value = JSON.parse(readFileSync(settingsFile(env), "utf8"))
+    return { realistic: value?.realistic === true }
+  } catch {
+    return { realistic: false }
+  }
+}
+export function writeSettings(settings: Settings, env: Record<string, string | undefined> = process.env) {
+  const file = settingsFile(env)
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 })
+  const temp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
+  try {
+    writeFileSync(temp, JSON.stringify(settings) + "\n", { mode: 0o600 })
+    renameSync(temp, file)
+  } finally {
+    try {
+      unlinkSync(temp)
+    } catch {}
+  }
+}
 
 export type App = { pid: number; command: string; startedAt: number; log: string }
 export type Status = {
@@ -41,6 +68,8 @@ export type Status = {
   showNote?: string
   streamPort?: number
   streamStartedAt?: number
+  /** The desktop session on this display: window manager and taskbar pids. */
+  desktop?: { wm: number; panel?: number }
   apps: App[]
 }
 
@@ -97,9 +126,13 @@ export function pidAlive(pid: number | undefined): boolean {
   }
 }
 
-/** A running record whose process is gone is stale: callers restart instead of reusing it. */
+/** A running record whose process is gone is stale: callers restart instead of reusing it.
+ * Dead apps are pruned too, so status never lists ghosts. Single pass: one pidAlive per app. */
 export function sweepStatus(status: Status): Status {
   if (status.running && !pidAlive(status.pid)) return { ...blankStatus(status.display), apps: [] }
+  if (!status.running) return status
+  const live = status.apps.filter((app) => pidAlive(app.pid))
+  if (live.length !== status.apps.length) return { ...status, apps: live }
   return status
 }
 
@@ -108,10 +141,17 @@ export function xvfbArgs(display: string): string[] {
   return [display, "-screen", "0", `${WIDTH}x${HEIGHT}x${DEPTH}`, "-nolisten", "tcp"]
 }
 
+/** The local socket Xvfb creates once it accepts clients (readiness, ~100ms after spawn). */
+export const displaySocket = (display: string) => `/tmp/.X11-unix/X${display.slice(1)}`
+
 /** Screenshot capture: ImageMagick first, ffmpeg x11grab as fallback. */
 export function importArgs(display: string, file: string): { command: string; args: string[] } {
   void display
   return { command: "import", args: ["-window", "root", file] }
+}
+/** Capture one window (by id from win list) instead of the whole screen. Needs ImageMagick. */
+export function importWindowArgs(windowId: string, file: string): { command: string; args: string[] } {
+  return { command: "import", args: ["-window", windowId, file] }
 }
 export function ffmpegArgs(display: string, file: string): { command: string; args: string[] } {
   return { command: "ffmpeg", args: ["-y", "-v", "error", "-f", "x11grab", "-i", display, "-frames:v", "1", file] }
@@ -129,11 +169,13 @@ export function appEnv(display: string, env: Record<string, string | undefined> 
   return next
 }
 
-export type ExecInput = { command?: unknown; args?: unknown }
+export type ExecInput = { command?: unknown; args?: unknown; env?: unknown }
 
 const MAX_ARGS = 32
+const MAX_ENV = 32
+const MANAGED_ENV = ["DISPLAY", "WAYLAND_DISPLAY"]
 /** Validated spawn input, or the refusal message. */
-export function validateExec(input: ExecInput): { command: string; args: string[] } | { error: string } {
+export function validateExec(input: ExecInput): { command: string; args: string[]; env: Record<string, string> } | { error: string } {
   const command = typeof input.command === "string" ? input.command.trim() : ""
   if (!command) return { error: "exec needs a command (an executable on PATH, e.g. { action: \"exec\", command: \"xterm\" })." }
   if (command.includes("\0")) return { error: "Refused: the command contains NUL." }
@@ -141,88 +183,488 @@ export function validateExec(input: ExecInput): { command: string; args: string[
   if (!Array.isArray(raw) || raw.some((item) => typeof item !== "string")) return { error: "args must be an array of strings." }
   if (raw.length > MAX_ARGS) return { error: `Refused: at most ${MAX_ARGS} args.` }
   if (raw.some((item) => item.includes("\0"))) return { error: "Refused: an arg contains NUL." }
-  return { command, args: [...raw] }
+  const rawEnv = input.env === undefined ? {} : input.env
+  if (!rawEnv || typeof rawEnv !== "object" || Array.isArray(rawEnv)) return { error: "env must be an object of string keys to string values." }
+  const entries = Object.entries(rawEnv as Record<string, unknown>)
+  if (entries.length > MAX_ENV) return { error: `Refused: at most ${MAX_ENV} env vars.` }
+  const env: Record<string, string> = {}
+  for (const [key, value] of entries) {
+    if (!key || typeof value !== "string" || key.includes("\0") || key.includes("=") || (value as string).includes("\0"))
+      return { error: "env keys need no '=' or NUL and values need no NUL (both strings)." }
+    if ((MANAGED_ENV as readonly string[]).includes(key)) return { error: `Refused: ${key} is managed by the display and cannot be overridden.` }
+    env[key] = value as string
+  }
+  return { command, args: [...raw], env }
 }
 
 /** One-line log file for a spawned app. */
 export const appLog = (pid: number, at = Date.now(), dir = tmpdir()) => path.join(dir, `infiniteoc-agent-display-${pid}-${at}.log`)
 
-/** Window ops the agent can do on its screen (xdotool, preinstalled). */
-export const WIN_OPS = ["list", "focus", "move", "resize", "click", "type", "key", "close"] as const
+/** Window and input ops on the agent's screen (xdotool).
+ * Coordinates: without `window`, x/y are SCREEN pixels, the same pixels as a full
+ * screenshot. With `window`, they are relative to that window's top-left, the same
+ * pixels as a screenshot of that window. move uses screen coordinates.
+ * Input goes through XTEST like a real mouse and keyboard: Chromium drops the
+ * synthetic per-window events `--window` would send. Keyboard ops with a window
+ * focus it first; clicks move keyboard focus to what was clicked, because there is
+ * no window manager to do it. list, wait and sleep only look or pause. */
+export const WIN_OPS = ["list", "wait", "sleep", "focus", "move", "resize", "close", "click", "mousedown", "mouseup", "mousemove", "scroll", "drag", "type", "key", "keydown", "keyup"] as const
 export type WinOp = (typeof WIN_OPS)[number]
-export type WinInput = { op?: unknown; window?: unknown; x?: unknown; y?: unknown; w?: unknown; h?: unknown; button?: unknown; text?: unknown; keys?: unknown }
-
-const isInt = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value)
-const needInt = (value: unknown, name: string, min: number, max: number): number | string => {
-  if (!isInt(value) || value < min || value > max) return `${name} must be an integer ${min}-${max}.`
-  return value
+export const LOOK_OPS: readonly WinOp[] = ["list", "wait", "sleep"]
+export type WinInput = {
+  op?: unknown
+  window?: unknown
+  x?: unknown
+  y?: unknown
+  x2?: unknown
+  y2?: unknown
+  w?: unknown
+  h?: unknown
+  button?: unknown
+  count?: unknown
+  text?: unknown
+  keys?: unknown
+  ms?: unknown
+  timeout?: unknown
+}
+/** A validated op. `window` is "" (the screen) or an id/fragment the plugin resolves to one id. */
+export type WinPlan = {
+  op: WinOp
+  window: string
+  x?: number
+  y?: number
+  x2?: number
+  y2?: number
+  w?: number
+  h?: number
+  button: number
+  count: number
+  text?: string
+  keys?: string[]
+  ms?: number
+  timeout: number
 }
 
-/** Validated window input, or the refusal message. */
-export function validateWin(input: WinInput): { op: WinOp; window: string; args: string[] } | { error: string } {
-  const op = typeof input.op === "string" ? input.op : ""
-  if (!(WIN_OPS as readonly string[]).includes(op)) return { error: `win needs op (${WIN_OPS.join(", ")}).` }
+const isInt = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value)
+const MAX_COORD = 8192
+const MAX_STEPS = 50
+
+/** Validated op, or the refusal message. Nothing is resolved or run here. */
+export function validateWin(input: WinInput): WinPlan | { error: string } {
+  const op = typeof input.op === "string" ? input.op.trim() : ""
+  if (!(WIN_OPS as readonly string[]).includes(op)) return { error: `op must be one of ${WIN_OPS.join(", ")}.` }
+  if (input.window !== undefined && typeof input.window !== "string") return { error: "window must be a string (an id from list, or a title/class fragment)." }
   const window = typeof input.window === "string" ? input.window.trim() : ""
-  if ((op === "list" ? input.window !== undefined && !window : !window) && op !== "list")
-    return { error: "win needs a window (an id from list, or a title fragment)." }
   if (window.includes("\0")) return { error: "Refused: the window contains NUL." }
-  const byId = /^\d+$/.test(window)
-  const target = (flag: string) => (byId ? [flag, window] : ["search", "--onlyvisible", "--name", window, flag])
-  switch (op as WinOp) {
-    case "list": {
-      if (window) return { op, window, args: ["search", "--onlyvisible", "--name", window, "getwindowname"] }
-      return { op, window: "", args: ["search", "--onlyvisible", "", "getwindowname"] }
-    }
+  if (window.length > 200) return { error: "window must be at most 200 chars (an id from list, or a short fragment)." }
+  const plan: WinPlan = { op: op as WinOp, window, button: 1, count: 1, timeout: 10 }
+  let problem = ""
+  const int = (value: unknown, name: string, min: number, max: number, fallback?: number) => {
+    if (value === undefined && fallback !== undefined) return fallback
+    if (!isInt(value) || value < min || value > max) problem ||= `${name} must be an integer ${min}-${max}.`
+    return value as number
+  }
+  // Screen pixels must land on the screen; window-relative ones are checked by the window itself.
+  const point = (xName: "x" | "x2", yName: "y" | "y2", required: boolean) => {
+    if (!required && input[xName] === undefined && input[yName] === undefined) return
+    if (input[xName] === undefined || input[yName] === undefined) return void (problem ||= `${plan.op} needs both ${xName} and ${yName}.`)
+    plan[xName] = int(input[xName], xName, 0, window ? MAX_COORD : WIDTH - 1)
+    plan[yName] = int(input[yName], yName, 0, window ? MAX_COORD : HEIGHT - 1)
+  }
+  const needWindow = () => {
+    if (!window) problem ||= `${plan.op} needs a window (an id from list, or a title/class fragment).`
+  }
+  switch (plan.op) {
+    case "list":
+      break
+    case "wait":
+      needWindow()
+      plan.timeout = int(input.timeout, "timeout", 1, 25, 10)
+      break
+    case "sleep":
+      plan.ms = int(input.ms, "ms", 1, 10_000, 500)
+      break
     case "focus":
-      return { op, window, args: [...target("windowactivate")] }
     case "close":
-      return { op, window, args: [...target("windowclose")] }
-    case "move": {
-      const x = needInt(input.x, "x", 0, 8192)
-      if (typeof x === "string") return { error: x }
-      const y = needInt(input.y, "y", 0, 8192)
-      if (typeof y === "string") return { error: y }
-      return { op, window, args: [...target("windowmove"), String(x), String(y)] }
-    }
-    case "resize": {
-      const w = needInt(input.w, "w", 1, 8192)
-      if (typeof w === "string") return { error: w }
-      const h = needInt(input.h, "h", 1, 8192)
-      if (typeof h === "string") return { error: h }
-      return { op, window, args: [...target("windowsize"), String(w), String(h)] }
-    }
-    case "click": {
-      const button = input.button === undefined ? 1 : input.button
-      if (!isInt(button) || button < 1 || button > 9) return { error: "button must be an integer 1-9 (1 left, 2 middle, 3 right)." }
-      return { op, window, args: byId ? ["click", "--window", window, String(button)] : ["search", "--onlyvisible", "--name", window, "click", "--window", "%1", String(button)] }
-    }
+      needWindow()
+      break
+    case "move":
+      needWindow()
+      plan.x = int(input.x, "x", 0, MAX_COORD)
+      plan.y = int(input.y, "y", 0, MAX_COORD)
+      break
+    case "resize":
+      needWindow()
+      plan.w = int(input.w, "w", 1, MAX_COORD)
+      plan.h = int(input.h, "h", 1, MAX_COORD)
+      break
+    case "mousemove":
+      point("x", "y", true)
+      break
+    case "click":
+    case "mousedown":
+    case "mouseup":
+      point("x", "y", false)
+      plan.button = int(input.button, "button", 1, 9, 1)
+      if (plan.op === "click") plan.count = int(input.count, "count", 1, 20, 1)
+      break
+    case "scroll":
+      point("x", "y", false)
+      plan.button = int(input.button, "scroll button", 4, 7, 5)
+      plan.count = int(input.count, "count", 1, 20, 3)
+      break
+    case "drag":
+      point("x", "y", true)
+      point("x2", "y2", true)
+      plan.button = int(input.button, "drag button", 1, 3, 1)
+      break
     case "type": {
       const text = typeof input.text === "string" ? input.text : ""
-      if (!text || text.length > 4000) return { error: "type needs text (1-4000 chars)." }
-      if (text.includes("\0")) return { error: "Refused: the text contains NUL." }
-      return { op, window, args: byId ? ["type", "--window", window, "--", text] : ["search", "--onlyvisible", "--name", window, "type", "--window", "%1", "--", text] }
+      if (!text || text.length > 4000) problem ||= "type needs text (1-4000 chars)."
+      else if (text.includes("\0")) problem ||= "Refused: the text contains NUL."
+      plan.text = text
+      break
     }
-    case "key": {
-      const keys = typeof input.keys === "string" ? input.keys.trim() : ""
-      if (!keys || keys.length > 200 || /[\0\n]/.test(keys)) return { error: "key needs keys like \"ctrl+q\" (no newlines)." }
-      return { op, window, args: byId ? ["key", "--window", window, keys] : ["search", "--onlyvisible", "--name", window, "key", "--window", "%1", keys] }
+    case "key":
+    case "keydown":
+    case "keyup": {
+      // Several keystrokes in one call: "ctrl+a BackSpace", "Tab Tab Return".
+      const keys = typeof input.keys === "string" ? input.keys.trim().split(/\s+/).filter(Boolean) : []
+      if (!keys.length || keys.length > 20 || keys.some((key) => key.length > 64 || key.includes("\0")))
+        problem ||= `${plan.op} needs keys like "ctrl+l" or "ctrl+a BackSpace" (1-20 keystrokes, space separated).`
+      else if (keys.some((key) => key.startsWith("-"))) problem ||= `${plan.op} keys must not start with "-" (it would parse as an xdotool flag).`
+      plan.keys = keys
+      if (plan.op === "key") plan.count = int(input.count, "count", 1, 20, 1)
+      break
     }
+  }
+  return problem ? { error: problem } : plan
+}
+
+/** A batch of ops run in order in one tool call; all are validated before any runs. */
+export function validateSteps(steps: unknown): WinPlan[] | { error: string } {
+  if (!Array.isArray(steps) || !steps.length) return { error: 'steps needs a non-empty array like [{ op: "click", x: 640, y: 400 }, { op: "type", text: "hi" }].' }
+  if (steps.length > MAX_STEPS) return { error: `Refused: at most ${MAX_STEPS} steps per call.` }
+  const plans: WinPlan[] = []
+  for (const [index, step] of steps.entries()) {
+    if (!step || typeof step !== "object" || Array.isArray(step)) return { error: `step ${index + 1}: needs an object with op.` }
+    const plan = validateWin(step as WinInput)
+    if ("error" in plan) return { error: `step ${index + 1} (${String((step as WinInput).op ?? "?")}): ${plan.error}` }
+    plans.push(plan)
+  }
+  return plans
+}
+
+export type Point = { x: number; y: number }
+/** How input runs. `managed`: a window manager is up, so it activates, focuses on click and closes
+ * gracefully. `human`: realistic input is on (/display), so the pointer glides from `from` and
+ * presses and typing take human time; `origin` is the target window's top-left on screen (0,0 for
+ * screen pixels). */
+export type InputMode = { managed?: boolean; human?: { from: Point; origin: Point; random?: () => number } }
+
+/** A human-looking pointer path: eased (fast start, gentle landing), slightly curved, ~83 moves a
+ * second, longer for longer distances. Ends exactly on the target. */
+export function glidePath(from: Point, to: Point, random: () => number = Math.random, slow = 1): Point[] {
+  const distance = Math.hypot(to.x - from.x, to.y - from.y)
+  if (distance < 2) return [to]
+  const duration = Math.min(720, 170 + distance * 0.42) * slow
+  const count = Math.max(4, Math.round(duration / 12))
+  // A control point off the straight line bends the path the way a wrist does.
+  const bend = (random() - 0.5) * Math.min(90, distance * 0.22)
+  const control = { x: (from.x + to.x) / 2 - ((to.y - from.y) / distance) * bend, y: (from.y + to.y) / 2 + ((to.x - from.x) / distance) * bend }
+  const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2)
+  const points: Point[] = []
+  for (let index = 1; index <= count; index++) {
+    const t = ease(index / count)
+    const point = {
+      x: Math.round((1 - t) * (1 - t) * from.x + 2 * (1 - t) * t * control.x + t * t * to.x),
+      y: Math.round((1 - t) * (1 - t) * from.y + 2 * (1 - t) * t * control.y + t * t * to.y),
+    }
+    if (!points.length || points.at(-1)!.x !== point.x || points.at(-1)!.y !== point.y) points.push(point)
+  }
+  if (points.at(-1)!.x !== to.x || points.at(-1)!.y !== to.y) points.push(to)
+  return points
+}
+export const GLIDE_STEP = "0.012"
+
+/** xdotool argv for one op on a resolved window id (undefined: the screen). list, wait and sleep return []. */
+export function winArgs(plan: WinPlan, id?: string, mode: InputMode = {}): string[] {
+  const human = mode.human
+  let pointer = human?.from
+  // Never `mousemove --sync`: it hangs when the pointer already sits on the target.
+  const at = (x: number, y: number, slow = 1): string[] => {
+    if (!human) return id ? ["mousemove", "--window", id, String(x), String(y)] : ["mousemove", String(x), String(y)]
+    const target = { x: human.origin.x + x, y: human.origin.y + y }
+    const path = glidePath(pointer!, target, human.random, slow)
+    pointer = target
+    return path.flatMap((point, index) => [...(index ? ["sleep", GLIDE_STEP] : []), "mousemove", String(point.x), String(point.y)])
+  }
+  const point = plan.x !== undefined && plan.y !== undefined ? at(plan.x, plan.y) : []
+  // With a window manager, activation keeps its focus, title bar and taskbar in step.
+  const focus = id ? (mode.managed ? ["windowactivate", "--sync", id] : ["windowfocus", id]) : []
+  const button = String(plan.button)
+  // A person lands, then presses and releases; xdotool's click is instantaneous.
+  const press = (count: number) =>
+    human
+      ? [...(point.length ? ["sleep", "0.07"] : []), ...Array.from({ length: count }, (_, index) => [...(index ? ["sleep", "0.09"] : []), "mousedown", button, "sleep", "0.05", "mouseup", button]).flat()]
+      : ["click", "--repeat", String(count), button]
+  switch (plan.op) {
+    case "focus":
+      return mode.managed ? ["windowactivate", "--sync", id!] : ["windowraise", id!, "windowfocus", id!]
+    case "close":
+      // windowquit asks the window manager to close it gracefully; without one it would silently do nothing.
+      return [mode.managed ? "windowquit" : "windowclose", id!]
+    case "move":
+      return ["windowmove", id!, String(plan.x), String(plan.y)]
+    case "resize":
+      return ["windowsize", id!, String(plan.w), String(plan.h)]
+    case "mousemove":
+      return point
+    case "click":
+      return [...point, ...press(plan.count)]
+    case "scroll":
+      return [...point, ...(human ? ["sleep", "0.05", "click", "--repeat", String(plan.count), "--delay", "70", button] : ["click", "--repeat", String(plan.count), button])]
+    case "mousedown":
+    case "mouseup":
+      return [...point, ...(human && point.length ? ["sleep", "0.05"] : []), plan.op, button]
+    case "drag": {
+      if (human) return [...point, "sleep", "0.08", "mousedown", button, "sleep", "0.1", ...at(plan.x2!, plan.y2!, 1.4), "sleep", "0.08", "mouseup", button]
+      // Intermediate moves with short pauses: apps (and HTML drag and drop) need motion to start a drag.
+      const lerp = (t: number) => at(Math.round(plan.x! + (plan.x2! - plan.x!) * t), Math.round(plan.y! + (plan.y2! - plan.y!) * t))
+      return [...point, "mousedown", button, ...lerp(1 / 3), "sleep", "0.03", ...lerp(2 / 3), "sleep", "0.03", ...lerp(1), "sleep", "0.05", "mouseup", button]
+    }
+    case "type":
+      // Human speed for what a person would type; long pastes still go fast.
+      return [...focus, "type", ...(human && plan.text!.length <= 400 ? ["--delay", "38"] : []), "--", plan.text!]
+    case "key":
+      return [...focus, "key", ...(human ? ["--delay", "110"] : []), "--repeat", String(plan.count), ...plan.keys!]
+    case "keydown":
+    case "keyup":
+      return [...focus, plan.op, ...plan.keys!]
+    default:
+      return []
   }
 }
 
-/** Live viewer: loopback only, OS-assigned port. */
-export const streamHost = "127.0.0.1"
-export const streamRate = 10
-export function ffmpegStreamArgs(display: string): string[] {
-  return ["-v", "error", "-f", "x11grab", "-r", String(streamRate), "-s", `${WIDTH}x${HEIGHT}`, "-i", display, "-f", "mjpeg", "-q:v", "5", "-"]
+/** Best-effort click-to-focus after a press when no window manager does it, so the next type/key
+ * lands where the agent clicked. A separate call: the click may have closed the window it targeted. */
+export function focusAfterArgs(plan: WinPlan, id?: string, mode: InputMode = {}): string[] | undefined {
+  if (mode.managed || !["click", "mousedown", "drag"].includes(plan.op)) return undefined
+  return id ? ["windowfocus", id] : ["getmouselocation", "windowfocus"]
 }
-export const viewerPage = (display: string) =>
-  `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent display ${display}</title><style>html,body{margin:0;background:#111;height:100%}img{display:block;width:100%;max-width:1280px;margin:0 auto}</style></head><body><img src="/stream.mjpg" alt="Live view of the agent display"></body></html>`
+
+/** Where a pointer op lands on screen, for the live view's click marks. */
+export function screenPoint(plan: WinPlan, origin: Point = { x: 0, y: 0 }): { at?: Point; to?: Point } {
+  const at = plan.x !== undefined && plan.y !== undefined ? { x: origin.x + plan.x, y: origin.y + plan.y } : undefined
+  const to = plan.x2 !== undefined && plan.y2 !== undefined ? { x: origin.x + plan.x2, y: origin.y + plan.y2 } : undefined
+  return { at, to }
+}
+
+/** What the live view's caption says while an op runs. */
+export function caption(plan: WinPlan, title = ""): string {
+  const name = title ? ` in ${title.length > 40 ? `${title.slice(0, 39)}…` : title}` : ""
+  const quote = (text: string) => `“${text.length > 60 ? `${text.slice(0, 59)}…` : text}”`
+  switch (plan.op) {
+    case "click":
+      return `${plan.count === 2 ? "Double-clicking" : plan.button === 3 ? "Right-clicking" : "Clicking"}${name}`
+    case "type":
+      return `Typing ${quote(plan.text!.replace(/\s+/g, " "))}${name}`
+    case "key":
+    case "keydown":
+      return `Pressing ${plan.keys!.join(" ")}${name}`
+    case "keyup":
+      return `Releasing ${plan.keys!.join(" ")}`
+    case "scroll":
+      return `Scrolling ${{ 4: "up", 5: "down", 6: "left", 7: "right" }[plan.button as 4 | 5 | 6 | 7]}${name}`
+    case "drag":
+      return `Dragging${name}`
+    case "mousemove":
+      return "Moving the pointer"
+    case "mousedown":
+      return "Holding the mouse button"
+    case "mouseup":
+      return "Releasing the mouse button"
+    case "focus":
+      return `Switching to ${title || "a window"}`
+    case "close":
+      return `Closing ${title || "a window"}`
+    case "move":
+      return `Moving ${title || "a window"}`
+    case "resize":
+      return `Resizing ${title || "a window"}`
+    case "wait":
+      return `Waiting for ${quote(plan.window)}`
+    case "sleep":
+      return "Waiting"
+    default:
+      return "Looking at the windows"
+  }
+}
+
+/** Short human/permission summary of one op. */
+export function describePlan(plan: WinPlan): string {
+  const where = plan.window ? ` in ${/^\d+$/.test(plan.window) ? plan.window : JSON.stringify(plan.window)}` : ""
+  const xy = plan.x !== undefined && plan.y !== undefined ? ` ${plan.x},${plan.y}` : ""
+  const clip = (text: string) => JSON.stringify(text.length > 40 ? `${text.slice(0, 39)}…` : text)
+  switch (plan.op) {
+    case "list":
+      return plan.window ? `list ${JSON.stringify(plan.window)}` : "list"
+    case "wait":
+      return `wait for ${JSON.stringify(plan.window)} (${plan.timeout}s)`
+    case "sleep":
+      return `sleep ${plan.ms}ms`
+    case "move":
+      return `move${where} to ${plan.x},${plan.y}`
+    case "resize":
+      return `resize${where} to ${plan.w}x${plan.h}`
+    case "click":
+      return `click${xy}${where}${plan.button === 1 ? "" : ` button ${plan.button}`}${plan.count > 1 ? ` x${plan.count}` : ""}`
+    case "scroll":
+      return `scroll ${{ 4: "up", 5: "down", 6: "left", 7: "right" }[plan.button as 4 | 5 | 6 | 7]} x${plan.count}${xy ? ` at${xy}` : ""}${where}`
+    case "drag":
+      return `drag ${plan.x},${plan.y}→${plan.x2},${plan.y2}${where}`
+    case "type":
+      return `type ${clip(plan.text!)}${where}`
+    case "key":
+    case "keydown":
+    case "keyup":
+      return `${plan.op} ${plan.keys!.join(" ")}${plan.count > 1 ? ` x${plan.count}` : ""}${where}`
+    default:
+      return `${plan.op}${xy}${where}`
+  }
+}
+
+export type Geometry = { w: number; h: number; x: number; y: number }
+export type WindowInfo = { id: string; title: string; clazz: string; geometry?: Geometry }
+
+/** Parse `xdotool getwindowgeometry --shell ID getwindowname ID getwindowclassname ID` output.
+ * `complete` is false when the chain stopped early (no WM_CLASS): then everything after
+ * the geometry is the title. */
+export function parseWindowInfo(id: string, output: string, complete: boolean): WindowInfo {
+  const lines = output.replace(/\n$/, "").split("\n")
+  const values: Record<string, number> = {}
+  let index = 0
+  for (; index < lines.length; index++) {
+    const match = /^(WINDOW|X|Y|WIDTH|HEIGHT|SCREEN)=(-?\d+)$/.exec(lines[index])
+    if (!match) break
+    values[match[1]] = Number(match[2])
+  }
+  const rest = lines.slice(index)
+  const clazz = complete && rest.length > 1 ? rest.pop()! : ""
+  const geometry = "WIDTH" in values && "HEIGHT" in values ? { w: values.WIDTH, h: values.HEIGHT, x: values.X ?? 0, y: values.Y ?? 0 } : undefined
+  // xdotool prints "(null)" for a window without WM_CLASS (the root window).
+  return { id, title: rest.join(" ").trim(), clazz: clazz.trim() === "(null)" ? "" : clazz.trim(), geometry }
+}
+
+/** The root window and 1x1 helper windows match every search; they are never what the agent means. */
+export const isRealWindow = (info: WindowInfo) =>
+  !!info.geometry && info.geometry.w > 1 && info.geometry.h > 1 && !!(info.title || info.clazz) && !DESKTOP_CLASSES.includes(info.clazz.toLowerCase())
+// The desktop's own windows (the taskbar) are scenery, not something the agent works in.
+const DESKTOP_CLASSES = ["tint2"]
+
+/** The window a fragment means: the largest match (an app's main window beats its popups). */
+export function pickWindow(windows: WindowInfo[]): WindowInfo | undefined {
+  return windows.reduce<WindowInfo | undefined>((best, info) => (!best || area(info) > area(best) ? info : best), undefined)
+}
+const area = (info: WindowInfo) => (info.geometry ? info.geometry.w * info.geometry.h : 0)
+
+export const geometryText = (geometry?: Geometry) => (geometry ? `${geometry.w}x${geometry.h}+${geometry.x}+${geometry.y}` : "")
+
+/** "id: title | class | WxH+X+Y" lines. Newlines are flattened so titles cannot forge lines. */
+export function formatWindowList(windows: WindowInfo[]): string {
+  const clean = (value: string) => value.replace(/[\r\n]+/g, " ")
+  return windows
+    .map((entry) => [`${entry.id}: ${entry.title ? clean(entry.title) : "(no title)"}`, ...(entry.clazz ? [clean(entry.clazz)] : []), ...(entry.geometry ? [geometryText(entry.geometry)] : [])].join(" | "))
+    .join("\n")
+}
+
+/** Parse `xdotool getmouselocation --shell`. */
+export function parsePointer(output: string): { x: number; y: number } | undefined {
+  const x = /^X=(-?\d+)$/m.exec(output)
+  const y = /^Y=(-?\d+)$/m.exec(output)
+  return x && y ? { x: Number(x[1]), y: Number(y[1]) } : undefined
+}
+
+/** Last lines of a spawned app's log, for exits and windows that never appear. */
+export function logTail(text: string, lines = 12): string {
+  return text.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").split(/\r?\n/).filter((line) => line.trim()).slice(-lines).map((line) => (line.length > 200 ? `${line.slice(0, 199)}…` : line)).join("\n")
+}
+
+export type KillInput = { pid?: unknown }
+/** Validated kill input, or the refusal message. Only pids tracked in Apps are killable (see plugin). */
+export function validateKill(input: KillInput): { pid: number } | { error: string } {
+  const pid = input.pid
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return { error: "kill needs a pid (an integer from the Apps line of status)." }
+  return { pid }
+}
+
+/** Live viewer: loopback only, OS-assigned port. One shared capture at 30fps, cursor drawn in. */
+export const streamHost = "127.0.0.1"
+export const streamRate = 30
+export function ffmpegStreamArgs(display: string): string[] {
+  return [
+    "-v",
+    "error",
+    "-f",
+    "x11grab",
+    "-draw_mouse",
+    "1",
+    "-framerate",
+    String(streamRate),
+    "-video_size",
+    `${WIDTH}x${HEIGHT}`,
+    "-i",
+    display,
+    "-f",
+    "mpjpeg",
+    "-pix_fmt",
+    "yuvj420p",
+    "-q:v",
+    "4",
+    "-",
+  ]
+}
+
+/** Splits ffmpeg's mpjpeg output into whole JPEG frames by each part's Content-length. Pipe chunks do
+ * not line up with frames (a busy 1280x800 frame spans several), and handing a viewer part of a frame
+ * tears the picture. */
+export function mpjpegFrames(onFrame: (frame: Buffer) => void) {
+  let pending: Buffer = Buffer.alloc(0)
+  return (chunk: Buffer) => {
+    pending = pending.length ? Buffer.concat([pending, chunk]) : chunk
+    for (;;) {
+      const headerEnd = pending.indexOf("\r\n\r\n")
+      if (headerEnd < 0) break
+      const length = /content-length:\s*(\d+)/i.exec(pending.subarray(0, headerEnd).toString("latin1"))
+      const start = headerEnd + 4
+      if (!length) {
+        pending = pending.subarray(start)
+        continue
+      }
+      if (pending.length < start + Number(length[1])) break
+      onFrame(Buffer.from(pending.subarray(start, start + Number(length[1]))))
+      pending = pending.subarray(start + Number(length[1]))
+    }
+    // A stream that never completes a part must not grow without bound.
+    if (pending.length > 16 * 1024 * 1024) pending = Buffer.alloc(0)
+  }
+}
+
+/** The live page with this display's name and size filled in. */
+export const viewerHtml = (template: string, display: string) =>
+  template.replaceAll("__DISPLAY__", display).replaceAll("__WIDTH__", String(WIDTH)).replaceAll("__HEIGHT__", String(HEIGHT))
 
 export function describeStatus(status: Status): string {
   const lines = [`Agent display ${status.display}: ${status.running ? `running${status.pid ? ` (pid ${status.pid})` : ""}` : "stopped"}`]
   if (status.resolution) lines[0] += ` · ${status.resolution}`
   if (status.running && status.startedAt) lines[0] += ` · since ${new Date(status.startedAt).toISOString()}`
+  if (status.running)
+    lines.push(
+      status.desktop && pidAlive(status.desktop.wm)
+        ? `Desktop: openbox window manager${status.desktop.panel ? " + taskbar (bottom 36px)" : ""}`
+        : "Desktop: bare X (install openbox and tint2 for title bars, a taskbar and a wallpaper)",
+    )
+  lines.push(readSettings().realistic ? "Input: realistic (pointer glides, human typing; /display turns it off)" : "Input: instant (/display turns on realistic input)")
   lines.push(status.apps.length ? `Apps (${status.apps.length}): ${status.apps.map((app) => `${app.command} (pid ${app.pid})`).join(", ")}` : "Apps: none")
   lines.push(status.lastFrameAt ? `Last frame: ${new Date(status.lastFrameAt).toISOString()}${status.framePath ? ` (${status.framePath})` : ""}` : "Last frame: none yet (screenshot or show takes one)")
   lines.push(status.streamPort ? `Live: http://${streamHost}:${status.streamPort}/ (started ${status.streamStartedAt ? new Date(status.streamStartedAt).toISOString() : "just now"})` : "Live: off (stream starts it on this machine only)")

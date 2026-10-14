@@ -56,7 +56,7 @@ infiniteoc /path/to/project
 }
 ```
 
-Mod paths are relative to the checkout root and order matters. `reducedMotion: true` makes Animations default to off (applied at build time); an Animations choice made in the TUI still wins. `webUi: true` builds upstream's web UI into the binary for `infiniteoc web` (off by default: it makes every build slower and use more memory; `infiniteoc web` offers to turn it on). Traffic (proxy/Tor) and custom providers live under `/settings` → InfiniteOC Settings; see [mods/infiniteoc/settings/README.md](mods/infiniteoc/settings/README.md).
+Mod paths are relative to the checkout root and order matters. `reducedMotion: true` makes Animations default to off (applied at build time); an Animations choice made in the TUI still wins. It also turns off the launcher's animated update and build screens: builds then stream `bun` output as plain lines instead of the progress block (whose full output goes to `.runtime/build.log`). `webUi: true` builds upstream's web UI into the binary for `infiniteoc web` (off by default: it makes every build slower and use more memory; `infiniteoc web` offers to turn it on). Traffic (proxy/Tor) and custom providers live under `/settings` → InfiniteOC Settings; see [mods/infiniteoc/settings/README.md](mods/infiniteoc/settings/README.md).
 
 ## Launcher and distribution
 

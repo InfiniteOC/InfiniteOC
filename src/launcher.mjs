@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "node:child_process"
 import { access, readFile, writeFile, mkdir, cp, rm, stat, link, copyFile } from "node:fs/promises"
-import { rmSync } from "node:fs"
+import { createWriteStream, rmSync } from "node:fs"
 import { resolve, join, dirname, basename } from "node:path"
 import { fileURLToPath } from "node:url"
 import { createHash, randomUUID } from "node:crypto"
@@ -31,9 +31,11 @@ const seconds = since => `${((Date.now() - since) / 1000).toFixed(1)}s`
 const socksLabel = (mode, socks) => `${mode === "tor" ? "Tor SOCKS" : "SOCKS proxy"} ${socks.host}:${socks.port}`
 let reducedMotion = false
 export async function exists(path) { try { await access(path); return true } catch { return false } }
-export function run(command, args, { onSpawn, ...options } = {}) {
+// `output` captures the child's stdout and stderr (chunks) instead of passing the terminal through.
+export function run(command, args, { onSpawn, output, ...options } = {}) {
   return new Promise((done, fail) => {
-    const child = spawn(command, args, { stdio: "inherit", ...options })
+    const child = spawn(command, args, { stdio: output ? ["ignore", "pipe", "pipe"] : "inherit", ...options })
+    if (output) for (const pipe of [child.stdout, child.stderr]) pipe?.on("data", output)
     onSpawn?.(child)
     const handlers = ["SIGINT", "SIGTERM"].map(signal => {
       const handler = () => child.kill(signal)
@@ -43,7 +45,8 @@ export function run(command, args, { onSpawn, ...options } = {}) {
     })
     const clean = () => handlers.forEach(([signal, handler]) => process.off(signal, handler))
     child.on("error", error => { clean(); fail(error) })
-    child.on("exit", (code, signal) => { clean(); done(code ?? 128 + constants.signals[signal]) })
+    // With captured output, wait for "close" so the last chunks arrive before the result.
+    child.on(output ? "close" : "exit", (code, signal) => { clean(); done(code ?? 128 + constants.signals[signal]) })
   })
 }
 export async function checked(command, args, options) {
@@ -124,8 +127,11 @@ export async function acquireLock(lock) {
     await rm(lock, { recursive: true, force: true })
   }
 }
-// Steps whose child output streams through get a closing line rather than a spinner over it.
-async function step(label, task, streams = false) {
+// Build steps. On an animated terminal `progress` draws each one (spinner, output tail, ETA bar) and
+// `task` gets an output sink. Otherwise steps whose child output streams through get a closing line
+// rather than a spinner over it, and `task` gets no sink (the child inherits the terminal).
+async function step(label, task, streams = false, progress) {
+  if (progress) return progress.step(label, task)
   const ui = fx(process.stderr, { motion: !reducedMotion })
   if (ui.tty && !streams) return ui.spin(`[InfiniteOC] ${label}`, task)
   const started = Date.now()
@@ -147,19 +153,45 @@ export async function prepare(settings, force = false) {
   if (await fresh(manifest)) return { root, binary, mods, manifest }
   await mkdir(runtime, { recursive: true })
   const release = await acquireLock(join(runtime, "prepare.lock"))
+  let log
   try {
     // Another launcher may have finished this very build while we waited.
     manifest = await built()
     if (await fresh(manifest)) return { root, binary, mods, manifest }
     const started = Date.now()
     // No manifest also follows a failed or interrupted build, so this cannot say "first build".
-    console.error(`[InfiniteOC] Building: ${force ? "rebuild requested" : manifest ? `mods or framework changed since ${manifest.builtAt}` : "no finished build yet"}`)
+    const reason = force ? "rebuild requested" : manifest ? `mods or framework changed since ${manifest.builtAt}` : "no finished build yet"
+    const ui = fx(process.stderr, { motion: !reducedMotion })
+    // The previous build's step times make the bar an ETA; a failed build leaves only last-good's.
+    const previous = manifest ?? await readFile(join(runtime, "last-good/build.json"), "utf8").then(JSON.parse).catch(() => undefined)
+    const progress = ui.animate ? ui.progress(4, previous?.timings) : undefined
+    // Animated steps capture child output for their tail line; all of it lands in build.log.
+    const logFile = join(runtime, "build.log")
+    log = progress ? createWriteStream(logFile) : undefined
+    const sink = output => output ? { output: chunk => { log.write(chunk); output(chunk) } } : {}
+    const timings = []
+    const timed = async (label, task, streams) => {
+      const begun = Date.now()
+      try {
+        const value = await step(label, task, streams, progress)
+        timings.push(Date.now() - begun)
+        return value
+      } catch (error) {
+        if (log && streams && !error.exitCode) error.message += ` (full output: ${logFile})`
+        throw error
+      }
+    }
+    if (progress) {
+      ui.write("\n")
+      await ui.shimmer("◆ Building InfiniteOC", { duration: 500 })
+      ui.write(`${ui.dim(`  ${reason}`)}\n`)
+    } else console.error(`[InfiniteOC] Building: ${reason}`)
     await rm(marker, { force: true })
-    await step("[1/4] Copying pinned source", async () => {
+    await timed("[1/4] Copying pinned source", async () => {
       await rm(root, { recursive: true, force: true })
       await cp(upstream, root, { recursive: true, filter: path => ![".git", "node_modules"].includes(path.split("/").at(-1)) })
     })
-    const applied = await step(`[2/4] Applying ${mods.length} mod(s)`, async () => {
+    const applied = await timed(`[2/4] Applying ${mods.length} mod(s)`, async () => {
       // With INFINITEOC=1 every ServerConnection.resolve caller starts a private server, so the
       // user's stock background service is never replaced and --server keeps working.
       const connectionFile = join(root, "packages/cli/src/services/server-connection.ts")
@@ -193,10 +225,10 @@ export async function prepare(settings, force = false) {
     const env = { ...process.env, PATH: `${dirname(bun)}:${process.env.PATH}`, HUSKY: "0", OPENCODE_CHANNEL: "infiniteoc", OPENCODE_VERSION: `${settings.upstream.slice(1)}-infiniteoc` }
     // The web UI (packages/app, a vite build embedded in the binary) is opt-in: it makes every build slower and hungrier.
     const webUi = settings.options?.webUi === true
-    await step("[3/4] Installing dependencies", () => checked(bun, ["install", "--frozen-lockfile"], { cwd: root, env }), true)
-    await step(`[4/4] Building ${target}${webUi ? " with the web UI" : ""}`, () => checked(bun, ["run", "script/build.ts", "--single", "--skip-install", ...(webUi ? [] : ["--skip-web-ui"])], { cwd: join(root, "packages/cli"), env }), true)
+    await timed("[3/4] Installing dependencies", output => checked(bun, ["install", "--frozen-lockfile"], { cwd: root, env, ...sink(output) }), true)
+    await timed(`[4/4] Building ${target}${webUi ? " with the web UI" : ""}`, output => checked(bun, ["run", "script/build.ts", "--single", "--skip-install", ...(webUi ? [] : ["--skip-web-ui"])], { cwd: join(root, "packages/cli"), env, ...sink(output) }), true)
     if (!await exists(binary)) throw new Error(`Build missing expected ${target} artifact`)
-    manifest = { key, upstream: settings.upstream, builtAt: new Date().toISOString(), mods: mods.map(mod => mod.id), webUi, changes: applied.changes }
+    manifest = { key, upstream: settings.upstream, builtAt: new Date().toISOString(), mods: mods.map(mod => mod.id), webUi, changes: applied.changes, timings }
     await writeFile(marker, JSON.stringify(manifest, null, 2))
     // launch() falls back to this when a later build fails; a hardlink survives the next rm of root.
     // Best-effort: losing the fallback must never fail a finished build.
@@ -207,9 +239,13 @@ export async function prepare(settings, force = false) {
       await link(binary, join(good, "opencode"))
       await copyFile(marker, join(good, "build.json"))
     } catch (error) { console.error(`[InfiniteOC] Could not keep this build as the fallback: ${error.message}`) }
-    console.error(`[InfiniteOC] Ready in ${seconds(started)}`)
+    if (progress) ui.write(`${ui.gradient("◆ Ready")} ${ui.dim(`in ${seconds(started)}`)}\n\n`)
+    else console.error(`[InfiniteOC] Ready in ${seconds(started)}`)
     return { root, binary, mods, manifest }
-  } finally { await release() }
+  } finally {
+    log?.end()
+    await release()
+  }
 }
 /**
  * Runs the InfiniteOC build with `args`. `options` (serve/web): `tui: false` skips terminal save/restore and treats
