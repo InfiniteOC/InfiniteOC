@@ -68,5 +68,93 @@ export function fx(stream = process.stderr, { motion = true } = {}) {
     line(`${gradient(text)}\n`)
   }
 
-  return { tty, color, animate, gradient, bold, dim, ok, fail, write, line, box, spin, shimmer }
+  // A multi-step job (the build): the running step is a live block — spinner, its latest output line and
+  // an overall bar — and each finished step leaves a ✓ line. `estimates` (ms per step, from the previous
+  // run) turn the bar into an ETA; without them it counts steps. Animated terminals only; callers check
+  // `animate` and fall back to plain lines.
+  function progress(total, estimates) {
+    const timings = []
+    const known = Array.isArray(estimates) && estimates.length === total && estimates.every((ms) => Number.isFinite(ms) && ms > 0)
+    const sum = (values) => values.reduce((a, b) => a + b, 0)
+    const width = () => Math.max(20, (stream.columns || 80) - 1)
+    const clip = (text, max) => ([...text].length > max ? `${[...text].slice(0, max - 1).join("")}…` : text)
+    let drawn = 0
+    // Redraws the block in place: back to its first line, clear to the end of the screen, print.
+    const paint = (lines) => {
+      write(`\r${drawn > 1 ? `\x1b[${drawn - 1}A` : ""}\x1b[J${lines.join("\n")}`)
+      drawn = lines.length
+    }
+    const showCursor = () => write("\x1b[?25h")
+    async function step(label, task) {
+      const index = timings.length
+      const started = Date.now()
+      const kept = []
+      let partial = ""
+      // Child output arrives in chunks; keep whole lines (for the tail and a failure) plus the line in progress.
+      const output = (chunk) => {
+        const parts = (partial + chunk.toString()).split(/\r\n|\n|\r/)
+        partial = parts.pop()
+        for (const part of parts) if (plain(part).trim()) kept.push(plain(part).trimEnd())
+        if (kept.length > 400) kept.splice(0, kept.length - 200)
+      }
+      const latest = () => plain(partial).trim() || kept.at(-1)?.trim() || ""
+      let frame = 0
+      const draw = () => {
+        const elapsed = Date.now() - started
+        const head = `${gradient(FRAMES[frame % FRAMES.length])} ${clip(label, width() - 10)} ${dim(clock(elapsed))}`
+        let fraction, note
+        if (known) {
+          const done = sum(timings)
+          const left = Math.max(0, estimates[index] - elapsed) + sum(estimates.slice(index + 1))
+          fraction = (done + elapsed) / (done + elapsed + left)
+          note = left > 1000 ? `~${clock(left, true)} left` : "almost done"
+        } else {
+          fraction = index / total
+          note = `step ${index + 1} of ${total}`
+        }
+        const size = Math.min(30, width() - 24)
+        const filled = Math.max(1, Math.round(fraction * size))
+        // The sheen sweeps the filled part of the bar while the step runs.
+        const bar = `  ${gradient("■".repeat(filled), (frame % 30) / 30)}${dim("□".repeat(size - filled))} ${dim(`${Math.floor(fraction * 100)}% · ${note}`)}`
+        const tail = latest()
+        paint([head, ...(tail ? [`  ${dim(`╰ ${clip(tail, width() - 4)}`)}`] : []), bar])
+        frame++
+      }
+      write("\x1b[?25l")
+      process.once("exit", showCursor)
+      draw()
+      const timer = setInterval(draw, 80)
+      try {
+        const value = await task(output)
+        timings.push(Date.now() - started)
+        paint([ok(`${label} ${dim(clock(Date.now() - started))}`)])
+        write("\n")
+        return value
+      } catch (error) {
+        // The captured output is the only copy on screen: show its end so the failure explains itself.
+        const lines = [...kept, ...(plain(partial).trim() ? [plain(partial)] : [])].slice(-30)
+        paint([fail(label), ...lines.map((text) => `  ${dim(clip(text, width() - 2))}`)])
+        write("\n")
+        throw error
+      } finally {
+        clearInterval(timer)
+        drawn = 0
+        showCursor()
+        process.off("exit", showCursor)
+      }
+    }
+    return { step, timings }
+  }
+
+  return { tty, color, animate, gradient, bold, dim, ok, fail, write, line, box, spin, shimmer, progress }
+}
+
+// Child output without colors or control characters, for one-line display.
+const plain = (text) => text.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").replace(/\x1b\][^\x07]*\x07/g, "").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "")
+// "4.2s" while it runs; "1m 05s" for longer spans; whole seconds for estimates.
+export function clock(ms, whole = false) {
+  const seconds = ms / 1000
+  if (seconds < 60) return whole ? `${Math.max(1, Math.round(seconds))}s` : `${seconds.toFixed(1)}s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m ${String(Math.floor(seconds % 60)).padStart(2, "0")}s`
 }
