@@ -23,11 +23,25 @@ One tool, `agent_display` (permission `agent_display`), built for few round trip
 
 `screenshot: true` on `exec`, `win` or `steps` returns the screen in the same call.
 
-Ops (`win` with `op`, or each item of `steps`): `click` (x/y optional, `button`, `count` 2 = double),
+Ops (`win` with `op`, or each item of `steps`): `click` (`label` or x/y, `button`, `count` 2 = double),
+`find` (visible text with click coordinates, or where `label` is),
 `mousedown`, `mouseup`, `mousemove`, `scroll` (`button` 4 up / 5 down / 6 left / 7 right, `count`),
 `drag` (x,y to x2,y2, with intermediate motion), `type` (`text`), `key` / `keydown` / `keyup`
 (`keys`: keysyms, space separated, e.g. `"ctrl+a BackSpace"`), `focus`, `move`, `resize`, `close`,
-`list` (optional regex), `wait` (until a window appears, `timeout`), `sleep` (`ms`).
+`list` (optional regex), `wait` (until a window, or with `label` some text, appears; `timeout`),
+`sleep` (`ms`).
+
+- **Click text, not guessed pixels.** `{ op: "click", label: "Consent" }` reads the screen (OCR) and
+  clicks the center of that text; `mousemove` and `scroll` take `label` too. Models misjudge pixels
+  in screenshots, typically by 20-50px: one aimed at a Consent button five times, always 10-40px too
+  high. Matches rank by spelling plus a bonus for being the whole line, so a button or link beats the
+  same word inside a sentence; `nth` picks another match, and `window` keeps matches inside one window.
+  A miss fails with the visible text, so the model can correct itself. `find` lists visible text with
+  coordinates, far cheaper than a screenshot.
+- **OCR** is tesseract (`tesseract` + `tesseract-data-eng`) on the screen at 1.5x, in two parallel
+  passes: the capture as is, and a top-hat filtered, inverted copy that keeps only thin bright strokes,
+  for light text on colored buttons and dark themes (one pass misses white-on-blue labels entirely).
+  The second pass only fills gaps the first left. About 1s per lookup.
 
 - **Coordinates match screenshots.** Without `window`, x/y are screen pixels, the pixels of a full
   screenshot. With `window` (an id, or a title/class fragment that resolves to the largest matching
@@ -82,7 +96,7 @@ default), everything is instant: the same 7 steps take ≈ 0.8s instead of ≈ 4
 
 Needs Linux with `Xvfb` (xorg-server-xvfb), `xdotool` for windows and input, `import` (ImageMagick)
 or `ffmpeg` for screenshots (`import` is ~60ms; window captures need it), `ffmpeg` for the live view;
-optionally `openbox` + `tint2` for the desktop, `magick`/`display` for the wallpaper, `xprop` to see
+`tesseract` for `label`/`find`, optionally `openbox` + `tint2` for the desktop, `magick`/`display` for the wallpaper, `xprop` to see
 when openbox is ready. Elsewhere the tool fails with what is missing. Chromium on a Wayland box
 needs `--ozone-platform=x11` and joins a running instance by default: pass a fresh
 `--user-data-dir` per spawn (`exec` reports when the window came from an instance already running).
