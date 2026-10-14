@@ -2,7 +2,8 @@
 // Shared by the server plugin (core) and the TUI /display command, so this file
 // imports only node: built-ins and uses erasable TypeScript (tests load it directly).
 // The agent's screen is an Xvfb X server, never the user's :0/Wayland session.
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
+import { spawn } from "node:child_process"
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
 
@@ -31,14 +32,15 @@ export const settingsFile = (env: Record<string, string | undefined> = process.e
 
 /** The user's choices for the display, set from /display. Separate from status.json, which the server
  * rewrites all the time. `realistic`: input moves like a person (gliding pointer, human typing, a beat
- * between steps) so it reads as someone using a computer; off by default because it is slower. */
-export type Settings = { realistic: boolean }
+ * between steps) so it reads as someone using a computer; off by default because it is slower.
+ * `camera`: feed the screen to the virtual camera whenever the display runs. */
+export type Settings = { realistic: boolean; camera: boolean }
 export function readSettings(env: Record<string, string | undefined> = process.env): Settings {
   try {
     const value = JSON.parse(readFileSync(settingsFile(env), "utf8"))
-    return { realistic: value?.realistic === true }
+    return { realistic: value?.realistic === true, camera: value?.camera === true }
   } catch {
-    return { realistic: false }
+    return { realistic: false, camera: false }
   }
 }
 export function writeSettings(settings: Settings, env: Record<string, string | undefined> = process.env) {
@@ -70,6 +72,10 @@ export type Status = {
   streamStartedAt?: number
   /** The desktop session on this display: window manager and taskbar pids. */
   desktop?: { wm: number; panel?: number }
+  /** ffmpeg feeding the virtual camera. */
+  camera?: { pid: number; device: string }
+  /** ffmpeg recording the screen to a file. */
+  recording?: { pid: number; file: string; startedAt: number }
   apps: App[]
 }
 
@@ -131,9 +137,18 @@ export function pidAlive(pid: number | undefined): boolean {
 export function sweepStatus(status: Status): Status {
   if (status.running && !pidAlive(status.pid)) return { ...blankStatus(status.display), apps: [] }
   if (!status.running) return status
+  let next = status
   const live = status.apps.filter((app) => pidAlive(app.pid))
-  if (live.length !== status.apps.length) return { ...status, apps: live }
-  return status
+  if (live.length !== status.apps.length) next = { ...next, apps: live }
+  // A camera feed or recording whose ffmpeg ended is over.
+  for (const key of ["camera", "recording"] as const) {
+    const output = next[key]
+    if (output && !pidAlive(output.pid)) {
+      next = { ...next }
+      delete next[key]
+    }
+  }
+  return next
 }
 
 /** Xvfb argv for the isolated display. -nolisten tcp keeps it on the local socket only. */
@@ -650,6 +665,108 @@ export function mpjpegFrames(onFrame: (frame: Buffer) => void) {
   }
 }
 
+// ---- outputs: the virtual camera and recordings ----------------------------------------------
+// Both are detached ffmpeg processes that read the agent's X screen; started by the TUI (/display) or
+// the server, they outlive whoever started them and end when the display stops.
+
+/** The v4l2loopback device the camera feeds, as apps (Discord, OBS, browsers) list it. */
+export const CAMERA_LABEL = "InfiniteOC agent display"
+export const CAMERA_NR = 42
+/** Root loads the module once per boot; exclusive_caps makes Chromium-based apps (Discord) list it. */
+export const cameraLoadArgs = () => ["modprobe", "v4l2loopback", `video_nr=${CAMERA_NR}`, `card_label=${CAMERA_LABEL}`, "exclusive_caps=1"]
+
+/** The camera device (/dev/videoN), found by its label; undefined until the module is loaded. */
+export function findCamera(sys = "/sys/class/video4linux"): string | undefined {
+  try {
+    for (const entry of readdirSync(sys).sort()) {
+      try {
+        if (readFileSync(path.join(sys, entry, "name"), "utf8").trim() === CAMERA_LABEL) return `/dev/${entry}`
+      } catch {}
+    }
+  } catch {}
+  return undefined
+}
+
+const grab = (display: string) => ["-v", "error", "-f", "x11grab", "-draw_mouse", "1", "-framerate", String(streamRate), "-video_size", `${WIDTH}x${HEIGHT}`, "-i", display]
+/** 16:9 for video calls: the 16:10 screen scaled into 1280x720 with dark side bars, never stretched. */
+export function cameraArgs(display: string, device: string): string[] {
+  const height = 720
+  const width = Math.round((WIDTH * height) / HEIGHT / 2) * 2
+  return [...grab(display), "-vf", `scale=${width}:${height}:flags=bicubic,pad=1280:${height}:${(1280 - width) / 2}:0:color=0x07060d,format=yuv420p`, "-f", "v4l2", device]
+}
+/** H.264 MP4, fragmented at a keyframe every 2s and flushed as it goes, so a recording cut off by the
+ * display stopping (ffmpeg dies with the X server) keeps all but its last two seconds. */
+export function recordArgs(display: string, file: string): string[] {
+  return [
+    ...grab(display),
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-crf",
+    "22",
+    "-pix_fmt",
+    "yuv420p",
+    "-g",
+    String(streamRate * 2),
+    "-flush_packets",
+    "1",
+    "-movflags",
+    "+frag_keyframe+empty_moov+default_base_moof",
+    file,
+  ]
+}
+
+/** The user's videos folder (localized names come from user-dirs.dirs), else ~/Videos. */
+export function videosDir(env: Record<string, string | undefined> = process.env, home = homedir()): string {
+  if (env.XDG_VIDEOS_DIR) return env.XDG_VIDEOS_DIR
+  try {
+    const dirs = readFileSync(path.join(env.XDG_CONFIG_HOME || path.join(home, ".config"), "user-dirs.dirs"), "utf8")
+    const match = /^XDG_VIDEOS_DIR="([^"]+)"/m.exec(dirs)
+    if (match) return match[1].replace(/^\$HOME/, home)
+  } catch {}
+  return path.join(home, "Videos")
+}
+export function recordingFile(dir: string, at = new Date()): string {
+  const pad = (value: number) => String(value).padStart(2, "0")
+  return path.join(dir, `agent-display-${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}_${pad(at.getHours())}-${pad(at.getMinutes())}-${pad(at.getSeconds())}.mp4`)
+}
+
+/** A detached ffmpeg on the agent display; its pid, or undefined when it could not start. */
+export function spawnFfmpeg(args: string[], display: string): number | undefined {
+  const child = spawn("ffmpeg", args, { detached: true, stdio: "ignore", env: { ...process.env, DISPLAY: display } })
+  child.on("error", () => {})
+  child.unref()
+  return child.pid
+}
+
+/** Loads the camera module through pkexec (the desktop asks for the password); resolves to the device or why not. */
+export function loadCamera(): Promise<{ device: string } | { error: string }> {
+  return new Promise((resolve) => {
+    const child = spawn("pkexec", cameraLoadArgs(), { stdio: ["ignore", "ignore", "pipe"] })
+    let stderr = ""
+    child.stderr?.on("data", (chunk) => (stderr += chunk))
+    child.on("error", (error) => resolve({ error: `pkexec could not run (${error.message}); load it yourself: sudo ${cameraLoadArgs().join(" ")}` }))
+    child.on("close", (code) => {
+      const device = findCamera()
+      if (device) return resolve({ device })
+      if (code === 126 || code === 127) return resolve({ error: "The password prompt was dismissed; nothing was loaded." })
+      if (existsSync("/sys/module/v4l2loopback"))
+        return resolve({ error: `v4l2loopback is already loaded with other devices. Unload it (sudo modprobe -r v4l2loopback) or add a device labeled “${CAMERA_LABEL}”.` })
+      resolve({ error: `Loading v4l2loopback failed${stderr.trim() ? `: ${stderr.trim().split("\n")[0]}` : ` (exit ${code})`}. Your kernel may need the v4l2loopback-dkms package.` })
+    })
+  })
+}
+
+/** Starts the camera feed when the user turned it on, the display runs and the device exists. */
+export function ensureCamera(status: Status, env: Record<string, string | undefined> = process.env, find = findCamera, start = spawnFfmpeg): Status {
+  if (!readSettings(env).camera || !status.running || (status.camera && pidAlive(status.camera.pid))) return status
+  const device = find()
+  if (!device) return status
+  const pid = start(cameraArgs(status.display, device), status.display)
+  return pid ? { ...status, camera: { pid, device } } : status
+}
+
 /** The live page with this display's name and size filled in. */
 export const viewerHtml = (template: string, display: string) =>
   template.replaceAll("__DISPLAY__", display).replaceAll("__WIDTH__", String(WIDTH)).replaceAll("__HEIGHT__", String(HEIGHT))
@@ -665,6 +782,8 @@ export function describeStatus(status: Status): string {
         : "Desktop: bare X (install openbox and tint2 for title bars, a taskbar and a wallpaper)",
     )
   lines.push(readSettings().realistic ? "Input: realistic (pointer glides, human typing; /display turns it off)" : "Input: instant (/display turns on realistic input)")
+  if (status.camera) lines.push(`Virtual camera: on (${status.camera.device}, “${CAMERA_LABEL}”)`)
+  if (status.recording) lines.push(`Recording: ${status.recording.file} (since ${new Date(status.recording.startedAt).toISOString()})`)
   lines.push(status.apps.length ? `Apps (${status.apps.length}): ${status.apps.map((app) => `${app.command} (pid ${app.pid})`).join(", ")}` : "Apps: none")
   lines.push(status.lastFrameAt ? `Last frame: ${new Date(status.lastFrameAt).toISOString()}${status.framePath ? ` (${status.framePath})` : ""}` : "Last frame: none yet (screenshot or show takes one)")
   lines.push(status.streamPort ? `Live: http://${streamHost}:${status.streamPort}/ (started ${status.streamStartedAt ? new Date(status.streamStartedAt).toISOString() : "just now"})` : "Live: off (stream starts it on this machine only)")

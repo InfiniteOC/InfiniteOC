@@ -154,8 +154,9 @@ const startDisplay = (display: string) =>
         const started = yield* startDesktop(display, current.pid)
         if (started) current.desktop = started
       }
-      lib.writeStatus(current)
-      return current
+      const next = lib.ensureCamera(current)
+      lib.writeStatus(next)
+      return next
     }
     if (process.platform !== "linux") return yield* failure("The agent display needs Linux (Xvfb); this machine runs " + process.platform + ".")
     const spawnedAt = Date.now()
@@ -199,8 +200,10 @@ const startDisplay = (display: string) =>
       apps: [],
       ...(session ? { desktop: session } : {}),
     }
-    lib.writeStatus(status)
-    return status
+    // The virtual camera follows the display when the user turned it on in /display.
+    const next = lib.ensureCamera(status)
+    lib.writeStatus(next)
+    return next
   })
 
 // The live view: one ffmpeg capture shared by every open page, running only while someone watches.
@@ -536,6 +539,13 @@ export const Plugin = define({
         if (input.action === "stop") {
           yield* stopStream()
           const status = lib.sweepStatus(lib.readStatus())
+          // SIGINT lets ffmpeg finish the recording's file before its screen goes away.
+          if (status.recording) {
+            try {
+              process.kill(status.recording.pid, "SIGINT")
+            } catch {}
+            yield* Effect.sleep(800)
+          }
           const pid = status.pid
           if (pid !== undefined && lib.pidAlive(pid)) {
             if (owned?.pid === pid) {
@@ -557,7 +567,7 @@ export const Plugin = define({
           yield* startDisplay(display)
           const view = yield* startStream(display)
           return {
-            content: `Live view of ${display} on this machine only: http://${lib.streamHost}:${view.port}/ (~${lib.streamRate}fps, with what you do captioned); stop ends it.`,
+            content: `Live view of ${display} on this machine only: http://${lib.streamHost}:${view.port}/ (~${lib.streamRate}fps, with what you do captioned; /?clean is just the screen, for screen sharing); stop ends it.`,
           }
         }
         if (input.action === "exec") {
