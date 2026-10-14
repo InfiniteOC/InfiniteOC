@@ -26,6 +26,7 @@ const FEATURES = "packages/tui/src/infiniteoc-features"
 export const guidance = `[Agent display]
 You have your own isolated screen (Xvfb :99, 1280x800), separate from the user's display: programs you exec there get DISPLAY=:99 and no WAYLAND_DISPLAY. Use the agent_display tool.
 - Fast loop: exec (waits for the program's window and returns its id and geometry), then steps with several ops and screenshot: true, read the frame, repeat. One steps call can click, type, press keys, wait for a window and sleep; prefer it to many single win calls.
+- Click text by label instead of guessing pixels: { op: "click", label: "Consent" } finds that text on screen (OCR) and clicks its center; a button or link beats the same word inside a sentence, nth picks another match. find lists the visible text with x,y (cheaper than a screenshot); { op: "wait", label: "Done" } waits for text. Pixel guesses from screenshots are often 20-50px off; use x/y only for things without text (icons, canvas, games).
 - Coordinates: without window, x/y are screen pixels, the same pixels as a full screenshot. With window (id or title/class fragment), x/y are window-relative, matching a screenshot of that window.
 - Input is real (XTEST): a click hits whatever is on top at that point and moves keyboard focus there; type/key go to the focused window. keys are X keysyms, space separated: "Return", "ctrl+l", "ctrl+a BackSpace".
 - Take a screenshot when a claim depends on what is on the screen, and read it before describing it. show shares a frame with the user; the live page (stream) is for the user to watch, not for you.
@@ -40,11 +41,11 @@ const marker = "// infiniteoc:guidance-extensions"
 // live view are state changes too, while looking at it (status, screenshot, plain
 // show) stays allowed like any other read.
 const READONLY_ANCHOR = '        if (event.tool === "subagent" && !["explore", "reviewer", "researcher"].includes(agent)) return Effect.fail(new Tool.Error({ message: readonlyRefusal(`the ${agent || "general"} subagent (it can edit)`) }))\n'
-const READONLY_DISPLAY = `        // mods/agent-display: spawning/killing, input, display management and the live view change state; looking (status, screenshot, plain show, list/wait/sleep) does not.
+const READONLY_DISPLAY = `        // mods/agent-display: spawning/killing, input, display management and the live view change state; looking (status, screenshot, plain show, list/find/wait/sleep) does not.
         if (event.tool === "agent_display") {
           const displayInput = event.input as { action?: unknown; op?: unknown; steps?: unknown; live?: unknown }
           const displayAction = String(displayInput?.action ?? "")
-          const looks = (op: unknown) => ["list", "wait", "sleep"].includes(String(op ?? ""))
+          const looks = (op: unknown) => ["list", "find", "wait", "sleep"].includes(String(op ?? ""))
           const acts =
             ["exec", "kill", "start", "stop", "stream"].includes(displayAction) ||
             (displayAction === "win" && !looks(displayInput?.op)) ||

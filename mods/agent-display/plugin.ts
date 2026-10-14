@@ -6,7 +6,7 @@ import { define } from "@opencode/plugin/effect/plugin"
 import { TuiEvent } from "@opencode/schema/tui-event"
 import { Effect, Schema } from "effect"
 import { execFile, spawn, type ChildProcess } from "node:child_process"
-import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, statSync, writeFileSync } from "node:fs"
+import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { readFile, stat } from "node:fs/promises"
 import http from "node:http"
 import path from "node:path"
@@ -34,6 +34,8 @@ const OpFields = {
   text: str("type: text to type (newlines press Return)."),
   keys: str('key/keydown/keyup: X keysyms, space separated, e.g. "Return", "ctrl+l", "ctrl+a BackSpace".'),
   ms: num("sleep: milliseconds (default 500, max 10000)."),
+  label: str('click/mousemove/scroll: visible text to act on instead of x/y, read off the screen (OCR), e.g. "Consent", "Sign in". find: the text to locate. wait: text to wait for.'),
+  nth: num("With label: which match when the text appears several times (1 = best: standalone text such as a button, then top to bottom)."),
   timeout: num("wait: seconds until the window appears (1-25, default 10). exec: seconds to wait for the app's first window (0-25, default 10, 0 skips)."),
 }
 const Step = Schema.Struct({ op: Schema.Literals(lib.WIN_OPS).annotate({ description: "The input op." }), ...OpFields })
@@ -68,6 +70,7 @@ type Owned = { pid: number; child: ChildProcess }
 let owned: Owned | undefined
 
 type Ran = { ok: boolean; stdout: string; error?: unknown }
+let ocrCount = 0
 // Never fails: a non-zero exit still carries what the command printed before it stopped.
 const runRaw = (command: string, args: string[], env: Record<string, string>, timeout = 30_000) =>
   Effect.promise(
@@ -432,9 +435,93 @@ const screenOf = (display: string) => {
         yield* Effect.sleep(250)
       }
     })
-  // One op; returns a short line saying what happened.
-  const runPlan = (plan: lib.WinPlan) =>
+  // Reads the screen's text with tesseract (two passes: as is, and light text on color/dark).
+  const ocrScreen = () =>
     Effect.gen(function* () {
+      if (!onPath("tesseract"))
+        return yield* failure("label and find read the screen's text with OCR, which needs tesseract (the tesseract and tesseract-data-eng packages); use x/y meanwhile.")
+      const base = path.join(lib.dataDir(), `ocr-${process.pid}-${++ocrCount}`)
+      const files = { raw: `${base}.png`, plain: `${base}-plain.png`, light: `${base}-light.png` }
+      return yield* Effect.gen(function* () {
+        yield* runFile("import", ["-window", "root", files.raw], env).pipe(Effect.mapError((error) => failure("Could not capture the screen to read it: " + brief(error), error)))
+        const scaled = onPath("magick") && (yield* runRaw("magick", lib.ocrScaleArgs(files.raw, files.plain), env)).ok
+        const plainFile = scaled ? files.plain : files.raw
+        const lightOk = onPath("magick") && (yield* runRaw("magick", lib.ocrLightArgs(plainFile, files.light), env)).ok
+        const [plain, light] = yield* Effect.all(
+          [runRaw("tesseract", lib.tesseractArgs(plainFile), env), lightOk ? runRaw("tesseract", lib.tesseractArgs(files.light), env) : Effect.succeed({ ok: false, stdout: "" } as Ran)],
+          { concurrency: 2 },
+        )
+        if (!plain.ok) return yield* failure("Reading the screen (tesseract) failed: " + brief(plain.error), plain.error)
+        const scale = scaled ? lib.OCR_SCALE : 1
+        return lib.ocrLines(lib.mergeOcrWords(lib.parseOcrTsv(plain.stdout, scale), light.ok ? lib.parseOcrTsv(light.stdout, scale) : []))
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            for (const file of Object.values(files))
+              try {
+                unlinkSync(file)
+              } catch {}
+          }),
+        ),
+      )
+    })
+  // A window's box, to keep label matches and text listings inside it.
+  const windowBox = (plan: lib.WinPlan) =>
+    Effect.gen(function* () {
+      if (!plan.window) return undefined
+      const geometry = (yield* resolveWindow(plan.window)).geometry
+      return geometry ? { left: geometry.x, top: geometry.y, width: geometry.w, height: geometry.h } : undefined
+    })
+  const inside = (box: lib.Box | undefined) => (line: lib.OcrWord[]) => {
+    if (!box) return true
+    const around = lib.union(line)
+    const x = around.left + around.width / 2
+    const y = around.top + around.height / 2
+    return x >= box.left && x < box.left + box.width && y >= box.top && y < box.top + box.height
+  }
+  const quote = (text: string) => `“${text}”`
+
+  // One op; returns a short line saying what happened.
+  const runPlan = (requested: lib.WinPlan) =>
+    Effect.gen(function* () {
+      let plan = requested
+      if (plan.op === "find") {
+        const box = yield* windowBox(plan)
+        const lines = (yield* ocrScreen()).filter(inside(box))
+        if (!plan.label) return `Visible text${box ? " in that window" : ""} (center x,y in screen pixels; click with label or these x/y):\n${lib.formatText(lines) || "(none readable)"}`
+        const matches = lib.matchLabel(lines, plan.label, box)
+        if (!matches.length) return `No visible text matches ${quote(plan.label)}${box ? " in that window" : ""}. Visible text:\n${lib.formatText(lines, 60) || "(none readable)"}`
+        return `${quote(plan.label)}: ${matches.map((match, index) => `${index + 1}. ${quote(match.text)} at ${match.x},${match.y}`).join("; ")}`
+      }
+      if (plan.op === "wait" && plan.label) {
+        const box = yield* windowBox(plan)
+        const started = Date.now()
+        for (;;) {
+          const lines = yield* ocrScreen()
+          const match = lib.matchLabel(lines, plan.label, box)[0]
+          if (match) return `found ${quote(match.text)} at ${match.x},${match.y} after ${((Date.now() - started) / 1000).toFixed(1)}s`
+          if (Date.now() - started >= plan.timeout * 1000)
+            return yield* failure(`${quote(plan.label)} did not appear within ${plan.timeout}s. Visible text now:\n${lib.formatText(lines.filter(inside(box)), 60) || "(none readable)"}`)
+          yield* Effect.sleep(300)
+        }
+      }
+      // label: find the text, then act on its center in screen pixels, as if x/y had been given.
+      let found = ""
+      if (plan.label) {
+        const box = yield* windowBox(plan)
+        const lines = yield* ocrScreen()
+        const matches = lib.matchLabel(lines, plan.label, box)
+        const match = matches[plan.nth - 1]
+        if (!match)
+          return yield* failure(
+            matches.length
+              ? `${quote(plan.label)} matches ${matches.length} place${matches.length === 1 ? "" : "s"}, so there is no #${plan.nth}: ${matches.map((item) => `${quote(item.text)} ${item.x},${item.y}`).join("; ")}.`
+              : `No visible text matches ${quote(plan.label)}${box ? " in that window" : ""}. Visible text (center x,y):\n${lib.formatText(lines.filter(inside(box)), 60) || "(none readable)"}`,
+          )
+        const others = matches.filter((item) => item !== match).slice(0, 3)
+        found = ` → ${quote(match.text)} at ${match.x},${match.y}${others.length ? ` (others: ${others.map((item) => `${quote(item.text)} ${item.x},${item.y}`).join(", ")}; nth picks one)` : ""}`
+        plan = { ...plan, window: "", label: undefined, x: match.x, y: match.y }
+      }
       if (plan.op === "list") {
         const all = yield* listWindows(plan.window)
         if (all.length) return `Windows${plan.window ? ` matching ${JSON.stringify(plan.window)}` : ""} (id: title | class | WxH+X+Y):\n${lib.formatWindowList(all)}`
@@ -460,7 +547,7 @@ const screenOf = (display: string) => {
       emit({
         kind: "action",
         op: plan.op,
-        caption: lib.caption(plan, target?.title),
+        caption: lib.caption(requested, target?.title),
         at: where.at ?? (plan.op === "click" || plan.op === "scroll" || plan.op === "mousedown" ? from : undefined),
         to: where.to,
         button: plan.button,
@@ -471,12 +558,12 @@ const screenOf = (display: string) => {
       const typing = plan.op === "type" ? (plan.text?.length ?? 0) * (mode.human ? 45 : 25) : 0
       yield* xdo(args, 30_000 + typing + glide).pipe(
         Effect.mapError((error) =>
-          missing(error) ? failure("xdotool is not installed (the xdotool package); window control and input need it.", error) : failure(`${lib.describePlan(plan)} failed: ${brief(error)}`, error),
+          missing(error) ? failure("xdotool is not installed (the xdotool package); window control and input need it.", error) : failure(`${lib.describePlan(requested)}${found} failed: ${brief(error)}`, error),
         ),
       )
       const after = lib.focusAfterArgs(plan, target?.id, mode)
       if (after) yield* xdo(after).pipe(Effect.ignore)
-      return `${lib.describePlan(plan)}${target && target.id !== plan.window ? ` (window ${target.id})` : ""}`
+      return `${lib.describePlan(requested)}${found}${target && target.id !== plan.window ? ` (window ${target.id})` : ""}`
     })
   return { listWindows, windowsText, screenText, resolveWindow, runPlan }
 }
@@ -736,9 +823,10 @@ export const Plugin = define({
           options: { codemode: false, permission: "agent_display" },
           description: [
             "Your own isolated screen (Xvfb, 1280x800, never the user's display): a small desktop (openbox title bars, taskbar in the bottom 36px) where you run GUI programs, drive them like a user and look at them.",
-            'Fast loop: exec starts a program and waits for its window (returns id and geometry); steps runs many ops in one call; screenshot: true on exec/win/steps returns the screen in the same call. Example: { action: "steps", steps: [{ op: "click", x: 640, y: 120 }, { op: "type", text: "cats" }, { op: "key", keys: "Return" }, { op: "sleep", ms: 800 }], screenshot: true }.',
+            'Fast loop: exec starts a program and waits for its window (returns id and geometry); steps runs many ops in one call; screenshot: true on exec/win/steps returns the screen in the same call. Example: { action: "steps", steps: [{ op: "click", label: "Search" }, { op: "type", text: "cats" }, { op: "key", keys: "Return" }, { op: "wait", label: "Images" }], screenshot: true }.',
+            'Click text by its label, not by guessing pixels: { op: "click", label: "Consent" } reads the screen (OCR, ~1s) and clicks the center of that text; standalone text (a button, a link) beats the same word in a sentence, nth picks another match. find lists visible text with x,y (cheaper than a screenshot); wait with label waits for text to appear. Use x/y for things without text (icons, canvas, games).',
             "Coordinates: without window, x/y are screen pixels, the pixels of a full screenshot. With window (id or title/class fragment), x/y are relative to that window, the pixels of a screenshot of it.",
-            'Ops: click (x/y optional, button, count 2 = double), mousedown, mouseup, mousemove, scroll (button 4 up / 5 down / 6 left / 7 right, count), drag (x,y to x2,y2), type (text), key (keys like "ctrl+l" or "ctrl+a BackSpace", count), keydown, keyup, focus, move, resize, close, list, wait (until a window appears), sleep (ms).',
+            'Ops: click (label or x/y, button, count 2 = double), find (visible text and where), mousedown, mouseup, mousemove, scroll (button 4 up / 5 down / 6 left / 7 right, count), drag (x,y to x2,y2), type (text), key (keys like "ctrl+l" or "ctrl+a BackSpace", count), keydown, keyup, focus, move, resize, close, list, wait (until a window appears), sleep (ms).',
             "Input is real (XTEST): a click hits whatever is on top at that point and moves keyboard focus there; type/key go to the focused window, or focus window first when given.",
             "Also: status (apps and windows), screenshot/show (window captures one window; show tells the user), kill (pid from status), stream (live watch page on 127.0.0.1 for the user), start/stop. exec, kill, stream and input ops ask through the normal shell permission. Screenshots cost image tokens.",
           ].join("\n"),

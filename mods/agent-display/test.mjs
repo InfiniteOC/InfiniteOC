@@ -1,6 +1,8 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { statSync } from "node:fs"
+import { execFileSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import mod, { guidance } from "./index.mjs"
@@ -294,7 +296,7 @@ test("extends safe-guard readonly without touching its gate messages", async () 
   await mod.setup(api)
   const safety = files.get("packages/core/src/plugin/infiniteoc-safety.ts")
   assert.match(safety, /agent_display/)
-  assert.match(safety, /\["list", "wait", "sleep"\]/)
+  assert.match(safety, /\["list", "find", "wait", "sleep"\]/)
   assert.equal(safety.split(anchor).length, 2)
 })
 
@@ -540,4 +542,86 @@ test("/display offers the camera (loading the module on request) and recording",
   assert.match(source, /process\.kill\(status\.recording\.pid, "SIGINT"\)/)
   const html = await readFile(new URL("./viewer.html", import.meta.url), "utf8")
   assert.match(html, /has\("clean"\)/)
+})
+
+// ---- reading the screen: label clicks and find ---------------------------------------------------
+
+const tsvRow = (text, left, top, width, height, conf = 90) => `5\t1\t1\t1\t1\t1\t${left}\t${top}\t${width}\t${height}\t${conf}\t${text}`
+const tsv = (...rows) => ["level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext", ...rows].join("\n")
+
+test("label is an alternative to x/y on click, mousemove, scroll, and a target for find and wait", () => {
+  assert.equal(plan({ op: "click", label: " Consent " }).label, "Consent")
+  assert.equal(plan({ op: "click", label: "Consent" }).nth, 1)
+  assert.equal(plan({ op: "click", label: "Learn more", nth: 2 }).nth, 2)
+  assert.ok(plan({ op: "mousemove", label: "Menu" }))
+  assert.ok(plan({ op: "wait", label: "Done", timeout: 5 }), "wait for text needs no window")
+  assert.ok(plan({ op: "find" }))
+  assert.match(D.validateWin({ op: "click", label: "Consent", x: 1, y: 2 }).error, /x\/y or label, not both/)
+  assert.match(D.validateWin({ op: "type", label: "x", text: "y" }).error, /does not take a label/)
+  assert.match(D.validateWin({ op: "click", label: "  " }).error, /label must be/)
+  assert.match(D.validateWin({ op: "click", label: "x", nth: 0 }).error, /nth/)
+  assert.deepEqual(D.winArgs(plan({ op: "find", label: "x" })), [])
+  assert.equal(D.describePlan(plan({ op: "click", label: "Consent" })), "click “Consent”")
+  assert.equal(D.caption(plan({ op: "click", label: "Consent" })), "Clicking “Consent”")
+  assert.equal(D.describePlan(plan({ op: "wait", label: "Done" })), "wait for text “Done” (10s)")
+  assert.ok(D.LOOK_OPS.includes("find"), "find only looks, so /readonly allows it")
+})
+
+test("parseOcrTsv maps enlarged OCR boxes back to screen pixels", () => {
+  const words = D.parseOcrTsv(tsv(tsvRow("Consent", 300, 600, 120, 30), "4\t1\t1\t1\t1\t0\t0\t0\t0\t0\t-1\t", tsvRow("", 1, 1, 1, 1)), 1.5)
+  assert.deepEqual(words, [{ text: "Consent", conf: 90, left: 200, top: 400, width: 80, height: 20 }])
+})
+
+test("the light-text pass only fills gaps the plain pass left", () => {
+  const plain = [{ text: "Store", conf: 60, left: 10, top: 10, width: 50, height: 14 }]
+  const light = [
+    { text: "Stoze", conf: 95, left: 12, top: 10, width: 48, height: 14 },
+    { text: "Consent", conf: 86, left: 500, top: 595, width: 80, height: 18 },
+  ]
+  assert.deepEqual(D.mergeOcrWords(plain, light).map((word) => word.text), ["Store", "Consent"])
+})
+
+test("matchLabel prefers the button over the same word in a sentence, and tolerates OCR slips", () => {
+  const words = D.parseOcrTsv(
+    tsv(
+      tsvRow("DashNet", 330, 262, 80, 20), tsvRow("asks", 415, 262, 40, 20), tsvRow("for", 460, 262, 25, 20), tsvRow("your", 490, 262, 40, 20), tsvRow("consent", 535, 262, 70, 20),
+      tsvRow("Manage", 345, 597, 56, 16), tsvRow("options", 405, 597, 50, 16),
+      tsvRow("Consenl", 581, 597, 80, 16, 70),
+    ),
+  )
+  const lines = D.ocrLines(words)
+  assert.equal(lines.length, 3)
+  const consent = D.matchLabel(lines, "Consent")
+  assert.deepEqual([consent[0].text, consent[0].x, consent[0].y, consent[0].whole], ["Consenl", 621, 605, true])
+  assert.equal(consent[1].text, "consent")
+  assert.deepEqual(D.matchLabel(lines, "manage options").map((match) => [match.x, match.y]), [[400, 605]])
+  assert.deepEqual(D.matchLabel(lines, "Consent", { left: 0, top: 0, width: 1280, height: 400 }).map((match) => match.text), ["consent"], "inside a window's box only")
+  assert.deepEqual(D.matchLabel(lines, "Settings"), [])
+  assert.deepEqual(D.matchLabel(lines, "for"), [lines[0].length && D.matchLabel(lines, "for")[0]].filter(Boolean))
+  assert.equal(D.matchLabel(lines, "fur").length, 0, "short words must match exactly")
+})
+
+test("formatText lists confident text in reading order without icon noise", () => {
+  const lines = D.ocrLines(
+    D.parseOcrTsv(tsv(tsvRow("Got", 860, 664, 30, 18), tsvRow("it!", 894, 664, 20, 18), tsvRow("x", 20, 20, 10, 10), tsvRow("Learn", 640, 666, 50, 16), tsvRow("blurry", 100, 100, 50, 16, 20))),
+  )
+  assert.equal(D.formatText(lines), "“Learn” 665,674\n“Got it!” 887,673")
+})
+
+test("real OCR finds white-on-blue button text that a single pass misses", { skip: !["tesseract", "magick"].every((tool) => process.env.PATH.split(":").some((dir) => { try { return statSync(path.join(dir, tool)).isFile() } catch { return false } })) && "needs tesseract and ImageMagick" }, async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "agent-display-ocr-"))
+  try {
+    const raw = path.join(dir, "screen.png"), plainFile = path.join(dir, "plain.png"), light = path.join(dir, "light.png")
+    execFileSync("magick", ["-size", "800x300", "xc:white", "-font", "DejaVu-Sans", "-pointsize", "20", "-fill", "#222", "-annotate", "+40+60", "DashNet asks for your consent to use your data",
+      "-fill", "#1a66d0", "-draw", "roundrectangle 300,200 500,240 20,20", "-fill", "white", "-pointsize", "16", "-annotate", "+366+226", "Consent", raw])
+    execFileSync("magick", D.ocrScaleArgs(raw, plainFile))
+    execFileSync("magick", D.ocrLightArgs(plainFile, light))
+    const read = (file) => execFileSync("tesseract", D.tesseractArgs(file), { stdio: ["ignore", "pipe", "ignore"] }).toString()
+    const lines = D.ocrLines(D.mergeOcrWords(D.parseOcrTsv(read(plainFile), D.OCR_SCALE), D.parseOcrTsv(read(light), D.OCR_SCALE)))
+    const best = D.matchLabel(lines, "Consent")[0]
+    assert.ok(best, D.formatText(lines))
+    assert.ok(best.x > 300 && best.x < 500 && best.y > 200 && best.y < 240, `clicked inside the button: ${best.x},${best.y}`)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })

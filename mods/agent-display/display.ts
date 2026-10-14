@@ -222,10 +222,12 @@ export const appLog = (pid: number, at = Date.now(), dir = tmpdir()) => path.joi
  * Input goes through XTEST like a real mouse and keyboard: Chromium drops the
  * synthetic per-window events `--window` would send. Keyboard ops with a window
  * focus it first; clicks move keyboard focus to what was clicked, because there is
- * no window manager to do it. list, wait and sleep only look or pause. */
-export const WIN_OPS = ["list", "wait", "sleep", "focus", "move", "resize", "close", "click", "mousedown", "mouseup", "mousemove", "scroll", "drag", "type", "key", "keydown", "keyup"] as const
+ * no window manager to do it. list, find, wait and sleep only look or pause.
+ * label: instead of x/y, click/mousemove/scroll find visible text on screen (OCR) and use its
+ * center, so models that misjudge pixels still hit buttons; find lists text with coordinates. */
+export const WIN_OPS = ["list", "find", "wait", "sleep", "focus", "move", "resize", "close", "click", "mousedown", "mouseup", "mousemove", "scroll", "drag", "type", "key", "keydown", "keyup"] as const
 export type WinOp = (typeof WIN_OPS)[number]
-export const LOOK_OPS: readonly WinOp[] = ["list", "wait", "sleep"]
+export const LOOK_OPS: readonly WinOp[] = ["list", "find", "wait", "sleep"]
 export type WinInput = {
   op?: unknown
   window?: unknown
@@ -241,6 +243,8 @@ export type WinInput = {
   keys?: unknown
   ms?: unknown
   timeout?: unknown
+  label?: unknown
+  nth?: unknown
 }
 /** A validated op. `window` is "" (the screen) or an id/fragment the plugin resolves to one id. */
 export type WinPlan = {
@@ -258,6 +262,9 @@ export type WinPlan = {
   keys?: string[]
   ms?: number
   timeout: number
+  /** Visible text to act on (OCR) instead of x/y; nth picks among several matches. */
+  label?: string
+  nth: number
 }
 
 const isInt = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value)
@@ -272,8 +279,15 @@ export function validateWin(input: WinInput): WinPlan | { error: string } {
   const window = typeof input.window === "string" ? input.window.trim() : ""
   if (window.includes("\0")) return { error: "Refused: the window contains NUL." }
   if (window.length > 200) return { error: "window must be at most 200 chars (an id from list, or a short fragment)." }
-  const plan: WinPlan = { op: op as WinOp, window, button: 1, count: 1, timeout: 10 }
+  const plan: WinPlan = { op: op as WinOp, window, button: 1, count: 1, timeout: 10, nth: 1 }
   let problem = ""
+  if (input.label !== undefined) {
+    const label = typeof input.label === "string" ? input.label.trim() : ""
+    if (!label || label.length > 200 || label.includes("\0")) return { error: "label must be the visible text to find, 1-200 characters." }
+    if (!["click", "mousemove", "scroll", "find", "wait"].includes(op)) return { error: `${op} does not take a label; click, mousemove, scroll, find and wait do.` }
+    if (input.x !== undefined || input.y !== undefined) return { error: `${op} takes x/y or label, not both.` }
+    plan.label = label
+  }
   const int = (value: unknown, name: string, min: number, max: number, fallback?: number) => {
     if (value === undefined && fallback !== undefined) return fallback
     if (!isInt(value) || value < min || value > max) problem ||= `${name} must be an integer ${min}-${max}.`
@@ -289,11 +303,14 @@ export function validateWin(input: WinInput): WinPlan | { error: string } {
   const needWindow = () => {
     if (!window) problem ||= `${plan.op} needs a window (an id from list, or a title/class fragment).`
   }
+  if (plan.label) plan.nth = int(input.nth, "nth", 1, 20, 1)
   switch (plan.op) {
     case "list":
+    case "find":
       break
     case "wait":
-      needWindow()
+      // A window to appear, or (with label) text on screen.
+      if (!plan.label) needWindow()
       plan.timeout = int(input.timeout, "timeout", 1, 25, 10)
       break
     case "sleep":
@@ -314,7 +331,7 @@ export function validateWin(input: WinInput): WinPlan | { error: string } {
       plan.h = int(input.h, "h", 1, MAX_COORD)
       break
     case "mousemove":
-      point("x", "y", true)
+      if (!plan.label) point("x", "y", true)
       break
     case "click":
     case "mousedown":
@@ -479,9 +496,12 @@ export function screenPoint(plan: WinPlan, origin: Point = { x: 0, y: 0 }): { at
 export function caption(plan: WinPlan, title = ""): string {
   const name = title ? ` in ${title.length > 40 ? `${title.slice(0, 39)}…` : title}` : ""
   const quote = (text: string) => `“${text.length > 60 ? `${text.slice(0, 59)}…` : text}”`
+  const target = plan.label ? ` ${quote(plan.label)}` : ""
   switch (plan.op) {
     case "click":
-      return `${plan.count === 2 ? "Double-clicking" : plan.button === 3 ? "Right-clicking" : "Clicking"}${name}`
+      return `${plan.count === 2 ? "Double-clicking" : plan.button === 3 ? "Right-clicking" : "Clicking"}${target}${name}`
+    case "find":
+      return plan.label ? `Looking for ${quote(plan.label)}` : "Reading the screen"
     case "type":
       return `Typing ${quote(plan.text!.replace(/\s+/g, " "))}${name}`
     case "key":
@@ -494,7 +514,7 @@ export function caption(plan: WinPlan, title = ""): string {
     case "drag":
       return `Dragging${name}`
     case "mousemove":
-      return "Moving the pointer"
+      return plan.label ? `Pointing at ${quote(plan.label)}` : "Moving the pointer"
     case "mousedown":
       return "Holding the mouse button"
     case "mouseup":
@@ -508,7 +528,7 @@ export function caption(plan: WinPlan, title = ""): string {
     case "resize":
       return `Resizing ${title || "a window"}`
     case "wait":
-      return `Waiting for ${quote(plan.window)}`
+      return `Waiting for ${quote(plan.label ?? plan.window)}`
     case "sleep":
       return "Waiting"
     default:
@@ -519,13 +539,16 @@ export function caption(plan: WinPlan, title = ""): string {
 /** Short human/permission summary of one op. */
 export function describePlan(plan: WinPlan): string {
   const where = plan.window ? ` in ${/^\d+$/.test(plan.window) ? plan.window : JSON.stringify(plan.window)}` : ""
-  const xy = plan.x !== undefined && plan.y !== undefined ? ` ${plan.x},${plan.y}` : ""
+  const label = plan.label ? ` “${plan.label.length > 40 ? `${plan.label.slice(0, 39)}…` : plan.label}”` : ""
+  const xy = label || (plan.x !== undefined && plan.y !== undefined ? ` ${plan.x},${plan.y}` : "")
   const clip = (text: string) => JSON.stringify(text.length > 40 ? `${text.slice(0, 39)}…` : text)
   switch (plan.op) {
     case "list":
       return plan.window ? `list ${JSON.stringify(plan.window)}` : "list"
+    case "find":
+      return `find${label || " (all text)"}${where}`
     case "wait":
-      return `wait for ${JSON.stringify(plan.window)} (${plan.timeout}s)`
+      return label ? `wait for text${label}${where} (${plan.timeout}s)` : `wait for ${JSON.stringify(plan.window)} (${plan.timeout}s)`
     case "sleep":
       return `sleep ${plan.ms}ms`
     case "move":
@@ -663,6 +686,151 @@ export function mpjpegFrames(onFrame: (frame: Buffer) => void) {
     // A stream that never completes a part must not grow without bound.
     if (pending.length > 16 * 1024 * 1024) pending = Buffer.alloc(0)
   }
+}
+
+// ---- reading the screen: OCR for label clicks and find ------------------------------------------
+// Two tesseract passes over one capture: the screenshot as is (dark text on light) and a top-hat
+// filtered copy that keeps only thin bright strokes, inverted (light text on buttons, dark themes).
+// One pass alone misses white-on-blue button labels entirely.
+
+export type OcrWord = { text: string; conf: number; left: number; top: number; width: number; height: number }
+export type Box = { left: number; top: number; width: number; height: number }
+
+/** Screens are read at 1.5x: small UI text reads markedly better, and it costs ~50% more time, not 4x. */
+export const OCR_SCALE = 1.5
+// -alpha off: an alpha channel would go through the filters too and blank the result.
+export const ocrScaleArgs = (input: string, output: string) => [input, "-alpha", "off", "-resize", `${OCR_SCALE * 100}%`, output]
+export const ocrLightArgs = (input: string, output: string) => [input, "-alpha", "off", "-colorspace", "gray", "-morphology", "TopHat", "Disk:4", "-threshold", "18%", "-negate", output]
+/** Sparse text mode finds scattered UI labels; TSV gives each word's box and confidence. */
+export const tesseractArgs = (input: string) => [input, "stdout", "--psm", "11", "tsv"]
+
+/** Words from tesseract TSV (level 5 rows) in screen pixels (`scale`: how much the image was enlarged);
+ * empty and failed rows dropped. */
+export function parseOcrTsv(tsv: string, scale = 1): OcrWord[] {
+  const words: OcrWord[] = []
+  for (const row of tsv.split("\n").slice(1)) {
+    const cols = row.split("\t")
+    if (cols.length < 12 || cols[0] !== "5") continue
+    const text = cols.slice(11).join(" ").trim()
+    const conf = Number(cols[10])
+    if (!text || !(conf >= 0)) continue
+    const [left, top, width, height] = cols.slice(6, 10).map((value) => Math.round(Number(value) / scale))
+    words.push({ text, conf, left, top, width, height })
+  }
+  return words
+}
+
+const overlap = (a: Box, b: Box) => {
+  const width = Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left)
+  const height = Math.min(a.top + a.height, b.top + b.height) - Math.max(a.top, b.top)
+  if (width <= 0 || height <= 0) return 0
+  const inter = width * height
+  return inter / (a.width * a.height + b.width * b.height - inter)
+}
+export const union = (boxes: Box[]): Box => {
+  const left = Math.min(...boxes.map((box) => box.left))
+  const top = Math.min(...boxes.map((box) => box.top))
+  return { left, top, width: Math.max(...boxes.map((box) => box.left + box.width)) - left, height: Math.max(...boxes.map((box) => box.top + box.height)) - top }
+}
+
+/** The plain pass's words, plus the light-text pass's only where the plain pass read nothing: over
+ * ordinary text the filtered copy is noise, its job is the light text the plain pass cannot see. */
+export function mergeOcrWords(plain: OcrWord[], light: OcrWord[]): OcrWord[] {
+  return [...plain, ...light.filter((word) => !plain.some((other) => overlap(word, other) > 0))]
+}
+
+/** Words grouped into lines by position (sparse mode does not group reliably): same row, small gaps. */
+export function ocrLines(words: OcrWord[]): OcrWord[][] {
+  const lines: OcrWord[][] = []
+  for (const word of [...words].sort((a, b) => a.left - b.left)) {
+    const middle = word.top + word.height / 2
+    const line = lines.find((candidate) => {
+      const last = candidate.at(-1)!
+      const size = Math.max(last.height, word.height)
+      const gap = word.left - (last.left + last.width)
+      return Math.abs(last.top + last.height / 2 - middle) < size * 0.6 && gap > -size * 0.3 && gap < size * 1.6
+    })
+    if (line) line.push(word)
+    else lines.push([word])
+  }
+  return lines.sort((a, b) => a[0].top - b[0].top || a[0].left - b[0].left)
+}
+
+export type TextMatch = { text: string; score: number; whole: boolean; exact: boolean; x: number; y: number; box: Box }
+const normalize = (text: string) =>
+  text
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim()
+const similarity = (a: string, b: string) => {
+  if (a === b) return 1
+  if (Math.min(a.length, b.length) <= 3) return 0
+  const row = Array.from({ length: b.length + 1 }, (_, index) => index)
+  for (let i = 1; i <= a.length; i++) {
+    let previous = row[0]
+    row[0] = i
+    for (let j = 1; j <= b.length; j++) {
+      const current = row[j]
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1))
+      previous = current
+    }
+  }
+  return 1 - row[b.length] / Math.max(a.length, b.length)
+}
+
+/** Where `label` appears: exact or near (OCR slips like "Consenl") token runs within a line. Ranked by
+ * spelling plus a bonus for being the whole line, so a button or link beats the same word inside a
+ * sentence even when OCR slipped a letter ("Consenl" the button over "consent" in the heading); then
+ * exact case, then top to bottom. Only matches centered inside `within` (a window's box) count. */
+export function matchLabel(lines: OcrWord[][], label: string, within?: Box): TextMatch[] {
+  const query = normalize(label).split(" ").filter(Boolean)
+  if (!query.length) return []
+  const matches: TextMatch[] = []
+  for (const line of lines) {
+    const tokens = line.flatMap((word) => normalize(word.text).split(" ").filter(Boolean).map((token) => ({ token, word })))
+    for (let start = 0; start + query.length <= tokens.length; start++) {
+      const run = tokens.slice(start, start + query.length)
+      const score = run.reduce((sum, item, index) => sum + similarity(item.token, query[index]), 0) / query.length
+      if (score < 0.75) continue
+      const words = [...new Set(run.map((item) => item.word))]
+      const box = union(words)
+      const x = Math.round(box.left + box.width / 2)
+      const y = Math.round(box.top + box.height / 2)
+      if (within && !(x >= within.left && x < within.left + within.width && y >= within.top && y < within.top + within.height)) continue
+      const text = words.map((word) => word.text).join(" ")
+      const whole = run.length === tokens.length
+      const exact = normalize(label) === normalize(text) && text.replace(/[^\p{L}\p{N} ]+/gu, "").trim() === label.replace(/[^\p{L}\p{N} ]+/gu, "").trim()
+      matches.push({ text, score, whole, exact, x, y, box })
+    }
+  }
+  const rank = (match: TextMatch) => [-(match.score + (match.whole ? 0.3 : 0)), match.exact ? 0 : 1, row(match.box), match.box.left]
+  const unique: TextMatch[] = []
+  for (const match of matches.sort((a, b) => compare(rank(a), rank(b))))
+    if (!unique.some((other) => overlap(match.box, other.box) > 0.5)) unique.push(match)
+  return unique
+}
+
+const row = (box: Box) => Math.round((box.top + box.height / 2) / 12)
+const compare = (a: number[], b: number[]) => {
+  for (let index = 0; index < a.length; index++) if (a[index] !== b[index]) return a[index] - b[index]
+  return 0
+}
+
+/** Visible text in reading order, a line per row with its center to click: `“Consent” 620,604`.
+ * Icon noise (a lone "x" or "+" read off a glyph) is left out. */
+export function formatText(lines: OcrWord[][], limit = 150): string {
+  // Low-confidence readings (logos, images, icons) are dropped from the listing; matching still sees them.
+  const readable = lines
+    .map((line) => line.filter((word) => word.conf >= 55))
+    .filter((line) => line.length && normalize(line.map((word) => word.text).join(" ")).replace(/ /g, "").length >= 2)
+    .sort((a, b) => compare([row(union(a)), union(a).left], [row(union(b)), union(b).left]))
+  const rows = readable.slice(0, limit).map((line) => {
+    const box = union(line)
+    return `“${line.map((word) => word.text).join(" ")}” ${Math.round(box.left + box.width / 2)},${Math.round(box.top + box.height / 2)}`
+  })
+  return rows.join("\n") + (readable.length > limit ? `\n… ${readable.length - limit} more lines` : "")
 }
 
 // ---- outputs: the virtual camera and recordings ----------------------------------------------
