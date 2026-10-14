@@ -20,7 +20,8 @@
     "./mods/webui/index.mjs",
     "./mods/accounts/index.mjs",
     "./mods/workflows/index.mjs",
-    "./mods/infinicode/index.mjs"
+    "./mods/infinicode/index.mjs",
+    "./mods/agent-display/index.mjs"
   ],
   "options": {
     "reducedMotion": false
