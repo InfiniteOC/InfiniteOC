@@ -1,6 +1,6 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import mod, { guidance } from "./index.mjs"
@@ -440,11 +440,11 @@ test("realistic input is a saved toggle, off by default", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "agent-display-settings-"))
   const env = { XDG_DATA_HOME: home }
   try {
-    assert.deepEqual(D.readSettings(env), { realistic: false })
-    D.writeSettings({ realistic: true }, env)
-    assert.deepEqual(D.readSettings(env), { realistic: true })
+    assert.deepEqual(D.readSettings(env), { realistic: false, camera: false })
+    D.writeSettings({ realistic: true, camera: false }, env)
+    assert.deepEqual(D.readSettings(env), { realistic: true, camera: false })
     await writeFile(D.settingsFile(env), "{ broken")
-    assert.deepEqual(D.readSettings(env), { realistic: false }, "a broken file falls back to off")
+    assert.deepEqual(D.readSettings(env), { realistic: false, camera: false }, "a broken file falls back to off")
   } finally {
     await rm(home, { recursive: true, force: true })
   }
@@ -456,4 +456,88 @@ test("/display toggles realistic input from the keyboard menu", async () => {
   assert.match(source, /writeSettings\(\{ \.\.\.settings, realistic: !settings\.realistic \}\)/)
   const plugin = await readFile(new URL("./plugin.ts", import.meta.url), "utf8")
   assert.match(plugin, /const human = realistic\(\)/)
+})
+
+// ---- outputs: virtual camera and recordings -----------------------------------------------------
+
+test("the camera is 16:9 without stretching and the recording stays playable if cut off", () => {
+  assert.equal(
+    D.cameraArgs(":99", "/dev/video42").join(" "),
+    "-v error -f x11grab -draw_mouse 1 -framerate 30 -video_size 1280x800 -i :99 -vf scale=1152:720:flags=bicubic,pad=1280:720:64:0:color=0x07060d,format=yuv420p -f v4l2 /dev/video42",
+  )
+  const record = D.recordArgs(":99", "/v/a.mp4").join(" ")
+  assert.match(record, /-i :99 -c:v libx264 .*-movflags \+frag_keyframe\+empty_moov\+default_base_moof \/v\/a\.mp4$/)
+  assert.deepEqual(D.cameraLoadArgs(), ["modprobe", "v4l2loopback", "video_nr=42", "card_label=InfiniteOC agent display", "exclusive_caps=1"])
+})
+
+test("findCamera picks the loopback device by its label", async () => {
+  const sys = await mkdtemp(path.join(tmpdir(), "agent-display-v4l-"))
+  try {
+    for (const [entry, name] of [["video0", "UVC Camera"], ["video42", "InfiniteOC agent display"]]) {
+      await mkdir(path.join(sys, entry))
+      await writeFile(path.join(sys, entry, "name"), `${name}\n`)
+    }
+    assert.equal(D.findCamera(sys), "/dev/video42")
+    assert.equal(D.findCamera(path.join(sys, "missing")), undefined)
+  } finally {
+    await rm(sys, { recursive: true, force: true })
+  }
+})
+
+test("recordings go to the user's (possibly localized) videos folder", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "agent-display-home-"))
+  try {
+    assert.equal(D.videosDir({}, home), path.join(home, "Videos"))
+    await mkdir(path.join(home, ".config"))
+    await writeFile(path.join(home, ".config", "user-dirs.dirs"), 'XDG_MUSIC_DIR="$HOME/Muzyka"\nXDG_VIDEOS_DIR="$HOME/Wideo"\n')
+    assert.equal(D.videosDir({}, home), path.join(home, "Wideo"))
+    assert.equal(D.videosDir({ XDG_VIDEOS_DIR: "/x" }, home), "/x")
+    assert.equal(D.recordingFile("/v", new Date(2026, 9, 14, 9, 5, 7)), "/v/agent-display-2026-10-14_09-05-07.mp4")
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test("ensureCamera starts the feed only when on, running, missing and the device exists", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "agent-display-cam-"))
+  const env = { XDG_DATA_HOME: home }
+  const running = { display: ":99", running: true, pid: process.pid, apps: [] }
+  const started = []
+  const start = (args, display) => (started.push({ args, display }), 4242)
+  try {
+    assert.equal(D.ensureCamera(running, env, () => "/dev/video42", start), running, "off by default")
+    D.writeSettings({ realistic: false, camera: true }, env)
+    assert.equal(D.ensureCamera(running, env, () => undefined, start), running, "no device yet")
+    assert.equal(D.ensureCamera({ ...running, running: false }, env, () => "/dev/video42", start).camera, undefined)
+    assert.deepEqual(D.ensureCamera(running, env, () => "/dev/video42", start).camera, { pid: 4242, device: "/dev/video42" })
+    assert.equal(started.length, 1)
+    assert.equal(started[0].args.at(-1), "/dev/video42")
+    const live = { ...running, camera: { pid: process.pid, device: "/dev/video42" } }
+    assert.equal(D.ensureCamera(live, env, () => "/dev/video42", start), live, "already feeding")
+  } finally {
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test("sweepStatus forgets a camera feed or recording whose ffmpeg ended", () => {
+  const swept = D.sweepStatus({
+    display: ":99",
+    running: true,
+    pid: process.pid,
+    apps: [],
+    camera: { pid: 2 ** 30, device: "/dev/video42" },
+    recording: { pid: process.pid, file: "/v/a.mp4", startedAt: 0 },
+  })
+  assert.equal(swept.camera, undefined)
+  assert.equal(swept.recording?.file, "/v/a.mp4")
+})
+
+test("/display offers the camera (loading the module on request) and recording", async () => {
+  const source = await readFile(new URL("./command.tsx", import.meta.url), "utf8")
+  assert.match(source, /Virtual camera: \$\{settings\.camera \? "on" : "off"\}/)
+  assert.match(source, /await loadCamera\(\)/)
+  assert.match(source, /ctx\.ui\.confirm\(\{\s*title: "Virtual camera"/)
+  assert.match(source, /process\.kill\(status\.recording\.pid, "SIGINT"\)/)
+  const html = await readFile(new URL("./viewer.html", import.meta.url), "utf8")
+  assert.match(html, /has\("clean"\)/)
 })

@@ -87,13 +87,33 @@ when openbox is ready. Elsewhere the tool fails with what is missing. Chromium o
 needs `--ozone-platform=x11` and joins a running instance by default: pass a fresh
 `--user-data-dir` per spawn (`exec` reports when the window came from an instance already running).
 
+## Share or record it
+
+- **Virtual camera** (`/display` → Virtual camera): the screen as a webcam named “InfiniteOC agent
+  display”, 1280x720 (the 16:10 screen with dark side bars), 30fps, pointer included. Pick it in
+  Discord (Settings → Voice & Video → Camera, or turn on your camera in a call), OBS (Video Capture
+  Device) or a browser. It needs the `v4l2loopback` kernel module (in-tree on CachyOS kernels,
+  `v4l2loopback-dkms` elsewhere), loaded as root once per boot; the toggle offers to load it through
+  `pkexec`, or run `sudo modprobe v4l2loopback video_nr=42 card_label="InfiniteOC agent display"
+  exclusive_caps=1` (`exclusive_caps` is what makes Chromium-based apps such as Discord list it). The
+  choice is saved: the feed starts with the display and comes back whenever it restarts. To load the
+  module at boot, put `v4l2loopback` in `/etc/modules-load.d/v4l2loopback.conf` and the options in
+  `/etc/modprobe.d/v4l2loopback.conf` as `options v4l2loopback video_nr=42 card_label="InfiniteOC agent display" exclusive_caps=1`.
+- **Recording** (`/display` → Record the screen / Stop recording): H.264 MP4 in your videos folder
+  (`XDG_VIDEOS_DIR` / `user-dirs.dirs`, else `~/Videos`), named `agent-display-<date>_<time>.mp4`.
+  Stopping sends SIGINT so ffmpeg finishes the file; it is fragmented with a keyframe every 2s and
+  flushed as it goes, so a recording cut off by the display stopping loses at most its last 2s.
+- **With the overlays** (captions, click ripples, typing): open the live page with `/?clean`, which
+  is only the screen filling the window, and share that window with Discord's Go Live or capture it
+  in OBS. The camera and recordings carry the raw screen.
+
 ## What the user gets
 
 - `/display`: status, latest frame (path, time, agent note, live URL), the realistic
-  input toggle, spawned apps (aliveness, log path, kill), stop.
+  input and virtual camera toggles, recording, spawned apps (aliveness, log path, kill), stop.
   Stopping only stops the virtual screen; sessions and tasks keep going.
 - Frames the agent shares appear in the session transcript.
 - The live page (`/display` → Latest frame shows its URL) is loopback-only and stops with the display.
 
 State lives outside the project and outside session history:
-`~/.local/share/infiniteoc/agent-display/` (`status.json`, `frame.png`).
+`~/.local/share/infiniteoc/agent-display/` (`status.json`, `settings.json`, `frame.png`, `desktop/`).

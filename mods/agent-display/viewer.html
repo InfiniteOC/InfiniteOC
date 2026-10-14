@@ -41,6 +41,10 @@
   .keys .typed::after { content: "▍"; color: var(--accent); animation: blink 1s steps(1) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
   footer { color: var(--muted); font-size: 12px; }
+  /* ?clean: only the screen, filling the window, for screen sharing (Discord Go Live) and recording (OBS). */
+  body.clean { padding: 0; justify-content: center; background: #000; overflow: hidden; }
+  body.clean header, body.clean footer { display: none; }
+  body.clean .stage { width: min(100vw, calc(100vh * __WIDTH__ / __HEIGHT__)); border: 0; border-radius: 0; box-shadow: none; }
 </style>
 </head>
 <body>
@@ -61,6 +65,7 @@
 <footer>The agent's own isolated screen. Only this machine can see this page.</footer>
 <script>
   const W = __WIDTH__, H = __HEIGHT__
+  if (new URLSearchParams(location.search).has("clean")) document.body.classList.add("clean")
   const $ = (id) => document.getElementById(id)
   const screen = $("screen"), overlay = $("overlay"), caption = $("caption"), keys = $("keys")
   const pct = (point) => ({ left: `${(point.x / W) * 100}%`, top: `${(point.y / H) * 100}%` })
