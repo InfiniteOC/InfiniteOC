@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Agent display __DISPLAY__ · live</title>
+<style>
+  :root { --bg: #07060d; --panel: #110f1c; --line: #2a2540; --text: #ece8ff; --muted: #8a85a3; --accent: #a78bfa; --pink: #f472b6; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: radial-gradient(1200px 600px at 20% -10%, #1a1233 0%, transparent 60%), var(--bg); color: var(--text); font: 13px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 14px 18px 18px; }
+  header { width: min(100%, calc((100vh - 74px) * __WIDTH__ / __HEIGHT__)); display: flex; align-items: center; gap: 12px; }
+  .brand { font-weight: 700; letter-spacing: .2px; background: linear-gradient(90deg, #c084fc, #f472b6); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: #0d0b16; }
+  .live .dot { width: 7px; height: 7px; border-radius: 50%; background: #ef4444; box-shadow: 0 0 0 0 #ef444488; animation: pulse 1.6s infinite; }
+  .live.off .dot { background: #57534e; animation: none; }
+  .live b { color: #fca5a5; font-weight: 700; letter-spacing: .6px; }
+  .live.off b { color: var(--muted); }
+  .spacer { flex: 1; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 #ef444488; } 70% { box-shadow: 0 0 0 7px #ef444400; } 100% { box-shadow: 0 0 0 0 #ef444400; } }
+  .stage { position: relative; width: min(100%, calc((100vh - 74px) * __WIDTH__ / __HEIGHT__)); aspect-ratio: __WIDTH__ / __HEIGHT__; border-radius: 12px; overflow: hidden; background: #000; border: 1px solid var(--line); box-shadow: 0 24px 80px -20px #7c5cff55, 0 0 0 1px #00000080; }
+  .stage img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: auto; }
+  .overlay { position: absolute; inset: 0; pointer-events: none; }
+  .waiting { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; background: radial-gradient(600px 300px at 50% 50%, #1a1233, #050409); transition: opacity .4s; }
+  .waiting.gone { opacity: 0; }
+  .ripple { position: absolute; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; border: 2px solid var(--accent); background: #a78bfa22; animation: ripple .6s ease-out forwards; }
+  .ripple.right { border-color: var(--pink); background: #f472b622; }
+  .ripple + .ripple { animation-delay: .12s; }
+  @keyframes ripple { from { transform: scale(.25); opacity: 1; } to { transform: scale(1.35); opacity: 0; } }
+  .trail { position: absolute; height: 3px; transform-origin: 0 50%; border-radius: 3px; background: linear-gradient(90deg, #a78bfa00, #a78bfa); animation: fade 1.2s ease-out forwards; }
+  @keyframes fade { 0%, 60% { opacity: 1; } to { opacity: 0; } }
+  .flash { position: absolute; inset: 0; background: #fff; opacity: 0; }
+  .flash.on { animation: flash .45s ease-out; }
+  @keyframes flash { 0% { opacity: .28; } to { opacity: 0; } }
+  .caption { position: absolute; left: 50%; bottom: 52px; transform: translate(-50%, 8px); max-width: 80%; padding: 8px 14px; border-radius: 10px; background: #0d0b16e6; border: 1px solid #3a3155; color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; transition: opacity .25s, transform .25s; box-shadow: 0 10px 30px #0008; backdrop-filter: blur(6px); }
+  .caption.on { opacity: 1; transform: translate(-50%, 0); }
+  .caption::before { content: "◆ "; color: var(--accent); }
+  .keys { position: absolute; right: 14px; bottom: 52px; display: flex; gap: 5px; align-items: center; max-width: 45%; padding: 6px 8px; border-radius: 10px; background: #0d0b16e6; border: 1px solid #3a3155; opacity: 0; transition: opacity .25s; font: 12px ui-monospace, "JetBrains Mono", "Noto Sans Mono", monospace; color: var(--text); white-space: pre; overflow: hidden; }
+  .keys.on { opacity: 1; }
+  .keys kbd { padding: 2px 7px; border-radius: 6px; background: #221d36; border: 1px solid #3a3155; border-bottom-width: 2px; font: inherit; }
+  .keys .typed::after { content: "▍"; color: var(--accent); animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  footer { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">◆ Agent display</span>
+  <span class="chip">__DISPLAY__ · __WIDTH__×__HEIGHT__</span>
+  <span class="chip live off" id="live"><span class="dot"></span><b>LIVE</b></span>
+  <span class="spacer"></span>
+  <span class="chip" id="activity">idle</span>
+</header>
+<div class="stage" id="stage">
+  <img id="screen" alt="Live view of the agent's screen">
+  <div class="overlay" id="overlay"><div class="flash" id="flash"></div></div>
+  <div class="caption" id="caption"></div>
+  <div class="keys" id="keys"></div>
+  <div class="waiting" id="waiting">Connecting to the agent's screen…</div>
+</div>
+<footer>The agent's own isolated screen. Only this machine can see this page.</footer>
+<script>
+  const W = __WIDTH__, H = __HEIGHT__
+  const $ = (id) => document.getElementById(id)
+  const screen = $("screen"), overlay = $("overlay"), caption = $("caption"), keys = $("keys")
+  const pct = (point) => ({ left: `${(point.x / W) * 100}%`, top: `${(point.y / H) * 100}%` })
+
+  // The MJPEG stream; reconnect if the server restarts or the display is stopped and started again.
+  const connect = () => { screen.src = `/stream.mjpg?t=${Date.now()}` }
+  screen.addEventListener("load", () => { $("waiting").classList.add("gone"); $("live").classList.remove("off") })
+  screen.addEventListener("error", () => { $("live").classList.add("off"); setTimeout(connect, 1000) })
+  connect()
+
+  let captionTimer, keysTimer, idleTimer, typing
+  const say = (text, hold = 2600) => {
+    caption.textContent = text
+    caption.classList.add("on")
+    $("activity").textContent = text
+    clearTimeout(captionTimer)
+    captionTimer = setTimeout(() => caption.classList.remove("on"), hold)
+    clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => { $("activity").textContent = "idle" }, 8000)
+  }
+  const ripple = (point, right) => {
+    for (let index = 0; index < 2; index++) {
+      const ring = document.createElement("div")
+      ring.className = `ripple${right ? " right" : ""}`
+      Object.assign(ring.style, pct(point))
+      overlay.append(ring)
+      setTimeout(() => ring.remove(), 900)
+    }
+  }
+  const trail = (from, to) => {
+    const rect = overlay.getBoundingClientRect()
+    const dx = ((to.x - from.x) / W) * rect.width, dy = ((to.y - from.y) / H) * rect.height
+    const line = document.createElement("div")
+    line.className = "trail"
+    Object.assign(line.style, pct(from), { width: `${Math.hypot(dx, dy)}px`, transform: `rotate(${Math.atan2(dy, dx)}rad)` })
+    overlay.append(line)
+    setTimeout(() => line.remove(), 1300)
+  }
+  const showKeys = (content, hold) => {
+    keys.replaceChildren(...content)
+    keys.classList.add("on")
+    clearTimeout(keysTimer)
+    keysTimer = setTimeout(() => keys.classList.remove("on"), hold)
+  }
+  // Typing appears at the pace the agent types it (38ms a character with realistic input on).
+  const type = (text, delay) => {
+    clearInterval(typing)
+    const typed = document.createElement("span")
+    typed.className = "typed"
+    showKeys([typed], 4000 + text.length * delay)
+    let index = 0
+    typing = setInterval(() => {
+      typed.textContent = text.slice(Math.max(0, index - 48), index)
+      if (index++ >= text.length) clearInterval(typing)
+    }, delay)
+  }
+  const press = (combo) => showKeys(combo.split(/\s+/).map((key) => { const cap = document.createElement("kbd"); cap.textContent = key.replace(/\+/g, " + "); return cap }), 1800)
+
+  const events = new EventSource("/events")
+  events.onmessage = (message) => {
+    let event
+    try { event = JSON.parse(message.data) } catch { return }
+    if (event.caption) say(event.caption)
+    if (event.kind === "screenshot") { const flash = $("flash"); flash.classList.remove("on"); void flash.offsetWidth; flash.classList.add("on") }
+    // Marks land when the press does: after the pointer's glide.
+    const later = (fn) => setTimeout(fn, event.delay ?? 0)
+    if (event.op === "click" || event.op === "mousedown") later(() => event.at && ripple(event.at, event.button === 3))
+    if (event.op === "drag" && event.at && event.to) later(() => trail(event.at, event.to))
+    if (event.op === "scroll" && event.at) later(() => ripple(event.at))
+    if (event.op === "type" && event.text) type(event.text, event.charDelay || 12)
+    if ((event.op === "key" || event.op === "keydown") && event.keys) press(event.keys)
+  }
+</script>
+</body>
+</html>

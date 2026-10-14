@@ -24,22 +24,33 @@ const CORE = "packages/core/src/plugin"
 const FEATURES = "packages/tui/src/infiniteoc-features"
 
 export const guidance = `[Agent display]
-The agent has its own isolated screen (Xvfb, default :99), separate from the user's session. It never touches the user's :0/Wayland display: spawned programs get DISPLAY=:99 with WAYLAND_DISPLAY unset.
-- Use the agent_display tool: status (is it running, what apps, is the live view on), exec (spawn a program there; runs in the project directory), win (list, focus, move, resize, click, type, key, close windows via title or id), screenshot (see the screen; costs image tokens, use sparingly), show (screenshot plus a user-visible note so the user can view the frame with <leader>i), stream (live watch page on this machine only), start/stop.
-- exec, win, stream and show with live go through the normal shell permission, so /readonly, allow-lists and yolo apply. Screenshots are PNG frames: take one when a claim depends on what is actually on the screen, then read it before describing it. The live page is for the user to watch, not for the agent to see.
-- Chromium on a Wayland box still tries Wayland: pass --ozone-platform=x11. There is no window manager, so focusing warns but move/resize/click/type work.`
+You have your own isolated screen (Xvfb :99, 1280x800), separate from the user's display: programs you exec there get DISPLAY=:99 and no WAYLAND_DISPLAY. Use the agent_display tool.
+- Fast loop: exec (waits for the program's window and returns its id and geometry), then steps with several ops and screenshot: true, read the frame, repeat. One steps call can click, type, press keys, wait for a window and sleep; prefer it to many single win calls.
+- Coordinates: without window, x/y are screen pixels, the same pixels as a full screenshot. With window (id or title/class fragment), x/y are window-relative, matching a screenshot of that window.
+- Input is real (XTEST): a click hits whatever is on top at that point and moves keyboard focus there; type/key go to the focused window. keys are X keysyms, space separated: "Return", "ctrl+l", "ctrl+a BackSpace".
+- Take a screenshot when a claim depends on what is on the screen, and read it before describing it. show shares a frame with the user; the live page (stream) is for the user to watch, not for you.
+- It is a small desktop: openbox places windows and gives them title bars (close/maximize buttons work, alt+F4 too), a taskbar with a clock takes the bottom 36px, clicking a window focuses it. status says when the screen is bare X instead.
+- The user can turn on realistic input in /display: then the pointer glides, typing is human speed and steps pause briefly, so calls take longer. It is instant by default; status shows which.
+- Chromium: pass --ozone-platform=x11 and a fresh --user-data-dir per spawn, or it tries Wayland or opens its window in an instance that is already running.
+- exec, kill, stream and input ops go through the normal shell permission, so /readonly, allow-lists and yolo apply.`
 const marker = "// infiniteoc:guidance-extensions"
 
 // safe-guard's /readonly refuses shells that may change state and editing subagents;
-// spawning programs, driving windows, managing the display and opening the live view
-// are state changes too, while looking at it (status, screenshot, plain show) stays
-// allowed like any other read.
+// spawning/killing programs, driving windows, managing the display and opening the
+// live view are state changes too, while looking at it (status, screenshot, plain
+// show) stays allowed like any other read.
 const READONLY_ANCHOR = '        if (event.tool === "subagent" && !["explore", "reviewer", "researcher"].includes(agent)) return Effect.fail(new Tool.Error({ message: readonlyRefusal(`the ${agent || "general"} subagent (it can edit)`) }))\n'
-const READONLY_DISPLAY = `        // mods/agent-display: spawning, window control, display management and the live view change state; looking does not.
+const READONLY_DISPLAY = `        // mods/agent-display: spawning/killing, input, display management and the live view change state; looking (status, screenshot, plain show, list/wait/sleep) does not.
         if (event.tool === "agent_display") {
-          const displayInput = event.input as { action?: unknown; live?: unknown }
-          if (["exec", "win", "start", "stop", "stream"].includes(String(displayInput?.action ?? "")) || displayInput?.live === true)
-            return Effect.fail(new Tool.Error({ message: readonlyRefusal("the agent display (driving windows changes state)") }))
+          const displayInput = event.input as { action?: unknown; op?: unknown; steps?: unknown; live?: unknown }
+          const displayAction = String(displayInput?.action ?? "")
+          const looks = (op: unknown) => ["list", "wait", "sleep"].includes(String(op ?? ""))
+          const acts =
+            ["exec", "kill", "start", "stop", "stream"].includes(displayAction) ||
+            (displayAction === "win" && !looks(displayInput?.op)) ||
+            (displayAction === "steps" && !(Array.isArray(displayInput?.steps) && displayInput.steps.every((step: any) => looks(step?.op)))) ||
+            displayInput?.live === true
+          if (acts) return Effect.fail(new Tool.Error({ message: readonlyRefusal("the agent display (input and programs change state)") }))
         }
 `
 
@@ -48,6 +59,8 @@ export default {
   version: "1.0.0",
   async setup(api) {
     await api.write(`${CORE}/${LIB.replace(/\.js$/, ".ts")}`, await file("display.ts"))
+    await api.write(`${CORE}/infiniteoc-agent-display-desktop.ts`, await file("desktop.ts"))
+    await api.write(`${CORE}/infiniteoc-agent-display-viewer.ts`, `// The live page (mods/agent-display/viewer.html).\nexport const VIEWER = ${JSON.stringify(await file("viewer.html"))}\n`)
     await api.write(`${CORE}/infiniteoc-agent-display.ts`, relink(await file("plugin.ts")))
     await api.patch(`${CORE}/internal.ts`, (source) => {
       source = replace(source, 'import { SubagentTool } from "../tool/plugin/subagent.js"\n', 'import { SubagentTool } from "../tool/plugin/subagent.js"\nimport * as InfiniteocAgentDisplay from "./infiniteoc-agent-display.js"\n')
@@ -60,7 +73,7 @@ export default {
       return source.replace(marker, () => `infiniteocGuidance.build.push(${JSON.stringify(guidance)})\n${marker}`)
     })
 
-    // safe-guard (when enabled before this mod): /readonly also covers display exec/start/stop.
+    // safe-guard (when enabled before this mod): /readonly also covers display exec/kill/start/stop.
     const safety = `${CORE}/infiniteoc-safety.ts`
     const guarded = await api.read(safety).then((source) => source.includes(READONLY_ANCHOR), () => false)
     if (guarded) await api.patch(safety, (source) => replace(source, READONLY_ANCHOR, READONLY_ANCHOR + READONLY_DISPLAY, "safe-guard readonly subagent rule"))
