@@ -15,6 +15,7 @@ const PROTOCOLS = [
   ["anthropic", "Anthropic", "https://api.anthropic.com/v1"],
   ["openai-completions", "OpenAI-compatible (chat completions)", "https://api.openai.com/v1"],
   ["openai-responses", "OpenAI (responses API)", "https://api.openai.com/v1"],
+  ["gemini", "Google Gemini (custom base URL, key optional)", "https://generativelanguage.googleapis.com/v1beta"],
 ]
 const exists = (path) => access(path).then(() => true, () => false)
 const dataDir = (env) => opencodeDataDir(env)

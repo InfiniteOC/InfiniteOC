@@ -64,6 +64,7 @@ export const providerProtocols = Object.freeze({
   anthropic: "@ai-sdk/anthropic",
   "openai-completions": "@ai-sdk/openai-compatible",
   "openai-responses": "@ai-sdk/openai",
+  gemini: "@ai-sdk/google",
 })
 export function validateProvider(input) {
   if (!record(input) || !Object.hasOwn(providerProtocols, input.protocol)) throw new Error("Invalid provider protocol")

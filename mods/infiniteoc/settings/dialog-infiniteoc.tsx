@@ -177,6 +177,7 @@ export function DialogInfiniteOC(props: { notice?: string }) {
       { title: "Anthropic messages", value: "anthropic" },
       { title: "OpenAI chat completions", value: "openai-completions" },
       { title: "OpenAI responses", value: "openai-responses" },
+      { title: "Google Gemini (custom base URL, key optional)", value: "gemini" },
     ], (value) => { set("protocol", value); id() })
   }
   function removeProvider() {

@@ -57,13 +57,18 @@ test("provider field errors are static plain Errors, safe to show inline per wiz
   }
 })
 test("provider packages match upstream AISDKNative protocol selection, explicit models required", () => {
-  for (const [protocol, pkg] of Object.entries({ anthropic: "@ai-sdk/anthropic", "openai-completions": "@ai-sdk/openai-compatible", "openai-responses": "@ai-sdk/openai" })) {
+  for (const [protocol, pkg] of Object.entries({ anthropic: "@ai-sdk/anthropic", "openai-completions": "@ai-sdk/openai-compatible", "openai-responses": "@ai-sdk/openai", gemini: "@ai-sdk/google" })) {
     const result = buildProvider({ ...input, protocol }, "{env:MY_API_KEY}")
     assert.equal(result.package, pkg)
     assert.deepEqual(result.models["model-a"], { name: "model-a", modelID: "model-a" })
     assert.equal(result.settings.apiKey, "{env:MY_API_KEY}")
   }
   for (const extra of [{ models: "" }, { id: "__proto__" }, { baseURL: "https://user:secret-value@example.com" }, { protocol: "invalid" }]) assert.throws(() => validateProvider({ ...input, ...extra }))
+})
+test("gemini provider takes a custom base URL and works without an API key", () => {
+  const result = buildProvider({ ...input, protocol: "gemini", baseURL: "http://127.0.0.1:8080/v1beta" })
+  assert.equal(result.package, "@ai-sdk/google")
+  assert.deepEqual(result.settings, { baseURL: "http://127.0.0.1:8080/v1beta" })
 })
 test("save provider preserves existing JSON, backs up mode600, isolates raw keys", async () => {
   const dir = await lab(), configFile = path.join(dir, "opencode.json"), file = path.join(dir, "settings.json")

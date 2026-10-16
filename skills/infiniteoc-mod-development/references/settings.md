@@ -35,6 +35,7 @@ Protocol/package mapping in the implemented helper:
 | `anthropic` | `@ai-sdk/anthropic` |
 | `openai-completions` | `@ai-sdk/openai-compatible` |
 | `openai-responses` | `@ai-sdk/openai` |
+| `gemini` | `@ai-sdk/google` |
 
 `buildProvider` produces name/package/settings/models for the pinned config.
 Before changing mappings verify schema, native SDK selection and model protocol
