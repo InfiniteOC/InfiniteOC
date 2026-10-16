@@ -676,7 +676,9 @@ test("plugin keeps upstream's permission model: same check and visibility as sub
   assert.match(source, /Effect\.onInterrupt\(\(\) => cancel\(run, "the starting agent was interrupted"\)\)/)
   assert.match(source, /const running = D\.cancelAll\(run\.wf, Date\.now\(\), "interrupted"\)\n\s+run\.wf\.status = "interrupted"\n\s+for \(const other of running\) yield\* stopSession/)
   assert.match(source, /if \(state\.status !== "pending"\) continue/)
-  assert.match(source, /if \(kind === "context"\) event\.system\.push/)
+  // Compaction and side generations get the same guidance, so their prompt prefix (and cache) matches.
+  assert.doesNotMatch(source, /kind === "context"/)
+  for (const kind of ["context", "compaction", "generate"]) assert.match(source, new RegExp(`ctx\\.session\\.hook\\("${kind}", hook\\)`))
 })
 
 test("flag.mjs: other mods read and flip workflows.enabled without touching other keys", async () => {

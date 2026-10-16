@@ -1,9 +1,11 @@
 // InfiniteOC ctx: what goes into the model's context. Written to packages/core/src/plugin/infiniteoc-ctx.ts
 // by mods/ctx-context. Adds the memory, repo_map, trace_lookup, type_lookup, log_tail, sql_peek,
 // openapi_lookup and linked_repo tools, the /pin /unpin /glossary commands, @url mentions, and a
-// per-turn block of project memory, glossary, pins, dependency versions and machine profile.
-// Persistence and lookups live in infiniteoc-ctx-store.ts and infiniteoc-ctx-knowledge.ts (pure, tested).
-import { ToolFailure } from "@opencode/ai"
+// project memory, glossary, pins, dependency versions and machine profile as a session instruction
+// source (infiniteoc-ctx-instruction.ts, cache-stable), and request slimming: smaller tool images and
+// only the recent screenshots resent. Persistence and lookups live in infiniteoc-ctx-store.ts and
+// infiniteoc-ctx-knowledge.ts (pure, tested).
+import { Message, ToolFailure } from "@opencode/ai"
 import { define } from "@opencode/plugin/effect/plugin"
 import { TuiEvent } from "@opencode/schema/tui-event"
 import { Effect, Schema } from "effect"
@@ -11,8 +13,10 @@ import path from "path"
 import { fileURLToPath } from "url"
 import { Bus } from "../bus.js"
 import { FileAccess } from "../file-access.js"
+import { Image } from "../image.js"
 import { convertHTMLToMarkdown } from "../tool/html-markdown.js"
 import * as K from "./infiniteoc-ctx-knowledge.js"
+import { lastRendered } from "./infiniteoc-ctx-instruction.js"
 import * as Store from "./infiniteoc-ctx-store.js"
 
 // Agents whose requests never need project knowledge.
@@ -35,44 +39,15 @@ const dataUri = (text: string) => `data:text/plain;base64,${Buffer.from(text).to
 const field = (description: string) => Schema.optionalKey(Schema.String).annotate({ description })
 const count = (description: string) => Schema.optionalKey(Schema.Number).annotate({ description })
 
-let libraryCache: { root: string; at: number; text: string | undefined } | undefined
-const libraries = (root: string) => {
-  if (libraryCache?.root === root && Date.now() - libraryCache.at < 30_000) return libraryCache.text
-  libraryCache = { root, at: Date.now(), text: K.libraries(root) }
-  return libraryCache.text
-}
-
-let machine: string | undefined
-
-/** The text blocks added after the system prompt on every turn; each is omitted when empty. */
-export function contextBlocks(root: string, sessionID: string) {
-  const memory = Store.listItems(Store.memoryFile(root))
-  const glossary = Store.listItems(Store.glossaryFile(root))
-  const config = Store.readConfig(root)
-  const repos = (config.repos ?? []).map((repo) => Store.resolveIn(root, repo))
-  const newest = (items: string[], limit: number) => {
-    let used = 0
-    const kept = items.toReversed().filter((item) => (used += item.length + 3) <= limit).toReversed()
-    return kept.map((item) => `- ${item}`).join("\n")
-  }
-  try {
-    machine ??= K.machineProfile(path.join(Store.dataRoot(), "machine.json"))
-  } catch {}
-  return [
-    machine,
-    libraries(root),
-    glossary.length ? `Project glossary (terms as this project defines them; the user manages it with /glossary):\n${newest(glossary, 4000)}` : undefined,
-    memory.length ? `Project memory (facts earlier sessions saved with the memory tool; the user edits it with /memory). Treat as hints and verify against the code before relying on them:\n${newest(memory, 8000)}` : undefined,
-    repos.length ? `Linked read-only repositories (use the linked_repo tool to list, read or grep them; never edit them):\n${repos.map((repo) => `- ${path.basename(repo)}: ${repo}`).join("\n")}` : undefined,
-    Store.renderPins(sessionID, root),
-  ].filter((block): block is string => Boolean(block))
-}
-
 export const Plugin = define({
   id: "infiniteoc.ctx",
   effect: Effect.fn(function* (ctx) {
     const bus = yield* Bus.Service
     const access = yield* FileAccess.Service
+    // Every step resends every image still in the history. Upstream lets each one reach 5 MB of base64;
+    // screenshots (agent_display, ui_check, read of a .png) are re-encoded as JPEG above this instead,
+    // at the same size so screen coordinates stay valid. media.image in opencode.json still overrides it.
+    yield* (yield* Image.Service).transform((editor) => editor.configure({ maxBase64Bytes: Store.TOOL_IMAGE_BYTES }))
     const root = Store.projectRoot(ctx.location.directory)
     const toast = (title: string, message: string, variant: "info" | "success" | "warning" | "error" = "info", duration = 6000) =>
       bus.publish(TuiEvent.ToastShow, { title, message, variant, duration }).pipe(Effect.asVoid)
@@ -221,7 +196,7 @@ export const Plugin = define({
             }
             try {
               const { pins, tokens } = Store.addPin(input.sessionID, target(input))
-              return toast("Pinned", `${path.relative(root, target(input))} (about ${tokens} tokens per turn, ${pins.length} pinned). /unpin removes it.`, "success")
+              return toast("Pinned", `${path.relative(root, target(input))} (about ${tokens} tokens in context, ${pins.length} pinned). /unpin removes it.`, "success")
             } catch (error) {
               return toast("Pin failed", error instanceof Error ? error.message.replace(/^ENOENT.*open '(.*)'$/, "No such file: $1") : String(error), "error")
             }
@@ -296,12 +271,12 @@ export const Plugin = define({
     yield* ctx.session.hook("context", (event) => {
       if (SKIP.has(event.agent)) return Effect.void
       try {
-        const added = contextBlocks(root, event.sessionID)
-        for (const text of added) event.system.push({ type: "text", text })
-        const report = Store.breakdown(event as unknown as Store.RequestShape, added)
+        Store.trimToolImages(event.messages, (message, content) => Message.make({ ...message, content }))
+        const ours = lastRendered.get(event.sessionID)
+        const report = Store.breakdown(event as unknown as Store.RequestShape, ours ? [ours] : [])
         Store.writeSnapshot(event.sessionID, { at: Date.now(), agent: event.agent, ...report })
       } catch (cause) {
-        return Effect.logWarning("InfiniteOC ctx block failed", { cause })
+        return Effect.logWarning("InfiniteOC ctx request shaping failed", { cause })
       }
       return Effect.void
     })

@@ -1,9 +1,10 @@
 // InfiniteOC ponytail: the lazy-senior-dev ruleset from github.com/DietrichGebert/ponytail (MIT,
 // bundled in skills/ponytail*), off by default and applied only to turns that write code when enabled.
 // Written to packages/core/src/plugin/infiniteoc-ponytail.ts by mods/infiniteoc, which inlines the
-// skill body below. The block goes just before the turn's user message and is never persisted, so it
-// stays put across one turn's steps (prompt cache friendly) and costs nothing on chat turns.
-import { Message } from "@opencode/ai"
+// skill body below. A fixed level sits in the system prompt (the same on every turn, so it stays in the
+// provider's cached prefix). In auto mode the block goes just before the turn's user message and is
+// never persisted: it stays put across one turn's steps and costs nothing on chat turns.
+import { Message, SystemPart } from "@opencode/ai"
 import { define } from "@opencode/plugin/effect/plugin"
 import { TuiEvent } from "@opencode/schema/tui-event"
 import { Effect } from "effect"
@@ -127,12 +128,29 @@ export const Plugin = define({
         })
     })
 
+    // A fixed level applies to every turn: the system prompt keeps it in the cached prefix, and compaction
+    // and side generations repeat the session's last block so they reuse that cache. Auto decides per turn,
+    // so its block goes before the turn's message, where switching on and off is cheaper.
+    const sent = new Map<string, string | undefined>()
     yield* ctx.session.hook("context", (event) => {
-      const level = decide(readMode(), event.agent, event.messages)
+      const mode = readMode()
+      const level = decide(mode, event.agent, event.messages)
+      sent.set(event.sessionID, level && mode !== "auto" ? rules(level) : undefined)
       if (!level) return Effect.void
+      if (mode !== "auto") {
+        event.system.push(SystemPart.make(rules(level)))
+        return Effect.void
+      }
       const last = event.messages.findLastIndex((message) => message.role === "user")
       event.messages.splice(last === -1 ? event.messages.length : last, 0, Message.user(rules(level)))
       return Effect.void
     })
+    const replay = (event: { sessionID: string; system: Array<SystemPart> }) =>
+      Effect.sync(() => {
+        const text = sent.get(event.sessionID)
+        if (text) event.system.push(SystemPart.make(text))
+      })
+    yield* ctx.session.hook("compaction", replay)
+    yield* ctx.session.hook("generate", replay)
   }),
 })

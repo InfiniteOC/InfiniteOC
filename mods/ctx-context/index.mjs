@@ -10,7 +10,7 @@ function replace(source, before, after) {
 const file = (name) => readFile(new URL(`./${name}`, import.meta.url), "utf8")
 
 export const guidance = `[Project context]
-memory: durable facts (build/test cmds, gotchas, prefs; one line each, never secrets) seen every session. Start unfamiliar repos with repo_map {path?,query?}; trace_lookup on pasted stack first; type_lookup for installed APIs, not memory. log_tail, sql_peek, openapi_lookup, linked_repo read logs/SQLite/OpenAPI/siblings from .infiniteoc/context.json (read-only). Deps, glossary, memory, pins already in context; use glossary meanings. @https://url in prompt attaches page. Manage: /memory, /glossary, /pin, /unpin, /pins, /context.`
+memory: durable facts (build/test cmds, gotchas, prefs; one line each, never secrets) seen every session. Start unfamiliar repos with repo_map {path?,query?}; trace_lookup on pasted stack first; type_lookup for installed APIs, not memory. log_tail, sql_peek, openapi_lookup, linked_repo read logs/SQLite/OpenAPI/siblings from .infiniteoc/context.json (read-only). Deps, glossary, memory, pins already in context (later changes arrive as "[InfiniteOC project context update]" messages that replace the earlier version); use glossary meanings. @https://url in prompt attaches page. Manage: /memory, /glossary, /pin, /unpin, /pins, /context.`
 
 // Always keeps decisions, paths and open TODOs word for word when a session is compacted.
 export const compactionRules = `- Preserve exact file paths, symbols, commands, error strings, URLs, and identifiers.
@@ -23,7 +23,15 @@ export default {
     const store = await file("store.ts")
     await api.write("packages/core/src/plugin/infiniteoc-ctx-store.ts", store)
     await api.write("packages/core/src/plugin/infiniteoc-ctx-knowledge.ts", await file("knowledge.ts"))
+    await api.write("packages/core/src/plugin/infiniteoc-ctx-instruction.ts", await file("instruction.ts"))
     await api.write("packages/core/src/plugin/infiniteoc-ctx.ts", await file("plugin.ts"))
+    // Memory, glossary, pins and dependency versions are an instruction source, after upstream's own
+    // (most to least shared): the first value sits in the system prompt, changes are appended to the
+    // history, so the cached prompt prefix survives them.
+    await api.patch("packages/core/src/session/context.ts", (source) => {
+      source = replace(source, 'import { SessionStore } from "./store.js"\n', 'import { SessionStore } from "./store.js"\nimport * as InfiniteocCtxInstruction from "../plugin/infiniteoc-ctx-instruction.js"\n')
+      return replace(source, "          loaded.builtins,\n          loaded.entries,\n", "          loaded.builtins,\n          InfiniteocCtxInstruction.make(location.directory, sessionID),\n          loaded.entries,\n")
+    })
     // Inserted before an upstream line that stays intact, so mods patching the same list still find it.
     await api.patch("packages/core/src/plugin/internal.ts", (source) => {
       source = replace(source, 'import { WarmingPlugin } from "./warming.js"', 'import * as InfiniteocCtx from "./infiniteoc-ctx.js"\nimport { WarmingPlugin } from "./warming.js"')

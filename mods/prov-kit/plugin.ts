@@ -1,7 +1,7 @@
 // InfiniteOC prov-kit server plugin: /budget, model routing, provider fallback, offline mode, Docker
 // awareness and the free_port / env_diff tools. Written to packages/core/src/plugin/infiniteoc-prov.ts
 // by mods/prov-kit next to infiniteoc-prov-lib.ts (the pure helpers; see lib.ts).
-import { Message } from "@opencode/ai"
+import { SystemPart } from "@opencode/ai"
 import { define } from "@opencode/plugin/effect/plugin"
 import { Model } from "@opencode/schema/model"
 import type { Session } from "@opencode/schema/session"
@@ -237,15 +237,30 @@ export const Plugin = define({
           }),
       )
 
+    // System prompt, not before the turn's message: the notes rarely change, and a block that moved with
+    // every turn made the provider re-read the previous turn uncached. Compaction and side generations
+    // get the same bytes as the session's last request, so they reuse its cache.
+    const environment = Effect.gen(function* () {
+      const notes = [...(lib.offline(networkInterfaces()) ? [OFFLINE_NOTE] : []), ...[yield* dockerNote()].filter((text): text is string => !!text)]
+      return notes.length ? `[InfiniteOC environment]\n${notes.join("\n")}` : undefined
+    })
+    const sent = new Map<string, string | undefined>()
+    const push = (system: Array<SystemPart>, text: string | undefined) => void (text && system.push(SystemPart.make(text)))
     yield* ctx.session.hook("context", (event) =>
       Effect.gen(function* () {
         if (QUIET.has(event.agent)) return
-        const notes = [...(lib.offline(networkInterfaces()) ? [OFFLINE_NOTE] : []), ...[yield* dockerNote()].filter((text): text is string => !!text)]
-        if (!notes.length) return
-        const last = event.messages.findLastIndex((message) => message.role === "user")
-        event.messages.splice(last === -1 ? event.messages.length : last, 0, Message.user(`[InfiniteOC environment]\n${notes.join("\n")}`))
+        const text = yield* environment
+        sent.set(event.sessionID, text)
+        push(event.system, text)
       }),
     )
+    const replay = (event: { sessionID: string; agent: string; system: Array<SystemPart> }) =>
+      Effect.gen(function* () {
+        if (QUIET.has(event.agent)) return
+        push(event.system, sent.has(event.sessionID) ? sent.get(event.sessionID) : yield* environment)
+      })
+    yield* ctx.session.hook("compaction", replay)
+    yield* ctx.session.hook("generate", replay)
 
     // ---- run end: pause /goal at the budget, undo temporary model switches ----
     yield* ctx.event.subscribe().pipe(

@@ -9,7 +9,7 @@ The classic `subagent` tool is unchanged and stays available.
 
 **Off by default.** Turn it on in `/settings` → InfiniteOC Settings → Workflows, in
 `/workflows` → Settings, or with `"workflows": {"enabled": true}` in the InfiniteOC settings
-file. Why off: when on, every primary request carries the tool and its guidance (tokens),
+file. Why off: when on, every request carries the tool and its guidance (tokens; compaction gets them too, so it reuses the session's prompt cache),
 the automatic *strong* tier may pick a pricier model than the one the user chose, and a
 finished workflow wakes the agent for another turn, like a background subagent does. Those
 are cost decisions the user (or the InfiniCode mod, see the contract below) should opt into.
