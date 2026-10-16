@@ -90,6 +90,55 @@ export function buildProvider(input, keyReference) {
 }
 // Keys never enter settings metadata or error messages. Raw keys are stored separately;
 // OpenCode's ConfigVariable substitutes {file:...} and {env:...} on load.
+// opencode merges opencode.json with an opencode.jsonc beside it; the overlay only beats this write when it
+// defines the same provider ID. Comments and trailing commas are stripped outside of strings to read it.
+export function parseJsonc(text) {
+  let out = "", quoted = false
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (quoted) { out += c; if (c === "\\") out += text[++i] ?? ""; else if (c === '"') quoted = false; continue }
+    if (c === '"') { quoted = true; out += c; continue }
+    if (c === "/" && text[i + 1] === "/") { while (i < text.length && text[i] !== "\n") i++; out += "\n"; continue }
+    if (c === "/" && text[i + 1] === "*") { const end = text.indexOf("*/", i + 2); i = end < 0 ? text.length : end + 1; continue }
+    out += c
+  }
+  return JSON.parse(out.replace(/,(\s*[}\]])/g, "$1"))
+}
+async function assertNoOverlayConflict(configFile, id) {
+  let raw
+  try { raw = await readFile(`${configFile}c`, "utf8") } catch (e) { if (e.code === "ENOENT") return; throw e }
+  let overlay
+  try { overlay = parseJsonc(raw) } catch { throw new Error("Could not read the JSONC overlay beside the config; fix its syntax or remove it before adding providers") }
+  if (record(overlay) && [overlay.providers, overlay.provider].some((group) => record(group) && Object.hasOwn(group, id))) throw new Error("The JSONC overlay already defines this provider ID; choose a new ID")
+}
+// Asks the endpoint which models it serves. The key only goes to the base URL the user typed, redirects are refused so
+// it cannot be forwarded elsewhere, and failures give static text (never the key, URL or response body).
+export async function discoverModels(input, options = {}) {
+  const provider = validateProvider({ ...input, models: input.models || "x" })
+  let key = provider.apiKey
+  const env = /^\{env:([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(key)
+  if (env) key = (options.env || process.env)[env[1]] || ""
+  const headers = { accept: "application/json" }
+  if (provider.protocol === "gemini") { if (key) headers["x-goog-api-key"] = key }
+  else if (provider.protocol === "anthropic") { headers["anthropic-version"] = "2023-06-01"; if (key) headers["x-api-key"] = key }
+  else if (key) headers.authorization = `Bearer ${key}`
+  let body
+  try {
+    const response = await (options.fetch || fetch)(`${provider.baseURL.replace(/\/+$/, "")}/models${provider.protocol === "gemini" ? "?pageSize=1000" : ""}`, { headers, redirect: "error", signal: AbortSignal.timeout(options.timeout ?? 8000) })
+    if (!response.ok) throw new Error(`The endpoint answered HTTP ${response.status} to its model list`)
+    body = await response.json()
+  } catch (e) {
+    if (e instanceof Error && e.constructor === Error && e.message.startsWith("The endpoint")) throw e
+    throw new Error("Could not reach the endpoint's model list")
+  }
+  const list = Array.isArray(body) ? body : Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : []
+  const ids = list
+    .filter((m) => !Array.isArray(m?.supportedGenerationMethods) || m.supportedGenerationMethods.includes("generateContent"))
+    .map((m) => String(typeof m === "string" ? m : m?.id ?? m?.name ?? "").replace(/^models\//, ""))
+    .filter((id) => id && !/[\s#\0]/.test(id) && !["__proto__", "constructor", "prototype"].includes(id))
+  if (!ids.length) throw new Error("The endpoint returned no models")
+  return [...new Set(ids)].sort()
+}
 export async function saveProvider(input, options = {}) {
   const provider = validateProvider(input)
   const configFile = options.configFile || providerConfigFile()
@@ -97,8 +146,7 @@ export async function saveProvider(input, options = {}) {
   const { raw, value } = await readObject(configFile)
   if (value.providers !== undefined && !record(value.providers)) throw new Error("Existing providers must be an object")
   if (Object.hasOwn(value.providers || {}, provider.id) || Object.hasOwn(value.provider || {}, provider.id)) throw new Error("Provider ID already exists; choose a new ID")
-  // Avoid a conflicting global JSONC overlay that would silently win over this write.
-  try { await lstat(`${configFile}c`); throw new Error("A JSONC overlay exists; convert it to strict JSON before adding providers") } catch (e) { if (e.code !== "ENOENT") throw e }
+  await assertNoOverlayConflict(configFile, provider.id)
   let keyReference = provider.apiKey
   let keyFile
   if (keyReference && !/^\{env:[A-Za-z_][A-Za-z0-9_]*\}$/.test(keyReference)) {

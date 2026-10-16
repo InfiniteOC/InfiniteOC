@@ -9,6 +9,7 @@ import { useTheme } from "../context/theme"
 import { FadeInText } from "./fade-in-text"
 import { Spinner } from "./spinner"
 import { loadSettings, saveSettings, saveProvider, deleteProvider, validateProvider, validateTraffic } from "./settings-store"
+import { discoverModels } from "./settings-store.mjs"
 
 type Traffic = { mode: string; proxyURL: string; socksHost: string; socksPort: number; noProxy: string }
 type Settings = { traffic: Traffic; providers: Record<string, { protocol: string; models: string[] }>; updates?: { mode?: string } }
@@ -161,17 +162,35 @@ export function DialogInfiniteOC(props: { notice?: string }) {
       await saveSettings({ ...current, providers: { ...current.providers, [result.id]: { protocol: result.protocol, models: result.models } } })
       home("Provider added · restart InfiniteOC, then choose its model")
     }
-    const key = () => choose("Add provider · 5/5 API key", [
+    // The key is held in memory until the last step; it is only written when the provider is saved.
+    let apiKey = ""
+    const manual = (why: string) => prompt("Add provider · 5/5 Model IDs", "", `${why ? why + ". " : ""}Comma or space-separated exact API model IDs.`, (value) => { set("models", value); return finish(apiKey) })
+    const models = () => void run(async () => {
+      let ids: string[] = []
+      let why = ""
+      setSaving(true)
+      try { ids = (await discoverModels({ ...sample, ...draft, apiKey })) as string[] } catch (e) { why = reason(e) } finally { setSaving(false) }
+      if (!ids.length) return manual(why)
+      choose(`Add provider · 5/5 Models (${ids.length} found)`, [
+        { title: `All ${ids.length} found models`, value: "\u0000all" },
+        ...ids.map((id) => ({ title: id, value: id })),
+        { title: "Type IDs myself", value: "\u0000manual" },
+      ], (value) => {
+        if (value === "\u0000manual") return manual("")
+        set("models", value === "\u0000all" ? ids.join(",") : value)
+        return finish(apiKey)
+      })
+    })
+    const key = () => choose("Add provider · 4/5 API key", [
       { title: "Environment variable (recommended)", value: "env", description: "Key stays outside configuration" },
       { title: "Enter key (masked)", value: "key", description: "Local mode-600 key file" },
       { title: "No key", value: "none", description: "For unauthenticated local endpoints" },
     ], (mode) => {
-      if (mode === "none") return finish("")
-      if (mode === "key") { dialog.replace(() => <SecretPrompt busy={saving()} error={error()} onCancel={() => home()} onConfirm={(value) => void run(() => finish(value))} />, undefined, { size: "large" }); return }
-      prompt("Add provider · 5/5 API key", "", "Environment variable NAME only, e.g. MY_PROVIDER_API_KEY. Export it before restarting InfiniteOC.", (name) => finish(`{env:${name}}`))
+      if (mode === "none") { apiKey = ""; return models() }
+      if (mode === "key") { dialog.replace(() => <SecretPrompt busy={saving()} error={error()} onCancel={() => home()} title="Add provider · 4/5 API key" onConfirm={(value) => { apiKey = value; models() }} />, undefined, { size: "large" }); return }
+      prompt("Add provider · 4/5 API key", "", "Environment variable NAME only, e.g. MY_PROVIDER_API_KEY. Export it before restarting InfiniteOC. Model discovery sends it only to the base URL you entered.", (name) => { apiKey = `{env:${name}}`; validateProvider({ ...sample, ...draft, apiKey }); models() })
     })
-    const models = () => prompt("Add provider · 4/5 Model IDs", "", "Comma or space-separated exact API model IDs. Provider discovery is not automatic.", (value) => { set("models", value); key() })
-    const baseURL = () => prompt("Add provider · 3/5 Base URL", "", "HTTP(S) API root, including /v1 if needed. No credentials or query parameters.", (value) => { set("baseURL", value); models() })
+    const baseURL = () => prompt("Add provider · 3/5 Base URL", "", "HTTP(S) API root, including /v1 if needed. No credentials or query parameters.", (value) => { set("baseURL", value); key() })
     const id = () => prompt("Add provider · 2/5 Provider ID", "", "Letters, digits, hyphens, underscores. Existing provider IDs are not overwritten.", (value) => { set("id", value); baseURL() })
     choose("Add provider · 1/5 Protocol", [
       { title: "Anthropic messages", value: "anthropic" },

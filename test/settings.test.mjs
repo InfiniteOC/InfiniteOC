@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, readFile, writeFile, stat, readdir } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { loadSettings, saveSettings, settingsFile, validateTraffic, validateProvider, buildProvider, saveProvider } from "../mods/infiniteoc/settings/settings-store.mjs"
+import { loadSettings, saveSettings, settingsFile, validateTraffic, validateProvider, buildProvider, saveProvider, discoverModels } from "../mods/infiniteoc/settings/settings-store.mjs"
 import { installSettings } from "../mods/infiniteoc/settings/index.mjs"
 import { applyTraffic } from "../src/traffic.mjs"
 
@@ -70,6 +70,33 @@ test("gemini provider takes a custom base URL and works without an API key", () 
   assert.equal(result.package, "@ai-sdk/google")
   assert.deepEqual(result.settings, { baseURL: "http://127.0.0.1:8080/v1beta" })
 })
+test("a JSONC overlay beside the config only blocks the provider ID it defines", async () => {
+  const dir = await lab(), configFile = path.join(dir, "opencode.json")
+  await writeFile(`${configFile}c`, '{\n  // mine\n  "theme": "x", /* c */\n  "providers": { "taken": { "name": "t", }, },\n}\n')
+  await saveProvider({ ...input, id: "fresh" }, { configFile, settingsFile: path.join(dir, "settings.json") })
+  assert.ok(JSON.parse(await readFile(configFile, "utf8")).providers.fresh)
+  await assert.rejects(saveProvider({ ...input, id: "taken" }, { configFile, settingsFile: path.join(dir, "settings.json") }), /already defines/)
+  await writeFile(`${configFile}c`, "{ not json")
+  await assert.rejects(saveProvider({ ...input, id: "other" }, { configFile, settingsFile: path.join(dir, "settings.json") }), /Could not read the JSONC overlay/)
+})
+test("model discovery asks each protocol's list with its own auth and never leaks the key", async () => {
+  const seen = []
+  const reply = (body, ok = true) => async (url, init) => { seen.push({ url, headers: init.headers, redirect: init.redirect }); return { ok, status: ok ? 200 : 401, json: async () => body } }
+  const gemini = await discoverModels({ ...input, protocol: "gemini", baseURL: "https://h.example/v1beta/", apiKey: "secret-value" }, { fetch: reply({ models: [{ name: "models/gem-b", supportedGenerationMethods: ["generateContent"] }, { name: "models/embed", supportedGenerationMethods: ["embedContent"] }, { name: "models/gem-a" }] }) })
+  assert.deepEqual(gemini, ["gem-a", "gem-b"])
+  assert.equal(seen[0].url, "https://h.example/v1beta/models?pageSize=1000")
+  assert.equal(seen[0].headers["x-goog-api-key"], "secret-value")
+  assert.equal(seen[0].redirect, "error")
+  assert.deepEqual(await discoverModels({ ...input, protocol: "openai-completions", apiKey: "{env:K}" }, { env: { K: "k1" }, fetch: reply({ data: [{ id: "m2" }, { id: "m1" }] }) }), ["m1", "m2"])
+  assert.equal(seen[1].headers.authorization, "Bearer k1")
+  await discoverModels({ ...input, protocol: "anthropic", apiKey: "k2" }, { fetch: reply({ data: [{ id: "c" }] }) })
+  assert.equal(seen[2].headers["x-api-key"], "k2")
+  await discoverModels({ ...input, protocol: "gemini" }, { fetch: reply({ models: [{ name: "models/x" }] }) })
+  assert.equal("x-goog-api-key" in seen[3].headers, false)
+  await assert.rejects(discoverModels({ ...input, apiKey: "secret-value" }, { fetch: reply({}, false) }), (e) => /HTTP 401/.test(e.message) && !e.message.includes("secret-value"))
+  await assert.rejects(discoverModels({ ...input, apiKey: "secret-value" }, { fetch: async () => { throw new Error("secret-value boom") } }), (e) => /Could not reach/.test(e.message) && !e.message.includes("secret-value"))
+  await assert.rejects(discoverModels(input, { fetch: reply({ data: [] }) }), /no models/)
+})
 test("save provider preserves existing JSON, backs up mode600, isolates raw keys", async () => {
   const dir = await lab(), configFile = path.join(dir, "opencode.json"), file = path.join(dir, "settings.json")
   const original = JSON.stringify({ permissions: [{ tool: "bash", action: "deny" }], provider: { legacy: { npm: "whatever" } }, providers: { other: { settings: { x: true } } }, unknown: 42 })
@@ -103,7 +130,7 @@ test("malformed JSON/JSONC overlays rejected without modification", async () => 
     assert.equal(await readFile(configFile, "utf8"), raw)
   }
   await writeFile(configFile, "{}")
-  await writeFile(`${configFile}c`, "{}")
+  await writeFile(`${configFile}c`, '{ "providers": { "custom": {} } }')
   await assert.rejects(saveProvider(input, { configFile }), /JSONC overlay/)
   assert.equal(await readFile(configFile, "utf8"), "{}")
   await assert.rejects(saveProvider(input, { configFile: `${configFile}c` }), /JSONC/)
