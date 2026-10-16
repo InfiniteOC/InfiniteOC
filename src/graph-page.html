@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>InfiniteOC · Graph</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%2316111e'/%3E%3Ctext x='16' y='23' font-size='22' text-anchor='middle' fill='%23c084fc'%3E%E2%88%9E%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/graph.css">
+</head>
+<body>
+  <canvas id="graph" aria-label="Graph of projects, sessions and notes. Use the list view for keyboard navigation." role="img"></canvas>
+
+  <header class="bar" role="toolbar" aria-label="Graph controls">
+    <div class="brand"><span class="mark" aria-hidden="true">∞</span> InfiniteOC <span class="dim">Graph</span></div>
+    <label class="search">
+      <span class="visually-hidden">Search nodes</span>
+      <input id="search" type="search" placeholder="Search  /" autocomplete="off" spellcheck="false">
+    </label>
+    <div class="filters" id="filters" aria-label="Show node types"></div>
+    <div class="actions">
+      <button id="view-toggle" class="ghost" type="button" aria-pressed="false">List</button>
+      <button id="refresh" class="ghost" type="button" title="Reload from disk">Refresh</button>
+      <button id="new-note" class="primary" type="button" title="New note (N)">New note</button>
+    </div>
+  </header>
+
+  <section id="list" class="list" hidden aria-label="All nodes by project"></section>
+
+  <aside id="panel" class="panel" hidden aria-labelledby="panel-title">
+    <div class="panel-head">
+      <span id="panel-type" class="badge"></span>
+      <button id="panel-close" class="icon" type="button" aria-label="Close panel">×</button>
+    </div>
+    <h1 id="panel-title"></h1>
+    <p id="panel-path" class="path"></p>
+    <div id="panel-actions" class="panel-actions"></div>
+    <div id="panel-body" class="prose"></div>
+    <h2 class="sub" id="panel-links-title">Linked</h2>
+    <ul id="panel-links" class="links"></ul>
+  </aside>
+
+  <footer class="foot">
+    <div id="legend" class="legend" aria-label="Legend"></div>
+    <div id="stats" class="stats" aria-live="polite"></div>
+  </footer>
+
+  <div id="status" class="status" role="status" hidden></div>
+
+  <dialog id="editor" aria-labelledby="editor-title">
+    <form id="editor-form" method="dialog">
+      <h2 id="editor-title">New note</h2>
+      <label>Title <input id="note-title" required maxlength="200" autocomplete="off"></label>
+      <label>Project <select id="note-project"></select></label>
+      <label>Note <textarea id="note-body" rows="14" spellcheck="true"></textarea></label>
+      <p class="hint">Link with <code>[[Note title]]</code> or <code>[[project]]</code>; tag with <code>#tag</code>. Markdown is fine.</p>
+      <p id="editor-error" class="error" role="alert" hidden></p>
+      <div class="row">
+        <button id="note-delete" class="danger ghost" type="button" hidden>Move to trash</button>
+        <span class="grow"></span>
+        <button value="cancel" class="ghost" type="button" id="note-cancel">Cancel</button>
+        <button value="save" class="primary" type="submit" id="note-save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/graph.js" type="module"></script>
+</body>
+</html>

@@ -8,6 +8,8 @@ import { constants, tmpdir, uptime } from "node:os"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { acquireLock, checked, config, run } from "../src/launcher.mjs"
+// Personal mods (src/user-mods.mjs) must never touch the real ~/.config/infiniteoc/mods from a test.
+process.env.INFINITEOC_MODS_DIR = (await import("node:fs")).mkdtempSync((await import("node:path")).join((await import("node:os")).tmpdir(), "ioc-personal-mods-"))
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const settings = { upstream: "v2.0.21", mods: [] }
@@ -30,7 +32,7 @@ async function install(t, json = settings) {
 }
 const cli = (base, args, env = {}) => spawnSync(process.execPath, [path.join(base, "bin/infiniteoc.mjs"), ...args], {
   cwd: base, encoding: "utf8", timeout: 20000,
-  env: { PATH: path.join(base, "fake-bin"), HOME: base, INFINITEOC_SETTINGS_FILE: path.join(base, "settings.json"), ...env },
+  env: { PATH: path.join(base, "fake-bin"), HOME: base, INFINITEOC_SETTINGS_FILE: path.join(base, "settings.json"), INFINITEOC_MODS_DIR: path.join(base, "personal-mods"), ...env },
 })
 async function script(file, body) {
   await mkdir(path.dirname(file), { recursive: true })
@@ -52,7 +54,7 @@ async function buildable(base) {
     "server/src/handlers/agent.ts": "return yield* response(Agent.Service.use((agent) => agent.list()))",
     "server/src/handlers/model.ts": "const models = yield* Model.Service",
     "server/src/handlers/provider.ts": "const providers = yield* Provider.Service",
-    "core/src/tool/plugin/opencode.ts": 'import { Effect, Schema } from "effect"\n        draft.add({\n          name: "session_rename",',
+    "core/src/tool/plugin/opencode.ts": 'import { Effect, Schema } from "effect"\n    yield* ctx.session.hook("generate", hook)\n    yield* ctx.tool\n        draft.add({\n          name: "session_rename",',
   }
   for (const [file, text] of Object.entries(sources)) {
     await mkdir(path.dirname(path.join(base, ".upstream/packages", file)), { recursive: true })
@@ -197,7 +199,7 @@ test("feature enable checks the mod before editing infiniteoc.json; disable take
   const original = await readFile(file, "utf8")
   const missing = cli(base, ["feature", "enable", "missing"])
   assert.equal(missing.status, 1)
-  assert.match(missing.stderr, /No mod at mods\/missing\/index\.mjs; existing: infiniteoc$/m)
+  assert.match(missing.stderr, /No mod missing: looked in .*mods[\\/]missing\. Create one with infiniteoc feature new missing$/m)
   assert.equal(await readFile(file, "utf8"), original)
   // A mod that fails the check is never written (loading fails before .upstream is needed).
   await mkdir(path.join(base, "mods/bad"))
@@ -208,10 +210,10 @@ test("feature enable checks the mod before editing infiniteoc.json; disable take
   assert.equal(await readFile(file, "utf8"), original)
   // feature check reads only the pinned TUI sources.
   await cp(path.join(repo, ".upstream/packages/tui/src"), path.join(base, ".upstream/packages/tui/src"), { recursive: true })
-  assert.equal(cli(base, ["feature", "new", "hello"]).status, 0)
+  assert.equal(cli(base, ["feature", "new", "hello", "--repo"]).status, 0)
   const enable = cli(base, ["feature", "enable", "hello"])
   assert.equal(enable.status, 0, enable.stderr)
-  assert.match(enable.stdout, /^Enabled hello \(backup: infiniteoc\.json\.bak\)/)
+  assert.match(enable.stdout, /^Enabled hello in infiniteoc\.json \(backup: infiniteoc\.json\.bak\)/)
   assert.deepEqual(JSON.parse(await readFile(file, "utf8")).mods, ["./mods/hello/index.mjs"])
   assert.equal(cli(base, ["feature", "enable", "hello"]).stdout, "hello is already enabled.\n")
   // Any spelling of the same entry counts, for the check as well.
@@ -404,4 +406,33 @@ test("setup builds in four steps, keeps a last good fallback, and the idle resul
   await rm(path.join(base, ".opendaemon"))
   const doctor = cli(base, ["doctor"])
   assert.equal(doctor.status, 0, doctor.stdout)
+})
+
+test("personal mods: feature new scaffolds outside the checkout, enable lists it in mods.json, launches load it", async t => {
+  const base = await install(t)
+  const file = path.join(base, "infiniteoc.json")
+  const original = await readFile(file, "utf8")
+  const personal = path.join(base, "personal-mods")
+  await cp(path.join(repo, ".upstream/packages/tui/src"), path.join(base, ".upstream/packages/tui/src"), { recursive: true })
+  const created = cli(base, ["feature", "new", "mine"])
+  assert.equal(created.status, 0, created.stderr)
+  assert.match(created.stdout, /personal mods folder \(a local git repository, no remote\)/)
+  assert.ok((await stat(path.join(personal, "mine/index.mjs"))).isFile())
+  assert.match(await readFile(path.join(personal, "AGENTS.md"), "utf8"), /Never push/)
+  assert.equal(spawnSync("git", ["remote"], { cwd: personal, encoding: "utf8" }).stdout, "")
+  // The same id cannot also be created inside the checkout.
+  assert.equal(cli(base, ["feature", "new", "mine", "--repo"]).status, 1)
+  const enable = cli(base, ["feature", "enable", "mine"])
+  assert.equal(enable.status, 0, enable.stderr)
+  assert.match(enable.stdout, /^Enabled mine in your personal mods\.json/)
+  assert.deepEqual(JSON.parse(await readFile(path.join(personal, "mods.json"), "utf8")), { enabled: ["mine"] })
+  // The tracked infiniteoc.json is never edited for a personal mod.
+  assert.equal(await readFile(file, "utf8"), original)
+  const { config } = await import(path.join(base, "src/launcher.mjs"))
+  const previous = process.env.INFINITEOC_MODS_DIR
+  process.env.INFINITEOC_MODS_DIR = personal
+  try { assert.deepEqual((await config(base)).mods.slice(-1), [path.join(personal, "mine/index.mjs")]) } finally { process.env.INFINITEOC_MODS_DIR = previous }
+  assert.match(cli(base, ["feature", "disable", "mine"]).stdout, /^Disabled mine/)
+  assert.deepEqual(JSON.parse(await readFile(path.join(personal, "mods.json"), "utf8")), { enabled: [] })
+  assert.equal(await readFile(file, "utf8"), original)
 })

@@ -21,9 +21,17 @@
     "./mods/accounts/index.mjs",
     "./mods/workflows/index.mjs",
     "./mods/infinicode/index.mjs",
-    "./mods/agent-display/index.mjs"
+    "./mods/agent-display/index.mjs",
+    "./mods/connectors/index.mjs",
+    "./mods/projects/index.mjs",
+    "./mods/sessions/index.mjs",
+    "./mods/devices/index.mjs"
   ],
   "options": {
-    "reducedMotion": false
+    "reducedMotion": false,
+    "webUi": true,
+    "workflows": {
+      "enabled": true
+    }
   }
 }

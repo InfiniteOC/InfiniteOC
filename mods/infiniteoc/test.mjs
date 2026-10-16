@@ -28,7 +28,7 @@ async function apply(reducedMotion = false, files = new Map()) {
 
 test("applies against local source, preserving all permission-rule code", async () => {
   const files = await apply()
-  assert.equal(files.size, 39)
+  assert.equal(files.size, 40)
   assert.equal(files.get("packages/core/src/infiniteoc/background.ts"), await readFile(new URL("./background.ts", import.meta.url), "utf8"))
   const file = "packages/core/src/plugin/agent.ts"
   const original = await readFile(path.join(root, file), "utf8")
@@ -275,10 +275,10 @@ test("goal holds while background work runs instead of re-prompting, without bur
   assert.deepEqual(decide([start, reply("started a workflow, waiting"), idle()]), { action: "continue", goal, turn: 1 })
   assert.deepEqual(decide([start, reply("started a workflow, waiting"), idle(), notice, reply("read the results"), idle()]), { action: "continue", goal, turn: 1 })
   const resumed = continueText(goal, 1, timedOut.note)
-  assert.match(resumed, /^\[InfiniteOC goal: continue\]\nGoal: ship it\n\nContinuation 1 of 20\. Background work is still running/)
+  assert.match(resumed, /^\[InfiniteOC goal: continue\]\nGoal: ship it\n\nContinuation 1 of 50\. Background work is still running/)
   assert.deepEqual(decide([start, reply("x"), idle(), synthetic(resumed), reply("checked once"), idle()]), { action: "continue", goal, turn: 2 })
   assert.equal(continueText(goal, 2), continueText(goal, 2, undefined))
-  assert.equal(MAX_CONTINUATIONS, 20)
+  assert.equal(MAX_CONTINUATIONS, 50)
   // The protocol tells the agent that ending the turn is the way to wait.
   assert.match(startText(goal), /end your turn instead of checking on it: the goal waits/)
 })
@@ -456,4 +456,93 @@ test("the goal word animation matches only a leading /goal command", async () =>
   const pattern = new RegExp(/export const GOAL_WORD = \/(.+)\/\n/.exec(source)[1])
   for (const text of ["/goal", "/goal make it", "/goal\nnext"]) assert.ok(pattern.test(text), text)
   for (const text of ["/goals", " /goal", "my /goal", "/goalkeeper x"]) assert.ok(!pattern.test(text), text)
+})
+
+test("/goal: a turn that only announces the next step is caught and told to do it now", async (t) => {
+  const source = await readFile(new URL("./goal.ts", import.meta.url), "utf8")
+  const dir = await mkdtemp(path.join(tmpdir(), "goal-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(path.join(dir, "goal.ts"), source.split("export const Plugin")[0].replace(/^import .*$/gm, ""))
+  const { decide, stallNote, stallText, startText } = await import(path.join(dir, "goal.ts"))
+  for (const text of [
+    "Implemented the parser.\n\nNext: wire it into the CLI and add tests.",
+    "Done with step 1.\n**Next steps:**\n- add the API\n- write docs",
+    "Created the schema.\n\n## Remaining\n1. migrations\n2. seed data",
+    "The models are in place. Next, I'll implement the routes.",
+    "I have set up the project. I will now implement the login flow.",
+    "Phase one is complete. Shall I continue with phase two?",
+    "Everything compiles. Would you like me to add the tests as well?",
+  ]) assert.ok(stallNote(text), text)
+  for (const text of [
+    "All done.\nGOAL COMPLETE: npm test passed (42 tests), build ok",
+    "GOAL BLOCKED: I need the Stripe test key",
+    "Fixed the off-by-one in the pager and the test now passes.",
+    "Next to the header there is a menu; I moved it.",
+    "",
+  ]) assert.equal(stallNote(text), undefined, text)
+  const user = (text) => ({ type: "user", text })
+  const reply = (text) => ({ type: "assistant", content: [{ type: "text", text }] })
+  const idle = () => ({ type: "idle", outcome: "completed" })
+  const decision = decide([user(startText("build the app")), reply("Scaffolded it.\nNext: add auth"), idle()])
+  assert.equal(decision.action, "continue")
+  assert.match(decision.stall, /Next: add auth/)
+  assert.match(stallText(decision.stall), /Do it now, in this turn/)
+  // The protocol no longer invites stopping after each turn.
+  assert.doesNotMatch(startText("x"), /prompted to continue after each turn/)
+  assert.match(startText("x"), /Never end your turn with a summary, a plan, a "Next: \.\.\." list/)
+})
+
+test("/goal survives compaction: the stored record stands in for controls the compaction hid", async (t) => {
+  const source = await readFile(new URL("./goal.ts", import.meta.url), "utf8")
+  const dir = await mkdtemp(path.join(tmpdir(), "goal-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(path.join(dir, "goal.ts"), source.split("export const Plugin")[0].replace(/^import .*$/gm, ""))
+  const { decide, goalSystem, progressReply, continueText, MAX_CONTINUATIONS } = await import(path.join(dir, "goal.ts"))
+  const reply = (text) => ({ type: "assistant", content: [{ type: "text", text }] })
+  const idle = () => ({ type: "idle", outcome: "completed" })
+  const compaction = { type: "compaction" }
+  const record = { goal: "port the app", status: "active", continues: 7, verifies: 0, stalls: 0, plan: { done: ["models"], todo: ["routes", "tests"] }, updatedAt: 0 }
+  // Before: a compaction hid the start, so the goal silently ended.
+  assert.deepEqual(decide([compaction, reply("did routes"), idle()]), { action: "none" })
+  assert.deepEqual(decide([compaction, reply("did routes"), idle()], record), { action: "continue", goal: "port the app", turn: 8 })
+  // Stored counters win while the start is out of view, also after a post-compaction continue.
+  assert.deepEqual(decide([compaction, { type: "synthetic", text: continueText("port the app", 8) }, reply("x"), idle()], { ...record, continues: 8 }), { action: "continue", goal: "port the app", turn: 9 })
+  // A finished or paused record never revives anything; no compaction means no stand-in.
+  assert.deepEqual(decide([compaction, reply("x"), idle()], { ...record, status: "done" }), { action: "none" })
+  assert.deepEqual(decide([reply("x"), idle()], record), { action: "none" })
+  assert.equal(decide([compaction, reply("x"), idle()], { ...record, continues: MAX_CONTINUATIONS }).action, "finish")
+  // The block the model sees on every step: goal, turn, plan with the next step marked, the rules.
+  const block = goalSystem(record)
+  assert.match(block, /Goal: port the app/)
+  assert.match(block, /Turn 8 of 50/)
+  assert.match(block, /✓ models\n  → routes\n  · tests/)
+  assert.match(block, /Do not stop to summarize, list next steps or ask whether to continue/)
+  assert.match(goalSystem({ ...record, plan: { done: [], todo: [] } }), /No plan recorded yet/)
+  assert.match(progressReply(record), /Do this now, without ending your turn: routes/)
+  assert.match(progressReply({ ...record, plan: { done: ["a"], todo: [] } }), /Now verify/)
+})
+
+test("goal store: atomic per-session record, plan updates, safe ids", async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), "goal-store-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const previous = process.env.XDG_DATA_HOME
+  process.env.XDG_DATA_HOME = dir
+  t.after(() => { if (previous === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = previous })
+  const Store = await import(new URL("./goal-store.ts", import.meta.url))
+  assert.equal(Store.readGoal("ses_1"), undefined)
+  Store.writeGoal("ses_1", Store.fresh("ship it"))
+  assert.equal(Store.readGoal("ses_1").status, "active")
+  let record = Store.applyProgress(Store.readGoal("ses_1"), { plan: ["Models", "routes", "tests"] })
+  assert.deepEqual(record.plan, { done: [], todo: ["Models", "routes", "tests"] })
+  record = Store.applyProgress(record, { done: ["models"], note: " picked  sqlite " })
+  assert.deepEqual(record.plan, { done: ["models"], todo: ["routes", "tests"] })
+  assert.equal(record.note, "picked sqlite")
+  record = Store.applyProgress(record, { done: ["models", "routes"], plan: ["routes", "tests", "docs"] })
+  assert.deepEqual(record.plan, { done: ["models", "routes"], todo: ["tests", "docs"] })
+  assert.deepEqual(Store.applyProgress(record, { plan: "nope", done: [3, null] }).plan.todo, [])
+  Store.updateGoal("ses_1", (old) => ({ ...old, status: "done" }))
+  assert.equal(Store.readGoal("ses_1").status, "done")
+  assert.equal(Store.updateGoal("ses_missing", (old) => old), undefined)
+  assert.throws(() => Store.writeGoal("../escape", Store.fresh("x")), /invalid session id/)
+  assert.equal(Store.readGoal("../escape"), undefined)
 })

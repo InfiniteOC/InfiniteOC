@@ -46,6 +46,22 @@ blocks the tool call instead and, like a foreground subagent, interrupting that 
 cancels the workflow. With
 `notify: "each"` a running starting agent also gets a short note per finished step.
 
+### Getting the agent to use it
+
+Delegation goes through workflows by default rather than by exception:
+
+- The build agent's own guidance (`mods/infiniteoc/workflow.mjs`, `[Subagents]`) routes "two or more tasks, or a task
+  plus its review" to one workflow call and names the shapes that pay off (parallel explore/researcher steps; general
+  steps on disjoint files followed by a reviewer; explore → general → reviewer).
+- The tool description opens with "The preferred way to delegate two or more tasks".
+- When one assistant message still starts a second plain `subagent` call, that call's result gets a one-paragraph
+  note pointing at the workflow tool (`D.subagentNudge`, at most twice per session, only while workflows are on).
+- `infiniteoc.json` turns workflows on for the build (`options.workflows.enabled`); `settings.json` still wins.
+
+For speed: up to 5 steps run at once by default (was 3), search/summarize steps run on the fast model, and the
+guidance tells the agent to start with `wait: true` when the result is the only thing it needs next, which returns
+the results in that call and saves the extra wake-up turn a background run costs.
+
 ### Waiting instead of polling
 
 The guidance and the `start` output tell the agent to keep working or end its turn: the
@@ -105,7 +121,7 @@ Invalid values fall back field by field.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `false` | The contract flag below |
-| `maxParallel` | `3` | Steps of one workflow running at once (1–8) |
+| `maxParallel` | `5` | Steps of one workflow running at once (1–8) |
 | `maxSteps` | `12` | Steps per workflow (1–32) |
 | `maxOutputChars` | `12000` | Result characters passed to dependents and notifications |
 | `notify` | `"end"` | `"each"` also notes every finished step to a running starter |

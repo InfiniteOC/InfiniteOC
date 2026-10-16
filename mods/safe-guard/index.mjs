@@ -6,7 +6,7 @@ function replace(source, before, after) {
   return source.replace(before, () => after)
 }
 
-export const guidance = `[Safety] Edits to protected paths (env files, lockfiles, migrations) ask the user first; secrets written to tracked files are refused; shell commands that delete, force-push, reset or publish always ask. A tool result that starts with "Refused" or "Blocked" is a deliberate gate: change your approach, do not retry the same call or route around it (for example by writing the file through the shell). Before committing, read \`git log -n 5 --format=%s\` and match that style. Do not push or open pull requests unless the user asks. When a diff-budget note appears, stop widening the change and check in with the user.`
+export const guidance = `[Safety] Protected paths (env, lockfiles, migrations) ask first; secrets to tracked files refused; delete/force-push/reset/publish shells always ask. "Refused"/"Blocked" is a gate: change approach, do not retry the same call or route around it (e.g. via shell). Match \`git log -n 5 --format=%s\` style before commit. No push/PR unless asked. On diff-budget note, stop widening, check with user.`
 
 // mods/infiniteoc writes packages/core/src/infiniteoc/guidance.ts with this extension marker.
 const marker = "// infiniteoc:guidance-extensions"

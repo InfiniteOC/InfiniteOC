@@ -1,0 +1,9 @@
+# LF everywhere: the launcher fingerprints these files (prebuilt binaries must match on
+# every OS), the sh scripts break with CRLF, and mods match multi-line source anchors.
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.png binary
+*.jpg binary
+*.woff2 binary
+*.ttf binary

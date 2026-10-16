@@ -10,13 +10,17 @@ import { define } from "@opencode/plugin/effect/plugin"
 import { TuiEvent } from "@opencode/schema/tui-event"
 import type { SessionMessage } from "@opencode/schema/session-message"
 import type { Session } from "@opencode/schema/session"
-import { Effect, Scope, Stream } from "effect"
+import { Effect, Schema, Scope, Stream } from "effect"
 import { Bus } from "../bus.js"
 import { Job } from "../job.js"
 import { Session as SessionService } from "../session.js"
 import * as Background from "../infiniteoc/background.js"
+import { SystemPart } from "@opencode/ai"
+import * as Store from "./infiniteoc-goal-store.js"
+import type { GoalRecord } from "./infiniteoc-goal-store.js"
 
-export const MAX_CONTINUATIONS = 20
+// Big projects take many turns; stalls (a turn that only announced the next step) count too.
+export const MAX_CONTINUATIONS = 50
 /** A held goal resumes anyway after this long without any progress from the work it waits for. */
 export const HOLD_TIMEOUT_MS = 5 * 60_000
 /** Work that ended without waking the session (a cancel, a lost notice) resumes the goal after this. */
@@ -29,8 +33,12 @@ const STOPPED = "[InfiniteOC goal: stopped]"
 const FINISHED = "[InfiniteOC goal: finished]"
 const PAUSED = "[InfiniteOC goal: paused]"
 
+export const PROGRESS_TOOL = "goal_progress"
+
 const protocol = [
-  "Work on this autonomously until it is completely done; you will be prompted to continue after each turn.",
+  "Work on this autonomously until it is completely done, in one continuous run: keep calling tools and doing the work.",
+  "Nobody reads progress reports between steps. Never end your turn with a summary, a plan, a \"Next: ...\" list or a question about whether to go on; do that next step yourself, right away. Ending a turn early only wastes it.",
+  `For multi-part work, record the ordered plan with the ${PROGRESS_TOOL} tool once, then mark steps done as you finish them; it keeps the plan in front of you for the whole run and does not end your turn.`,
   "Done means implemented, tested and verified: run the relevant tests, type checks and build after your last edit, exercise the real behavior, and review your own diff.",
   "When everything is done and verified, end your reply with a line `GOAL COMPLETE: <evidence: what you ran and what passed>`.",
   "If you cannot continue without the user (missing access, a decision only they can make), end with `GOAL BLOCKED: <exactly what you need>`.",
@@ -41,7 +49,63 @@ const protocol = [
 export const startText = (goal: string) => `${START}\nGoal: ${goal}\n\n${protocol}`
 
 export const continueText = (goal: string, turn: number, note?: string) =>
-  `${CONTINUE}\nGoal: ${goal}\n\nContinuation ${turn} of ${MAX_CONTINUATIONS}.${note ? ` ${note}` : ""} The goal is not marked complete yet. Keep going: pick the next concrete step, do it, and check the result. ${protocol}`
+  `${CONTINUE}\nGoal: ${goal}\n\nContinuation ${turn} of ${MAX_CONTINUATIONS}.${note ? ` ${note}` : ""} The goal is not marked complete yet. Keep going: do the next concrete step now, check it, and continue to the step after it without stopping. ${protocol}`
+
+const tail = (text: string) => text.trim().split("\n").slice(-12).join("\n").slice(-900)
+
+/**
+ * Pure: when a reply ended by announcing work instead of doing it ("Next: ...", a remaining-steps list,
+ * "I'll now implement ...", "Shall I continue?"), the announced part, else undefined. A reply that
+ * reports GOAL COMPLETE or GOAL BLOCKED never counts.
+ */
+export function stallNote(text: string): string | undefined {
+  if (/GOAL (COMPLETE|BLOCKED|VERIFIED)/.test(text)) return undefined
+  const end = tail(text)
+  const lines = end.split("\n").map((line) => line.trim()).filter(Boolean)
+  const label = "(next( steps?| up)?|up next|remaining( work| steps| tasks)?|still to do|to ?do|left to do|what'?s left|plan|follow[- ]ups?)"
+  // "Next: ..." in prose needs its colon ("Next to the header" is not one); a heading or bold label does not.
+  const announces = new RegExp(`^(${label}\\s*[:：]|(#+\\s*|\\*\\*|__)${label}\\s*(\\*\\*|__)?\\s*[:：]?\\s*$|(\\*\\*|__)${label}\\s*[:：]?\\s*(\\*\\*|__))`, "i")
+  const heading = lines.findIndex((line) => announces.test(line))
+  if (heading >= 0) return lines.slice(heading, heading + 4).join(" ").slice(0, 240)
+  const last = lines.slice(-2).join(" ")
+  if (/\b(shall|should) i (continue|proceed|go on|start|implement|do)|\b(do you want|would you like|want) me to\b|\blet me know (if|whether|when)\b|\bready (for|to) (the )?next\b/i.test(last)) return last.slice(0, 240)
+  if (/\b(next,? i('| wi)ll|i('| wi)ll (now |next |then )?(implement|add|create|write|build|start|continue|move on|work on|tackle|handle|fix|set up|wire|refactor)|in the next (turn|step),? i)\b/i.test(last)) return last.slice(0, 240)
+  return undefined
+}
+
+export const stallText = (announced: string) =>
+  `You ended the turn by announcing work instead of doing it: "${announced}". Do it now, in this turn, then continue straight to the step after it.`
+
+/** Pure: the goal block the model sees in its system prompt on every step while a goal is active. */
+export function goalSystem(record: GoalRecord) {
+  const done = record.plan.done.slice(-8)
+  const lines = [
+    "[Active goal: you are working autonomously]",
+    `Goal: ${record.goal}`,
+    `Turn ${record.continues + 1} of ${MAX_CONTINUATIONS}${record.verifies ? `, verification ${record.verifies}` : ""}.`,
+  ]
+  if (done.length || record.plan.todo.length) {
+    lines.push(`Plan (${record.plan.done.length} done, ${record.plan.todo.length} left; keep it current with ${PROGRESS_TOOL}):`)
+    if (record.plan.done.length > done.length) lines.push(`  ✓ … ${record.plan.done.length - done.length} earlier steps`)
+    for (const item of done) lines.push(`  ✓ ${item}`)
+    record.plan.todo.forEach((item, index) => lines.push(`  ${index === 0 ? "→" : "·"} ${item}`))
+  } else lines.push(`No plan recorded yet: for anything bigger than a few edits, record it now with ${PROGRESS_TOOL} {plan: [...]}.`)
+  if (record.note) lines.push(`Your last note: ${record.note}`)
+  lines.push(
+    "Rules while the goal is active:",
+    "- Keep working until the whole goal is done and verified. Do not stop to summarize, list next steps or ask whether to continue: nobody is reading between steps, so do the next step instead.",
+    `- ${PROGRESS_TOOL} records progress without ending your turn; use it instead of writing a progress report.`,
+    "- End your turn only with `GOAL COMPLETE: <evidence>` once everything is implemented and verified, or `GOAL BLOCKED: <what you need>` when only the user can unblock you.",
+  )
+  return lines.join("\n")
+}
+
+/** Pure: what goal_progress answers, steering straight into the next step. */
+export function progressReply(record: GoalRecord) {
+  const next = record.plan.todo[0]
+  if (!next) return `Saved (${record.plan.done.length} done, nothing left in the plan). Now verify: run the tests, type checks and build, exercise the real behavior, review your diff, then end with GOAL COMPLETE: <evidence>. If something is missing, add it to the plan and do it.`
+  return `Saved (${record.plan.done.length} done, ${record.plan.todo.length} left). Do this now, without ending your turn: ${next}`
+}
 
 export const verifyText = (goal: string) =>
   `${VERIFY}\nGoal: ${goal}\n\nYou marked the goal complete. Verify that independently before finishing: re-read the requirements, re-run the tests, type checks and build, exercise the actual behavior, and for nontrivial changes ask the reviewer subagent to review the diff. Fix anything you find. If it is truly done, end with \`GOAL VERIFIED: <evidence>\`; otherwise keep working and report \`GOAL COMPLETE\` again when it is.`
@@ -70,7 +134,7 @@ const controlKind = (message: SessionMessage.Info): Kind | undefined => {
 
 export type Decision =
   | { readonly action: "none" }
-  | { readonly action: "continue" | "verify"; readonly goal: string; readonly turn: number }
+  | { readonly action: "continue" | "verify"; readonly goal: string; readonly turn: number; readonly stall?: string }
   | { readonly action: "pause"; readonly goal: string; readonly note: string }
   | { readonly action: "finish"; readonly note: string }
 
@@ -96,9 +160,18 @@ export function resumeDecision(messages: ReadonlyArray<SessionMessage.Info>): { 
   return { goal, turn }
 }
 
-/** Pure: what to do when a session run ends, given its transcript. */
-export function decide(messages: ReadonlyArray<SessionMessage.Info>): Decision {
-  const controls = controlList(messages)
+/**
+ * Pure: what to do when a session run ends, given its transcript (from the latest compaction on) and the
+ * stored goal record. A compaction hides the controls before it, so when none are visible the record of
+ * an active goal stands in for them, anchored at the compaction; it also carries the counters then.
+ */
+export function decide(messages: ReadonlyArray<SessionMessage.Info>, remembered?: GoalRecord): Decision {
+  let controls = controlList(messages)
+  if (!controls.length && remembered?.status === "active") {
+    const compaction = messages.findIndex((message) => message.type === "compaction")
+    if (compaction >= 0)
+      controls = [{ kind: "continue" as Kind, index: compaction, message: { type: "synthetic", text: `${CONTINUE}\nGoal: ${remembered.goal}` } as unknown as SessionMessage.Info }]
+  }
   const last = controls.at(-1)
   if (!last || last.kind === "stopped" || last.kind === "finished") return { action: "none" }
   const goal = controlGoal(last.message)
@@ -122,15 +195,18 @@ export function decide(messages: ReadonlyArray<SessionMessage.Info>): Decision {
   const text = messageText(reply)
   const start = controls.findLast((control) => control.kind === "start")?.index ?? -1
   const since = controls.filter((control) => control.index > start)
-  const continues = since.filter((control) => control.kind === "continue").length
-  const verifies = since.filter((control) => control.kind === "verify").length
+  // Without the start in view (compacted away), the stored counters are the only complete ones.
+  const stored = start < 0 && remembered?.goal === goal ? remembered : undefined
+  const continues = stored ? stored.continues : since.filter((control) => control.kind === "continue").length
+  const verifies = stored ? stored.verifies : since.filter((control) => control.kind === "verify").length
   if (/GOAL BLOCKED/.test(text)) return { action: "pause", goal, note: "Goal paused: the agent needs your input (see GOAL BLOCKED above). Answer it, then /goal resume." }
   if (/GOAL VERIFIED/.test(text) || (/GOAL COMPLETE/.test(text) && verifies >= MAX_VERIFICATIONS))
     return { action: "finish", note: "Goal finished: completed and verified." }
   if (/GOAL COMPLETE/.test(text)) return { action: "verify", goal, turn: verifies + 1 }
   if (continues >= MAX_CONTINUATIONS)
     return { action: "finish", note: `Goal paused after ${MAX_CONTINUATIONS} continuation turns without verified completion. Run /goal again to keep going.` }
-  return { action: "continue", goal, turn: continues + 1 }
+  const stall = stallNote(text)
+  return stall ? { action: "continue", goal, turn: continues + 1, stall } : { action: "continue", goal, turn: continues + 1 }
 }
 
 export type Hold = {
@@ -199,6 +275,21 @@ export const Plugin = define({
     const holds = new Map<string, Hold>()
     const note = (sessionID: Session.ID, kind: string, text: string) =>
       ctx.session.synthetic({ sessionID, text: `${kind}\n${text}`, description: text, resume: false })
+    // The durable record (goal, counters, plan). A failing disk never breaks the goal loop itself.
+    const remember = (sessionID: string, update: (record: GoalRecord | undefined) => GoalRecord | undefined) =>
+      Effect.sync(() => {
+        try {
+          Store.updateGoal(sessionID, update)
+        } catch {}
+      })
+    const recall = (sessionID: string) => {
+      try {
+        return Store.readGoal(sessionID)
+      } catch {
+        return undefined
+      }
+    }
+    const status = (value: GoalRecord["status"]) => (record: GoalRecord | undefined) => (record ? { ...record, status: value } : undefined)
 
     yield* ctx.command.transform((editor) => {
       editor.add({
@@ -208,7 +299,7 @@ export const Plugin = define({
           const goal = input.prompt.text.trim()
           if (/^(stop|off|cancel)$/i.test(goal)) {
             holds.delete(input.sessionID)
-            return note(input.sessionID, STOPPED, "Goal stopped.").pipe(Effect.asVoid)
+            return remember(input.sessionID, status("done")).pipe(Effect.andThen(note(input.sessionID, STOPPED, "Goal stopped.")), Effect.asVoid)
           }
           if (/^(resume|continue|retry)$/i.test(goal))
             return ctx.session.context({ sessionID: input.sessionID }).pipe(
@@ -221,17 +312,23 @@ export const Plugin = define({
                     variant: "info",
                     duration: 6000,
                   })
-                return ctx.session.synthetic({
-                  sessionID: input.sessionID,
-                  text: continueText(resumed.goal, resumed.turn),
-                  description: `Goal: resume ${resumed.turn}/${MAX_CONTINUATIONS}`,
-                  resume: true,
-                })
+                return remember(input.sessionID, (record) => ({ ...(record?.goal === resumed.goal ? record : Store.fresh(resumed.goal)), status: "active", continues: resumed.turn })).pipe(
+                  Effect.andThen(
+                    ctx.session.synthetic({
+                      sessionID: input.sessionID,
+                      text: continueText(resumed.goal, resumed.turn),
+                      description: `Goal: resume ${resumed.turn}/${MAX_CONTINUATIONS}`,
+                      resume: true,
+                    }),
+                  ),
+                )
               }),
               Effect.catchCause((cause) => Effect.logWarning("InfiniteOC goal resume failed", { cause })),
               Effect.asVoid,
             )
           if (!goal) return note(input.sessionID, STOPPED, "Usage: /goal <what done means>, /goal resume to continue a paused goal, and /goal stop to end it.").pipe(Effect.asVoid)
+          // The goal record starts in the prompt hook below, from the text actually admitted (mods/auto-loop
+          // expands "/goal tests" and friends here).
           return ctx.session
             .prompt({ ...input.prompt, sessionID: input.sessionID, text: startText(goal), delivery: input.delivery })
             .pipe(Effect.asVoid)
@@ -252,12 +349,16 @@ export const Plugin = define({
       }).pipe(Effect.catchCause(() => Effect.succeed([] as string[])))
 
     const resumeHeld = (sessionID: Session.ID, hold: Hold, note: string) =>
-      ctx.session.synthetic({
-        sessionID,
-        text: continueText(hold.goal, hold.turn, note),
-        description: `Goal: continue ${hold.turn}/${MAX_CONTINUATIONS}`,
-        resume: true,
-      })
+      remember(sessionID, (record) => (record ? { ...record, status: "active", continues: hold.turn } : undefined)).pipe(
+        Effect.andThen(
+          ctx.session.synthetic({
+            sessionID,
+            text: continueText(hold.goal, hold.turn, note),
+            description: `Goal: continue ${hold.turn}/${MAX_CONTINUATIONS}`,
+            resume: true,
+          }),
+        ),
+      )
 
     const watchHold = (sessionID: Session.ID, initial: Hold) =>
       Effect.gen(function* () {
@@ -307,6 +408,60 @@ export const Plugin = define({
           .pipe(Effect.ignore)
       })
 
+    // goal_progress: the plan and progress live in the goal record, so they survive compaction and
+    // reach the model on every step. A tool call keeps the run going, unlike a text-only progress report.
+    yield* ctx.tool
+      .transform((editor) => {
+        editor.add({
+          name: PROGRESS_TOOL,
+          options: { codemode: false },
+          description: [
+            "Record the plan and progress of the active /goal. It does not end your turn: call it instead of writing a progress report, then keep working.",
+            "plan: the full ordered list of remaining steps (replaces the previous one). done: steps you just finished. note: one line of state worth keeping (a decision, a gotcha).",
+          ].join("\n"),
+          input: Schema.Struct({
+            plan: Schema.optionalKey(Schema.Array(Schema.String)).annotate({ description: "All remaining steps in order; replaces the stored plan." }),
+            done: Schema.optionalKey(Schema.Array(Schema.String)).annotate({ description: "Steps you just finished; removed from the plan." }),
+            note: Schema.optionalKey(Schema.String).annotate({ description: "One line to remember for the rest of the goal." }),
+          }),
+          execute: (input: { plan?: ReadonlyArray<string>; done?: ReadonlyArray<string>; note?: string }, context: { sessionID: string }) =>
+            Effect.sync(() => {
+              const record = recall(context.sessionID)
+              if (!record || record.status !== "active") return { content: "No active /goal in this session; nothing recorded." }
+              const next = Store.applyProgress(record, input)
+              try {
+                Store.writeGoal(context.sessionID, next)
+              } catch {
+                return { content: "Could not save the plan (disk error); keep working from your own notes." }
+              }
+              return { content: progressReply(next) }
+            }),
+        })
+      })
+      .pipe(Effect.orDie)
+
+    // A /goal start prompt (however it was built) starts a fresh record for its session.
+    yield* ctx.session.hook("prompt", (event) => {
+      const text = event.prompt.text
+      const goal = text.startsWith(`${START}\n`) ? /^Goal: (.*)$/m.exec(text)?.[1]?.trim() : undefined
+      return goal ? remember(event.sessionID, () => Store.fresh(goal)) : Effect.void
+    })
+
+    // The goal in the model's system prompt on every step while it is active; the tool only then.
+    const inject = (kind: "context" | "compaction" | "generate") => (event: { sessionID: string; system: Array<SystemPart>; tools: Record<string, unknown> }) =>
+      Effect.sync(() => {
+        const record = recall(event.sessionID)
+        if (!record || record.status !== "active") {
+          delete event.tools[PROGRESS_TOOL]
+          return
+        }
+        // Compaction and side generations keep the tool list (cache-stable) but not the goal block.
+        if (kind === "context") event.system.push(SystemPart.make(goalSystem(record)))
+      })
+    yield* ctx.session.hook("context", inject("context"))
+    yield* ctx.session.hook("compaction", inject("compaction"))
+    yield* ctx.session.hook("generate", inject("generate"))
+
     yield* ctx.event.subscribe().pipe(
       Stream.runForEach((event) => {
         if (event.type === "session.execution.started") {
@@ -322,24 +477,30 @@ export const Plugin = define({
         busy.add(sessionID)
         return ctx.session.context({ sessionID }).pipe(
           Effect.flatMap((messages) => {
-            const decision = decide(messages)
+            const decision = decide(messages, recall(sessionID))
             if (decision.action === "none") return Effect.void
             if (decision.action === "pause")
               // No toast: the transcript note and the footer carry the state.
               // Pausing is quiet by design; finishing and errors still toast.
-              return note(sessionID, PAUSED, `${decision.note}\nGoal: ${decision.goal}`)
+              return remember(sessionID, status("paused")).pipe(Effect.andThen(note(sessionID, PAUSED, `${decision.note}\nGoal: ${decision.goal}`)))
             if (decision.action === "finish")
-              return bus
+              return remember(sessionID, status("done")).pipe(Effect.andThen(bus
                 .publish(TuiEvent.ToastShow, {
                   title: "Goal",
                   message: decision.note,
                   variant: decision.note.startsWith("Goal finished") ? "success" : "warning",
                   duration: 8000,
                 })
-                .pipe(Effect.andThen(note(sessionID, FINISHED, decision.note)))
-            const text = decision.action === "verify" ? verifyText(decision.goal) : continueText(decision.goal, decision.turn)
-            const description = decision.action === "verify" ? "Goal: verify completion" : `Goal: continue ${decision.turn}/${MAX_CONTINUATIONS}`
-            const prompt = ctx.session.synthetic({ sessionID, text, description, resume: true })
+                .pipe(Effect.andThen(note(sessionID, FINISHED, decision.note)))))
+            const text = decision.action === "verify" ? verifyText(decision.goal) : continueText(decision.goal, decision.turn, decision.stall ? stallText(decision.stall) : undefined)
+            const description = decision.action === "verify" ? "Goal: verify completion" : `Goal: continue ${decision.turn}/${MAX_CONTINUATIONS}${decision.stall ? " (it only announced the next step)" : ""}`
+            const counted = (record: GoalRecord | undefined): GoalRecord => {
+              const base = record?.goal === decision.goal ? record : Store.fresh(decision.goal)
+              return decision.action === "verify"
+                ? { ...base, status: "active", verifies: decision.turn }
+                : { ...base, status: "active", continues: decision.turn, stalls: base.stalls + (decision.stall ? 1 : 0) }
+            }
+            const prompt = remember(sessionID, counted).pipe(Effect.andThen(ctx.session.synthetic({ sessionID, text, description, resume: true })))
             if (decision.action === "verify") return prompt
             // Nothing to do but wait for background work: hold instead of prompting a turn that would
             // only check on it again. Its completion notice wakes the session and the goal goes on.

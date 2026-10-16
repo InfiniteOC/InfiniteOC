@@ -9,10 +9,46 @@ curl -fsSL https://raw.githubusercontent.com/riz3y0/InfiniteOC/main/install.sh |
 brew tap riz3y0/infiniteoc && brew install --HEAD infiniteoc                          # personal tap, see Formula/
 ```
 
+```powershell
+irm https://raw.githubusercontent.com/riz3y0/InfiniteOC/main/install.ps1 | iex        # Windows PowerShell, read it first
+```
+
 `install.sh` clones (or fast-forwards) into `~/.infiniteoc`, links `infiniteoc` and `opendaemon` into
-`~/.local/bin` and runs the first build. `INFINITEOC_DIR`, `INFINITEOC_BIN`, `INFINITEOC_REPO`, `INFINITEOC_REF`,
+`~/.local/bin` and runs the first build. On Windows, run `install.sh` from Git Bash
+(`https://git-scm.com`), or run `install.ps1` from PowerShell: it installs into
+`%LOCALAPPDATA%\InfiniteOC`, creates `infiniteoc.cmd`/`opendaemon.cmd` shims in a per-user
+`bin` directory and adds it to your *user* PATH. `INFINITEOC_DIR`, `INFINITEOC_BIN`, `INFINITEOC_REPO`, `INFINITEOC_REF`,
 `INFINITEOC_NO_SETUP=1` and `INFINITEOC_NO_LINK=1` change that. Nothing is published by this repository; the
 formula is meant for a tap you create.
+
+## Uninstall
+
+```sh
+sh uninstall.sh                # Git Bash on Windows, macOS, Linux
+```
+
+```powershell
+.\uninstall.ps1                # Windows PowerShell
+```
+
+Stops opendaemon, removes the command shims/links and deletes the install directory.
+Your InfiniteOC settings are kept (add `--remove-settings` / `-RemoveSettings` to delete
+them too). Stock OpenCode — providers, sessions, `~/.config/opencode` — is never touched.
+`INFINITEOC_DIR` / `INFINITEOC_BIN` target a custom location; the scripts refuse to remove
+anything that is not an InfiniteOC checkout. (`infiniteoc uninstall` stays refused: that
+would run OpenCode's own uninstaller against your shared stock install.)
+
+No administrator is needed anywhere: the install directory, the shims/links, the user PATH entry,
+the named-pipe (Windows) or socket (macOS/Linux) daemon transport and the prebuilt binaries are
+all per-user. The installer warns when run elevated but installs per-user anyway.
+
+Where a prebuilt binary exists for your platform (GitHub releases, `infiniteoc-<target>.zip`,
+built by `.github/workflows/release.yml`), the installer downloads it so the first run is instant
+(`INFINITEOC_VERSION` pins a tag, `INFINITEOC_PREBUILT=0` always builds from source, and
+`INFINITEOC_PREBUILT_URL` points at a mirror file). Without one, the launcher builds from source,
+which takes several minutes and downloads Bun and the OpenCode sources. Supported targets:
+`linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `win32-x64`, `win32-arm64`
+(`darwin-x64` has no hosted release runner and always builds from source).
 
 ## First run
 

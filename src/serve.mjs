@@ -151,16 +151,18 @@ export async function pairingLink(url, password, base = url) {
   return { link: new URL(`/auth/connect/${encodeURIComponent(code)}`, base).href, minutes: Math.round(expires / 60) }
 }
 
-/** open (macOS) or xdg-open (Linux with a display); undefined over SSH or without a desktop. */
+/** open (macOS), cmd /c start (Windows) or xdg-open (Linux with a display); undefined over SSH or without a desktop. */
 export function browserCommand(platform = process.platform, env = process.env) {
   if (platform === "darwin") return "open"
+  if (platform === "win32") return "cmd"
   if (platform === "linux" && (env.DISPLAY || env.WAYLAND_DISPLAY)) return "xdg-open"
 }
 
 export function openBrowser(link) {
   const command = browserCommand()
   if (!command) return false
-  const child = spawn(command, [link], { stdio: "ignore", detached: true })
+  const args = command === "cmd" ? ["/c", "start", "", link] : [link]
+  const child = spawn(command, args, { stdio: "ignore", detached: true, windowsHide: true })
   child.on("error", () => {})
   child.unref()
   return true

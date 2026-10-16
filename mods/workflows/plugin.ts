@@ -38,12 +38,14 @@ const MAX_STORED_OUTPUT = 100_000
 const MAX_WAIT_SECONDS = 120
 
 export const GUIDANCE = `[Workflows]
-For work that splits into several subagent tasks, prefer one workflow call over separate subagent calls. Declare the steps: an id, the agent, a self-contained prompt and needs (the ids it depends on). Independent steps run in parallel, dependent ones in order, and each step receives the results of the steps it needs (or place one with {{steps.<id>}} in its prompt). Mark a step optional when the rest can go on without it.
-- It runs in the background. Start it, then keep working on non-overlapping tasks, or tell the user what you launched and end your turn. You are notified automatically when it finishes (and when a step messages you), and that notification wakes you, also under /goal. Do not poll: a status check that finds nothing new only says so.
+The workflow tool is your default way to delegate more than one task. Use it whenever you would otherwise make two or more subagent calls, or one subagent call followed by a review. One call runs them all: independent steps in parallel, dependent steps in order, each on a model chosen for its kind of work, with one notification at the end. One quick task: the plain subagent tool.
+- Steps: id, agent, title, a self-contained prompt (the worker starts with no context), needs (the ids it depends on; their results are passed in, or place one with {{steps.<id>}}). Mark a step optional when the rest can go on without it. Never give two steps the same files to edit.
+- Shapes that pay off: parallel explore/researcher steps on separate questions; general steps on disjoint files followed by a reviewer step that needs them all; explore, then general, then reviewer for one change in unfamiliar code.
+- Fast: keep each step narrow, split a broad search into parallel steps rather than one long one, set kind (search and summarize run on the fast model) and leave model unset (set it only when the user asks for a model).
+- When its result is the only thing you need next, start it with wait: true: the results come back in that call, with no extra wake-up turn. Otherwise it runs in the background: keep working on non-overlapping tasks, or tell the user what you launched and end your turn; that notification wakes you, also under /goal. Do not poll: a status check that finds nothing new only says so.
 - Check status only for a reason: the user asks, it has been silent far longer than its steps should take, or you need one step's result early (then status with wait: true blocks once until something changes, instead of repeated checks). "cancel" stops it.
-- Leave model unset: the framework picks per step (a fast model for search, grep and summaries; the strongest available for planning, review and hard reasoning) from the models the user has configured. Set kind to steer that, or model only when the user asks for a model.
-- Steps can talk: send_message(to, text) to a step id, "main" (you) or "all", and read_messages. Messages to you arrive while you work and with the final notification.
-- Results are claims: check the important ones before reporting. Use the plain subagent tool for one quick task.`
+- Steps can talk: send_message(to, text) to a step id, "main" (you) or "all", and read_messages.
+- Results are claims: check the important ones before reporting.`
 
 const Step = Schema.Struct({
   id: Schema.String.annotate({ description: 'Short unique id (letters, digits, "-", "_"); used in needs, {{steps.<id>}} and messages.' }),
@@ -642,8 +644,8 @@ export const Plugin = define({
           // Same visibility as the subagent tool: agents that may not spawn subagents never see it.
           options: { codemode: false, permission: "subagent" },
           description: [
-            "Runs a workflow: several subagent steps with dependencies (a DAG). Independent steps run in parallel, dependent steps in order, and each step gets the results of the steps it needs.",
-            "It runs in the background by default and you are notified when it finishes, so do not poll it; the steps can message each other and you.",
+            "The preferred way to delegate two or more tasks (instead of several subagent calls): runs subagent steps with dependencies (a DAG). Independent steps run in parallel, dependent steps in order, and each step gets the results of the steps it needs.",
+            "It runs in the background by default and you are notified when it finishes, so do not poll it (wait: true returns the results in this call instead); the steps can message each other and you.",
             "Each step gets a model chosen for its kind of work unless you set one.",
           ].join("\n"),
           input: Input,
@@ -701,6 +703,17 @@ export const Plugin = define({
         // Compaction and side generations keep the same tool list (cache-stable) but not the guidance.
         if (kind === "context") event.system.push(SystemPart.make(GUIDANCE))
       })
+    // Several subagent calls from one message are a workflow done by hand: say so in the second result.
+    const nudges = new Map<string, D.NudgeState>()
+    yield* ctx.tool.hook("execute.after", (event) => {
+      if (event.tool !== "subagent" || event.status !== "completed" || !settings().enabled) return Effect.void
+      const note = D.subagentNudge(nudges, event.sessionID, event.messageID)
+      if (!note) return Effect.void
+      const content = event.result.content
+      event.result = { ...event.result, content: [...(typeof content === "string" ? [{ type: "text" as const, text: content }] : (content ?? [])), { type: "text" as const, text: note }] }
+      return Effect.void
+    })
+
     yield* ctx.session.hook("context", hook("context"))
     yield* ctx.session.hook("compaction", hook("compaction"))
     yield* ctx.session.hook("generate", hook("generate"))

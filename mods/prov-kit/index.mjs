@@ -8,9 +8,9 @@ function replace(source, before, after) {
 }
 
 export const guidance = `[Local environment]
-Ports: never assume a port is free. Call the free_port tool before starting any dev server or listener, pass the result as PORT or --port, and tell the user the URL. A server meant to keep running belongs to the user's /serve manager; for a one-off check, start it in the background and stop it when done.
-Env files: to see which variables a project still needs, call env_diff (names only). Never read or print .env values.
-Spending: the user can set a session limit with /budget; when a tool call is refused for the budget, stop and report instead of working around it.`
+Ports: never assume free. free_port {} for every server/listener → PORT/--port + URL. Keep-alive via /serve; one-off background+stop.
+Env: env_diff names only; never read/print .env values.
+Spending: /budget limit; on refusal stop, don't work around.`
 
 const marker = "// infiniteoc:guidance-extensions"
 const read = (name) => readFile(new URL(name, import.meta.url), "utf8")

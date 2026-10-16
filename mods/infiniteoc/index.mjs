@@ -142,6 +142,8 @@ export default {
 `))
     // /goal: a server command plus a turn-end loop that keeps prompting until the goal is verified.
     await api.write("packages/core/src/plugin/infiniteoc-goal.ts", await readFile(new URL("./goal.ts", import.meta.url), "utf8"))
+    // The goal record that survives compaction (goal, counters, the plan goal_progress keeps).
+    await api.write("packages/core/src/plugin/infiniteoc-goal-store.ts", await readFile(new URL("./goal-store.ts", import.meta.url), "utf8"))
     // Background work (mods/workflows) registers here so a held goal waits for it instead of re-prompting.
     await api.write("packages/core/src/infiniteoc/background.ts", await readFile(new URL("./background.ts", import.meta.url), "utf8"))
     // Frontend gate: UI-file edits are refused until the session has loaded the frontend-design skill.

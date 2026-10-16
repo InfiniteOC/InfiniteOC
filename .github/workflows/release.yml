@@ -1,0 +1,58 @@
+name: release
+
+# Cut a release: git tag vX.Y.Z && git push origin vX.Y.Z
+# Each runner builds InfiniteOC from source for its own platform, then
+# packages the finished binary + build.json as infiniteoc-<target>.zip and
+# attaches it to the GitHub release. install.sh / install.ps1 download that
+# asset so the first run is instant; where no asset exists (darwin-x64 has no
+# hosted runner) the installer builds from source instead.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+          - os: windows-latest
+            target: win32-x64
+          - os: windows-11-arm
+            target: win32-arm64
+          - os: macos-latest
+            target: darwin-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node bin/infiniteoc.mjs setup
+      - run: node scripts/package-release.mjs --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/infiniteoc-${{ matrix.target }}.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/infiniteoc-*.zip
+          generate_release_notes: true

@@ -33,7 +33,8 @@ function Status(props: { busy?: boolean; error?: string; notice?: string }) {
 
 // OpenTUI 0.5.14 Input/Textarea has no password option. Capture input without
 // putting the value in any renderable, selection buffer, placeholder or title.
-function SecretPrompt(props: { busy: boolean; error: string; onConfirm: (value: string) => void; onCancel: () => void }) {
+// Exported for mods/connectors (connector tokens use the same masked input).
+export function SecretPrompt(props: { busy: boolean; error: string; onConfirm: (value: string) => void; onCancel: () => void; title?: string; note?: string }) {
   const theme = useTheme().surface("dialog")
   let secret = ""
   const [length, setLength] = createSignal(0)
@@ -57,10 +58,10 @@ function SecretPrompt(props: { busy: boolean; error: string; onConfirm: (value: 
   })
   return <box paddingLeft={2} paddingRight={2} gap={1} paddingBottom={1}>
     <box flexDirection="row" justifyContent="space-between">
-      <text attributes={TextAttributes.BOLD} fg={theme.text.base}>Add provider · 5/5 API key</text>
+      <text attributes={TextAttributes.BOLD} fg={theme.text.base}>{props.title ?? "Add provider · 5/5 API key"}</text>
       <text fg={theme.text.muted} onMouseUp={back}>esc</text>
     </box>
-    <text fg={theme.text.muted}>Masked. Stored in a local mode-600 key file, never in settings metadata.</text>
+    <text fg={theme.text.muted}>{props.note ?? "Masked. Stored in a local mode-600 key file, never in settings metadata."}</text>
     <text fg={theme.text.base} selectable={false}>{length() ? "•".repeat(Math.min(length(), 48)) : "Type or paste key"}</text>
     <Status busy={props.busy} error={props.error} />
     <text fg={theme.text.muted}>enter save · esc back · backspace delete · ctrl+u clear</text>

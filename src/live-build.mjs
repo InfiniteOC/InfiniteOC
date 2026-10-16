@@ -7,12 +7,17 @@ import { pathToFileURL } from "node:url"
 import { createHash } from "node:crypto"
 import { loadMods, applyMods } from "./mod-loader.mjs"
 import { packEntries } from "./packs.mjs"
+import { userModEntries } from "./user-mods.mjs"
 import { builtinSlashNames, claimSlashNames, safeError } from "./tui-features.mjs"
+import { bunCandidates } from "./platform.mjs"
+import { existsSync } from "node:fs"
+
+const findBun = (base) => bunCandidates(base).find(file => existsSync(file)) ?? bunCandidates(base)[0]
 
 export async function buildLive(base, output, revision, progress = () => {}, override) {
   progress("discovering", "Reading configured local mods")
   const config = JSON.parse(await readFile(path.join(base, "infiniteoc.json"), "utf8"))
-  const mods = await loadMods([...config.mods, ...(await packEntries(base)).entries], base)
+  const mods = await loadMods([...config.mods, ...(await packEntries(base)).entries, ...(await userModEntries()).entries], base)
   const result = override ? { featureSources: override } : await applyMods(mods, path.join(base, ".upstream"), config.options, true)
   if (result.featureSources.some(command => /(?:from\s*|import\s*\()["'](?:solid-js|@opentui|@opencode)/.test(command.source))) throw safeError("Live handlers cannot import framework modules; use supplied context")
   claimSlashNames(result.featureSources, await builtinSlashNames(path.join(base, ".upstream/packages/tui/src")))
@@ -34,7 +39,7 @@ export async function buildLive(base, output, revision, progress = () => {}, ove
       })
       await writeFile(source, rewritten, { mode: 0o600 })
       await new Promise((resolve, reject) => {
-        const child = spawn(path.join(base, ".tools/node_modules/.bin/bun"), ["build", source, "--target=bun", "--outfile", bundle], { stdio: ["ignore", "pipe", "pipe"] })
+        const child = spawn(findBun(base), ["build", source, "--target=bun", "--outfile", bundle], { stdio: ["ignore", "pipe", "pipe"] })
         // Do not return compiler excerpts that can contain literals/secrets, except in dev mode (opendaemon dev), where they are the point.
         const dev = process.env.INFINITEOC_LIVE_DEV === "1"
         let diagnostics = ""

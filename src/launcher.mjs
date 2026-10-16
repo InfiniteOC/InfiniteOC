@@ -11,21 +11,43 @@ import { applyTraffic, probeSocks } from "./traffic.mjs"
 import { loadSettings, saveSettings, settingsFile, providerConfigFile } from "../mods/infiniteoc/settings/settings-store.mjs"
 import { ensureDaemon, daemonPaths, digestTree } from "./opendaemon.mjs"
 import { daemonRequest } from "./daemon-client.mjs"
+import {
+  binaryCandidates,
+  binaryPath,
+  buildTarget,
+  bunCandidates,
+  isSupportedTarget,
+  isWindows,
+  lastGoodCandidates,
+  npmCommand,
+  prependPath,
+  socketLimit,
+} from "./platform.mjs"
 import { installDaemonTool } from "./opendaemon-tool.mjs"
+import { installExportTool } from "./export-tool.mjs"
 import { update, settle } from "./updater.mjs"
 import { fx } from "./fx.mjs"
 import { needsWizard, runWizard, terminalIO } from "./wizard.mjs"
 import { applyTeam } from "./team.mjs"
 import { packEntries } from "./packs.mjs"
+import { userModEntries } from "./user-mods.mjs"
 import { isCrash, writeCrashReport } from "./crash.mjs"
 import { missingPaths, repairPaths } from "./mcp-paths.mjs"
 
 export const home = resolve(dirname(fileURLToPath(import.meta.url)), "..")
-// Matches upstream build.ts --single target naming: cli-<os>-<arch>.
-const target = `${process.platform}-${process.arch}`
-const binary = join(home, `.runtime/opencode/packages/cli/dist/cli-${target}/bin/opencode`)
-const supported = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64"].includes(target)
-const bunVersion = bun => { const result = spawnSync(bun, ["--version"], { encoding: "utf8" }); return result.status === 0 ? result.stdout.trim() : undefined }
+// Upstream build.ts --single names its output cli-<os>-<arch> with win32 as
+// `windows`, and the binary is opencode.exe there (see src/platform.mjs).
+const target = buildTarget()
+const binary = binaryPath(home)
+const supported = isSupportedTarget(target)
+const firstExisting = async paths => { for (const file of paths) if (await exists(file)) return file; return undefined }
+export const resolveBinary = (root = home) => firstExisting(binaryCandidates(root))
+export const resolveBun = (root = home) => firstExisting(bunCandidates(root))
+const bunVersion = async bun => {
+  if (!bun) return undefined
+  const result = spawnSync(bun, ["--version"], { encoding: "utf8" })
+  return result.status === 0 ? result.stdout.trim() : undefined
+}
 const alive = pid => { try { process.kill(pid, 0); return true } catch (error) { return error.code !== "ESRCH" } }
 const seconds = since => `${((Date.now() - since) / 1000).toFixed(1)}s`
 const socksLabel = (mode, socks) => `${mode === "tor" ? "Tor SOCKS" : "SOCKS proxy"} ${socks.host}:${socks.port}`
@@ -65,20 +87,25 @@ export async function config(base = home) {
       // Installed packs whose files still match their pin join the mod list; a changed one is named and left out.
       const { entries, skipped } = await packEntries(base)
       for (const reason of skipped) console.error(`[InfiniteOC] Pack not loaded (${reason}); reinstall it with infiniteoc mod remove/add`)
-      return { ...value, mods: [...value.mods, ...entries] }
+      // Personal mods (~/.config/infiniteoc/mods, see src/user-mods.mjs) load last.
+      const personal = await userModEntries()
+      for (const reason of personal.skipped) console.error(`[InfiniteOC] Personal mod not loaded (${reason}); infiniteoc feature disable it or restore the folder`)
+      return { ...value, mods: [...value.mods, ...entries, ...personal.entries] }
     }
     throw new Error("must contain an exact upstream tag and mods array")
   } catch (error) { throw new Error(`${file}: ${error.message}`) }
 }
 export async function bootstrap(settings) {
   const upstream = join(home, ".upstream")
-  const bun = join(home, ".tools/node_modules/.bin/bun")
-  if (!bunVersion(bun)) {
-    await checked("npm", ["install", "--prefix", join(home, ".tools"), "--ignore-scripts", "bun@1.4.2"])
+  let bun = await resolveBun()
+  if (!await bunVersion(bun)) {
+    await checked(...npmCommand(["install", "--prefix", join(home, ".tools"), "--ignore-scripts", "bun@1.4.2"]))
     await checked(process.execPath, ["install.js"], { cwd: join(home, ".tools/node_modules/bun") })
+    bun = await resolveBun()
   }
   if (!await exists(join(upstream, ".git")))
-    await checked("git", ["clone", "--depth", "1", "--branch", settings.upstream, "https://github.com/sst/opencode.git", upstream])
+    // LF line endings everywhere: Git for Windows defaults to autocrlf, and CRLF would break every multi-line mod anchor.
+    await checked("git", ["clone", "--config", "core.autocrlf=false", "--depth", "1", "--branch", settings.upstream, "https://github.com/sst/opencode.git", upstream])
   const pkg = JSON.parse(await readFile(join(upstream, "package.json"), "utf8"))
   if (`v${pkg.version}` !== settings.upstream)
     throw new Error(`Source is v${pkg.version}, config requests ${settings.upstream}. Use a matching tag; no automatic destructive update.`)
@@ -89,7 +116,7 @@ export async function fingerprint(settings, mods) {
   hash.update(await readFile(fileURLToPath(import.meta.url)))
   hash.update(await readFile(join(home, "src/mod-loader.mjs")))
   hash.update(await readFile(join(home, "src/tui-features.mjs")))
-  for (const file of ["live-runtime.ts", "daemon-client.mjs", "opendaemon-tool.mjs"]) hash.update(await readFile(join(home, "src", file)))
+  for (const file of ["live-runtime.ts", "daemon-client.mjs", "opendaemon-tool.mjs", "export-tool.mjs", "project-export.mjs"]) hash.update(await readFile(join(home, "src", file)))
   hash.update(await readFile(join(home, "src/traffic.mjs")))
   for (const mod of mods) await digestTree(dirname(mod.filename), hash)
   return hash.digest("hex")
@@ -140,24 +167,25 @@ async function step(label, task, streams = false, progress) {
 }
 export async function prepare(settings, force = false) {
   reducedMotion = !!settings.options?.reducedMotion
-  if (!supported) throw new Error(`Unsupported platform ${target}; InfiniteOC builds on Linux and macOS (x64/arm64)`)
+  if (!supported) throw new Error(`Unsupported platform ${target}; InfiniteOC builds on Linux, macOS and Windows (x64/arm64)`)
   const { upstream, bun } = await bootstrap(settings)
+  if (!bun) throw new Error("bun not found after bootstrap; run infiniteoc setup again")
   const mods = await loadMods(settings.mods, home)
   const key = await fingerprint(settings, mods)
   const runtime = join(home, ".runtime")
   const root = join(runtime, "opencode")
   const marker = join(runtime, "build.json")
   const built = () => readFile(marker, "utf8").then(JSON.parse).catch(() => undefined)
-  const fresh = async manifest => !force && manifest?.key === key && await exists(binary)
+  const fresh = async manifest => !force && manifest?.key === key && await resolveBinary() !== undefined
   let manifest = await built()
-  if (await fresh(manifest)) return { root, binary, mods, manifest }
+  if (await fresh(manifest)) return { root, binary: await resolveBinary(), mods, manifest }
   await mkdir(runtime, { recursive: true })
   const release = await acquireLock(join(runtime, "prepare.lock"))
   let log
   try {
     // Another launcher may have finished this very build while we waited.
     manifest = await built()
-    if (await fresh(manifest)) return { root, binary, mods, manifest }
+    if (await fresh(manifest)) return { root, binary: await resolveBinary(), mods, manifest }
     const started = Date.now()
     // No manifest also follows a failed or interrupted build, so this cannot say "first build".
     const reason = force ? "rebuild requested" : manifest ? `mods or framework changed since ${manifest.builtAt}` : "no finished build yet"
@@ -189,7 +217,7 @@ export async function prepare(settings, force = false) {
     await rm(marker, { force: true })
     await timed("[1/4] Copying pinned source", async () => {
       await rm(root, { recursive: true, force: true })
-      await cp(upstream, root, { recursive: true, filter: path => ![".git", "node_modules"].includes(path.split("/").at(-1)) })
+      await cp(upstream, root, { recursive: true, filter: file => ![".git", "node_modules"].includes(basename(file)) })
     })
     const applied = await timed(`[2/4] Applying ${mods.length} mod(s)`, async () => {
       // With INFINITEOC=1 every ServerConnection.resolve caller starts a private server, so the
@@ -220,28 +248,33 @@ export async function prepare(settings, force = false) {
       }
       const result = await applyMods(mods, root, settings.options)
       await installDaemonTool(root)
+      await installExportTool(root)
       return result
     })
-    const env = { ...process.env, PATH: `${dirname(bun)}:${process.env.PATH}`, HUSKY: "0", OPENCODE_CHANNEL: "infiniteoc", OPENCODE_VERSION: `${settings.upstream.slice(1)}-infiniteoc` }
+    const env = { ...process.env, PATH: prependPath(dirname(bun), process.env.PATH), HUSKY: "0", OPENCODE_CHANNEL: "infiniteoc", OPENCODE_VERSION: `${settings.upstream.slice(1)}-infiniteoc` }
     // The web UI (packages/app, a vite build embedded in the binary) is opt-in: it makes every build slower and hungrier.
     const webUi = settings.options?.webUi === true
     await timed("[3/4] Installing dependencies", output => checked(bun, ["install", "--frozen-lockfile"], { cwd: root, env, ...sink(output) }), true)
     await timed(`[4/4] Building ${target}${webUi ? " with the web UI" : ""}`, output => checked(bun, ["run", "script/build.ts", "--single", "--skip-install", ...(webUi ? [] : ["--skip-web-ui"])], { cwd: join(root, "packages/cli"), env, ...sink(output) }), true)
-    if (!await exists(binary)) throw new Error(`Build missing expected ${target} artifact`)
+    const builtBinary = await resolveBinary()
+    if (!builtBinary) throw new Error(`Build missing expected ${target} artifact`)
     manifest = { key, upstream: settings.upstream, builtAt: new Date().toISOString(), mods: mods.map(mod => mod.id), webUi, changes: applied.changes, timings }
     await writeFile(marker, JSON.stringify(manifest, null, 2))
     // launch() falls back to this when a later build fails; a hardlink survives the next rm of root.
     // Best-effort: losing the fallback must never fail a finished build.
+    // Windows: hardlinks can fail across volumes; fall back to a copy (still no admin needed).
     const good = join(runtime, "last-good")
     try {
       await mkdir(good, { recursive: true })
       await rm(join(good, "opencode"), { force: true })
-      await link(binary, join(good, "opencode"))
+      await rm(join(good, "opencode.exe"), { force: true })
+      const dest = isWindows ? join(good, "opencode.exe") : join(good, "opencode")
+      try { await link(builtBinary, dest) } catch { await copyFile(builtBinary, dest) }
       await copyFile(marker, join(good, "build.json"))
     } catch (error) { console.error(`[InfiniteOC] Could not keep this build as the fallback: ${error.message}`) }
     if (progress) ui.write(`${ui.gradient("◆ Ready")} ${ui.dim(`in ${seconds(started)}`)}\n\n`)
     else console.error(`[InfiniteOC] Ready in ${seconds(started)}`)
-    return { root, binary, mods, manifest }
+    return { root, binary: builtBinary, mods, manifest }
   } finally {
     log?.end()
     await release()
@@ -293,10 +326,11 @@ export async function launch(args, settings, options = {}) {
     if (error.exitCode) throw error
     const good = join(home, ".runtime/last-good")
     const manifest = await readFile(join(good, "build.json"), "utf8").then(JSON.parse).catch(() => undefined)
-    if (!manifest || !await exists(join(good, "opencode"))) throw error
+    const fallback = manifest ? await firstExisting(lastGoodCandidates(home)) : undefined
+    if (!manifest || !fallback) throw error
     console.error(`[InfiniteOC] ${error.message}`)
     notice(`Launching the previous build from ${manifest.builtAt}; fix the mod, then run infiniteoc rebuild`)
-    prepared = { binary: join(good, "opencode"), mods: [], manifest }
+    prepared = { binary: fallback, mods: [], manifest }
     hooks = { emit: async () => {} }
   }
   const traffic = await applyTraffic(saved.traffic)
@@ -319,7 +353,8 @@ export async function launch(args, settings, options = {}) {
     for (const mod of prepared.mods) if (mod.beforeLaunch) await mod.beforeLaunch(context)
     await hooks.emit("beforeLaunch", context)
     // Saved before the TUI takes the terminal. It restores it on exit and INT/TERM/HUP; SIGKILL, SIGSEGV and native aborts skip that.
-    const tty = tui && process.stdin.isTTY && process.stdout.isTTY ? spawnSync("stty", ["-g"], { stdio: ["inherit", "pipe", "ignore"], encoding: "utf8" }).stdout?.trim() : ""
+    // Windows has no stty: terminal restore is skipped there (no admin needed either way).
+    const tty = tui && !isWindows && process.stdin.isTTY && process.stdout.isTTY ? spawnSync("stty", ["-g"], { stdio: ["inherit", "pipe", "ignore"], encoding: "utf8" }).stdout?.trim() : ""
     const startedAt = new Date()
     let child, failure
     const exited = new AbortController()
@@ -350,16 +385,17 @@ export async function doctor(settings) {
   const check = (name, ok, detail, hint, data) => { report[name] = { ok, detail, hint: ok ? undefined : hint, ...data } }
   // A warning is not a failure (exit code stays 0): the launcher repairs it by itself, or it only affects an optional tool.
   const warn = (name, detail, hint, data) => { report[name] = { ok: true, warn: true, detail, hint, ...data } }
-  check("platform", supported, `platform ${target}`, "InfiniteOC builds on Linux and macOS (x64/arm64)")
+  check("platform", supported, `platform ${target}`, "InfiniteOC builds on Linux, macOS and Windows (x64/arm64)")
   check("node", Number(process.versions.node.split(".")[0]) >= 22, `node ${process.version}`, "install Node.js 22 or newer")
-  const bun = bunVersion(join(home, ".tools/node_modules/.bin/bun"))
+  const bunExe = await resolveBun()
+  const bun = await bunVersion(bunExe)
   check("bun", Boolean(bun), `bun ${bun ?? "missing or not runnable"}`, "run infiniteoc setup")
   const source = await readFile(join(home, ".upstream/package.json"), "utf8").then(text => `v${JSON.parse(text).version}`).catch(() => undefined)
   check("upstream", source === settings.upstream, `upstream ${source ?? "missing"} (config ${settings.upstream})`, source ? "check out the configured tag in .upstream; nothing is replaced automatically" : "run infiniteoc setup")
   try {
     const key = await fingerprint(settings, await loadMods(settings.mods, home))
     const built = await readFile(join(home, ".runtime/build.json"), "utf8").then(JSON.parse).catch(() => undefined)
-    const fresh = built?.key === key && await exists(binary)
+    const fresh = built?.key === key && await resolveBinary() !== undefined
     if (fresh) check("build", true, `build from ${built.builtAt} is fresh`)
     else warn("build", built ? `build from ${built.builtAt} is stale` : "no finished build", "the next launch rebuilds; infiniteoc doctor --fix rebuilds now", { fix: "build" })
     // serve needs only a build; web needs the opt-in web UI built into it.
@@ -385,9 +421,10 @@ export async function doctor(settings) {
     if (["ENOENT", "ECONNREFUSED"].includes(error.code)) check("daemon", true, "opendaemon not running; the next launch starts it")
     else check("daemon", false, `opendaemon not reachable (${error.message})`, "run opendaemon serve to see why")
   }
-  // Measured: longer socket paths fail with EINVAL (macOS 104 bytes; Linux sun_path 108 incl. NUL); same limit as socketLimit in src/opendaemon.mjs.
-  const limit = process.platform === "darwin" ? 104 : 107
-  check("socket", Buffer.byteLength(socket) <= limit, `daemon socket path ${Buffer.byteLength(socket)}/${limit} bytes`, "move InfiniteOC to a shorter directory")
+  // Posix: longer socket paths fail with EINVAL (macOS 104 bytes; Linux sun_path 108 incl. NUL).
+  // Windows uses a named pipe instead, which has no such tight limit.
+  if (socketLimit === null) check("socket", true, `daemon pipe ${socket}`)
+  else check("socket", Buffer.byteLength(socket) <= socketLimit, `daemon socket path ${Buffer.byteLength(socket)}/${socketLimit} bytes`, "move InfiniteOC to a shorter directory")
   const file = settingsFile()
   try {
     const saved = await loadSettings(file)

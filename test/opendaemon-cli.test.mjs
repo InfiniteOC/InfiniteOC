@@ -9,6 +9,8 @@ import { tmpdir } from "node:os"
 import { fileURLToPath } from "node:url"
 import { startDaemon, daemonPaths, socketLimit } from "../src/opendaemon.mjs"
 import { daemonRequest } from "../src/daemon-client.mjs"
+// Personal mods (src/user-mods.mjs) must never touch the real ~/.config/infiniteoc/mods from a test.
+process.env.INFINITEOC_MODS_DIR = (await import("node:fs")).mkdtempSync((await import("node:path")).join((await import("node:os")).tmpdir(), "ioc-personal-mods-"))
 
 const cli = fileURLToPath(new URL("../bin/opendaemon.mjs", import.meta.url))
 const stub = { interval: 25, compiler: async revision => ({ revision, commands: [] }) }

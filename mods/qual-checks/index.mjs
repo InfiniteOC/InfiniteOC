@@ -4,11 +4,10 @@ const LIB = ["scan", "tokens", "catalog", "prune", "deps", "license", "coverage"
 const marker = "// infiniteoc:guidance-extensions"
 
 export const guidance = `[Quality tools]
-Verification tools built into InfiniteOC; use them instead of claiming something works.
-- UI work: call ui_check (a dev server URL or an HTML file) once before editing and again after. It returns screenshots at phone, tablet and desktop widths plus dark mode, flags horizontal overflow and console errors, runs an axe-core accessibility audit when axe-core is installed, and attaches a pixel diff against the earlier capture. Fix what it reports, then check again. design_tokens lists the project's CSS variables and Tailwind theme and component_catalog lists existing components: read them before writing new UI so it matches and reuses what is there. Pass a mockup image to ui_check to see how far the render is from it.
-- Tests: new tests should be able to fail. Run mutation_check on the source file you changed (it flips one condition and expects a test to fail, then restores the file). coverage_delta reports whether coverage went down; bench_guard compares a configured benchmark with its baseline when the change touches performance-sensitive code. A failing test command is rerun twice automatically and labelled flaky when it passes again: report a flaky test as flaky, never as fixed.
-- /testfirst <bug or behavior> gates source edits until a new test has been seen failing; follow its steps. Edits to package.json or requirements files report each new dependency's size and license, and vendored code gets a license check (license_check does it on demand): justify new dependencies or drop them.
-- /prune lists unused files and exports (prune_scan); it never deletes.`
+Prove it; don't claim. Prefer these over manual checks.
+- UI: ui_check {target} before+after (dev URL or HTML file). Screenshots phone/tablet/desktop + dark, overflow, console errors, axe audit when installed, pixel diff vs baseline. Fix, re-check. design_tokens + component_catalog before new UI; mockup path for pixel compare.
+- Tests must fail first: mutation_check {file,test_command,line?} flips one condition, expects failure, restores. coverage_delta after tests; bench_guard after perf-sensitive changes. Fail-then-pass-twice is flaky, never fixed.
+- /testfirst <bug> gates edits till failing test seen. package.json/requirements edits report dep size+license; vendored code needs license_check. /prune lists unused files/exports (prune_scan); never deletes.`
 
 export default {
   id: "qual-checks",

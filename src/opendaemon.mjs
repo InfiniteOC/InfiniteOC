@@ -9,20 +9,26 @@ import { daemonRequest } from "./daemon-client.mjs"
 import { validateCommand, safeError } from "./tui-features.mjs"
 import { buildLive } from "./live-build.mjs"
 import { packEntries } from "./packs.mjs"
+import { userModEntries } from "./user-mods.mjs"
+import { checkSocket, daemonPaths, isWindows, socketLimit } from "./platform.mjs"
 
-export const daemonPaths = base => ({ directory: path.join(base, ".opendaemon"), socket: path.join(base, ".opendaemon/control.sock"), manifest: path.join(base, ".opendaemon/live.json") })
-// Measured on macOS (Node 26): 104-byte socket paths work, 105 fail with EINVAL (no truncation). Linux sun_path is 108 incl. NUL.
-export const socketLimit = process.platform === "darwin" ? 104 : 107
-export const checkSocket = socket => { const length = Buffer.byteLength(socket); if (length > socketLimit) throw new Error(`opendaemon socket path is ${length} bytes; this OS allows ${socketLimit}. Move InfiniteOC to a shorter directory`) }
+export { checkSocket, daemonPaths, socketLimit }
+
+// chmod is a no-op for the Windows permission model; never let it fail a start there.
+const safeChmod = async (file, mode) => { if (!isWindows) await chmod(file, mode) }
 
 // The one ignore rule, shared with the launcher fingerprint: dependencies,
 // dotfiles (.git, .DS_Store, .opendaemon, .runtime, vim swaps) and editor/log litter.
-export async function digestTree(directory, hash) {
+// Paths feed the hash relative to the tree root, so identical checkouts in
+// different directories share a fingerprint (portable installs, prebuilt
+// binaries). Note: this changes every fingerprint once; the next launch
+// rebuilds, then later launches reuse the build again.
+export async function digestTree(directory, hash, base = directory) {
   for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
     if (/^(?:node_modules$|\.)|~$|^#.*#$|\.(?:log|tmp)$/.test(entry.name)) continue
     const file = path.join(directory, entry.name)
-    if (entry.isDirectory()) await digestTree(file, hash)
-    else if (entry.isFile()) hash.update(file).update(await readFile(file))
+    if (entry.isDirectory()) await digestTree(file, hash, base)
+    else if (entry.isFile()) hash.update(path.relative(base, file)).update(await readFile(file))
   }
 }
 export async function modsDigest(base) {
@@ -31,7 +37,7 @@ export async function modsDigest(base) {
   const hash = createHash("sha256").update(raw)
   // Installed packs are watched like mods; one that no longer matches its pin drops out of the list, which also changes the digest.
   // ponytail: pack files are hashed twice per check (pin verification, then here); a pack of a few files makes that negligible.
-  const mods = [...config.mods, ...(await packEntries(base)).entries]
+  const mods = [...config.mods, ...(await packEntries(base)).entries, ...(await userModEntries()).entries]
   for (const directory of new Set(mods.map(entry => path.dirname(path.resolve(base, entry))))) await digestTree(directory, hash)
   return hash.digest("hex")
 }
@@ -41,17 +47,24 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
   checkSocket(paths.socket)
   await mkdir(paths.directory, { recursive: true, mode: 0o700 })
   if (!(await lstat(paths.directory)).isDirectory() || (await lstat(paths.directory)).isSymbolicLink()) throw new Error("opendaemon directory must not be a symlink")
-  await chmod(paths.directory, 0o700)
-  try {
-    await lstat(paths.socket)
-    let alive = false
-    try { await daemonRequest(paths.socket, "GET", "/status"); alive = true } catch (error) {
-      if (!["ECONNREFUSED", "ENOENT"].includes(error.code)) throw new Error("Cannot verify existing opendaemon socket; refusing to remove it")
+  await safeChmod(paths.directory, 0o700)
+  if (!paths.pipe) {
+    try {
+      await lstat(paths.socket)
+      let alive = false
+      try { await daemonRequest(paths.socket, "GET", "/status"); alive = true } catch (error) {
+        if (!["ECONNREFUSED", "ENOENT"].includes(error.code)) throw new Error("Cannot verify existing opendaemon socket; refusing to remove it")
+      }
+      if (alive) throw new Error("opendaemon is already running")
+      if (!(await lstat(paths.socket)).isSocket()) throw new Error("Refusing to remove a non-socket daemon path")
+      await unlink(paths.socket)
+    } catch (error) { if (error.code !== "ENOENT") throw error }
+  } else {
+    // Named pipes vanish with their server: only refuse when one answers.
+    try { await daemonRequest(paths.socket, "GET", "/status"); throw new Error("opendaemon is already running") } catch (error) {
+      if (error.message === "opendaemon is already running") throw error
     }
-    if (alive) throw new Error("opendaemon is already running")
-    if (!(await lstat(paths.socket)).isSocket()) throw new Error("Refusing to remove a non-socket daemon path")
-    await unlink(paths.socket)
-  } catch (error) { if (error.code !== "ENOENT") throw error }
+  }
   // Read before the startup reload republishes it; old generations are collected after listen.
   const generations = path.join(paths.directory, "generations")
   const live = await readFile(paths.manifest, "utf8").then(text => JSON.parse(text).revision).catch(() => null)
@@ -235,7 +248,7 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
   })
   server.requestTimeout = 10000
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(paths.socket, resolve) })
-  await chmod(paths.socket, 0o600)
+  await safeChmod(paths.socket, 0o600).catch(() => {})
   // ponytail: generations are collected only at startup, so a long-lived daemon still grows until restarted.
   // Not awaited, so a large backlog never delays startup; never through a symlinked generations directory.
   const collect = (async () => {
@@ -278,7 +291,8 @@ export async function ensureDaemon(base) {
   try { await daemonRequest(paths.socket, "GET", "/status"); return paths } catch (error) { if (!["ENOENT", "ECONNREFUSED"].includes(error.code)) throw error }
   await mkdir(paths.directory, { recursive: true, mode: 0o700 })
   // cwd: base, so the detached daemon never pins the user's project directory.
-  const child = spawn(process.execPath, [fileURLToPath(new URL("../bin/opendaemon.mjs", import.meta.url)), "serve", "--home", base], { cwd: base, detached: true, stdio: "ignore" })
+  // windowsHide: no console popup on Windows; still user-local, no service registration.
+  const child = spawn(process.execPath, [fileURLToPath(new URL("../bin/opendaemon.mjs", import.meta.url)), "serve", "--home", base], { cwd: base, detached: true, stdio: "ignore", windowsHide: true })
   let failure
   child.on("error", error => { failure = error })
   child.on("exit", () => { failure ??= new Error("opendaemon exited during startup; run opendaemon serve to see why") })

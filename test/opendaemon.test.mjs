@@ -8,6 +8,8 @@ import { startDaemon, ensureDaemon, modsDigest, daemonPaths, socketLimit } from 
 import { installDaemonTool } from "../src/opendaemon-tool.mjs"
 import { safeError } from "../src/tui-features.mjs"
 import { daemonRequest } from "../src/daemon-client.mjs"
+// Personal mods (src/user-mods.mjs) must never touch the real ~/.config/infiniteoc/mods from a test.
+process.env.INFINITEOC_MODS_DIR = (await import("node:fs")).mkdtempSync((await import("node:path")).join((await import("node:os")).tmpdir(), "ioc-personal-mods-"))
 
 async function makeBase(base) {
   base ??= await mkdtemp(path.join(tmpdir(), "iod-"))
