@@ -101,7 +101,9 @@ test("guidance stays bounded and grants nothing", () => {
   assert.doesNotMatch(guidance, /effect\s*:\s*"allow"|"allow"|apiKey|secret\s*=/i)
 })
 
-test("plugin is read-only: three tools, no exec/writes/permission changes", () => {
+test("plugin is read-only: four tools, no exec/writes/permission changes", () => {
+  assert.match(pluginSource, /name: L\.LOAD_TOOL/)
+  for (const kind of ["context", "compaction", "generate"]) assert.match(pluginSource, new RegExp(`ctx\\.session\\.hook\\("${kind}"`))
   assert.match(pluginSource, /name: "project_checks"/)
   assert.match(pluginSource, /name: "tool_guide"/)
   assert.match(pluginSource, /name: "infiniteoc"/)
@@ -180,4 +182,35 @@ test("infiniteoc dispatch: reads answer, recipes quote, user-only stops", { skip
     assert.match(out, /User runs:/, op)
   }
   assert.match(lib.infiniteoc("status", undefined, "No infiniteoc.json in /x."), /No infiniteoc.json/)
+})
+
+test("specialist tools stay out of requests until the session loads them", { skip }, () => {
+  const def = (description = "d") => ({ description })
+  const request = () => ({ read: def(), shell: def(), agent_display: def(), repo_map: def(), ui_check: def(), [lib.LOAD_TOOL]: def() })
+  // Nothing loaded: deferred tools go, load_tools lists exactly them.
+  const tools = request()
+  assert.deepEqual(lib.deferTools(tools, new Set()).sort(), ["agent_display", "repo_map", "ui_check"])
+  assert.deepEqual(Object.keys(tools).sort(), ["load_tools", "read", "shell"])
+  assert.match(tools.load_tools.description, /- agent_display: [\s\S]*- repo_map: [\s\S]*- ui_check: /)
+  // A load_tools call (or a direct use) in the transcript loads them, and the result is deterministic.
+  const messages = [
+    { role: "user", content: "hi" },
+    { role: "assistant", content: [{ type: "tool-call", name: "load_tools", input: { names: ["agent_display", "nope"] } }] },
+    { role: "assistant", content: [{ type: "tool-call", name: "repo_map", input: {} }] },
+  ]
+  assert.deepEqual([...lib.loadedTools(messages)].sort(), ["agent_display", "repo_map"])
+  const after = request()
+  lib.deferTools(after, lib.loadedTools(messages))
+  assert.deepEqual(Object.keys(after).sort(), ["agent_display", "load_tools", "read", "repo_map", "shell"])
+  assert.doesNotMatch(after.load_tools.description, /agent_display/)
+  // Everything loaded: load_tools itself goes. No load_tools (agent not allowed): nothing is removed.
+  const all = request()
+  lib.deferTools(all, new Set(["agent_display", "repo_map", "ui_check"]))
+  assert.equal(all.load_tools, undefined)
+  const locked = { read: def(), agent_display: def() }
+  assert.deepEqual(lib.deferTools(locked, new Set()), [])
+  assert.ok(locked.agent_display)
+  // Every deferred tool has a one-line summary; core tools are never deferred.
+  for (const [name, summary] of Object.entries(lib.DEFERRED)) assert.ok(summary.length < 110 && !summary.includes("\n"), name)
+  for (const core of ["read", "edit", "write", "shell", "grep", "glob", "execute", "subagent", "question", "skill", "memory", "free_port", "project_checks", "tool_guide", "workflow"]) assert.ok(!(core in lib.DEFERRED), core)
 })

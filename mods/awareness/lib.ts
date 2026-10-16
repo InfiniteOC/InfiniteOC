@@ -190,3 +190,72 @@ export function infiniteoc(op: string | undefined, target: string | undefined, s
   }
   return `${entry.about}\nRefused from agent context: ${USER_ONLY_WHY[name] ?? "it changes state outside safe agent operation"}. Quote the command and stop; the user decides.\nUser runs: ${run}`
 }
+
+// ---- on-demand specialist tools ----
+// Every request carries every tool definition, and these ~5-6k tokens of specialist tools are used in
+// a handful of sessions (most never). They stay out of requests until the session loads them with
+// load_tools; the one-line catalog below is what the model sees instead. Loading changes the tool
+// list once, so the cached prompt prefix is rebuilt once per load, not on every request.
+export const LOAD_TOOL = "load_tools"
+export const DEFERRED: Record<string, string> = {
+  agent_display: "your own isolated screen: launch apps, screenshot, click, type, read text (GUI and game automation)",
+  ui_check: "render a page at phone/tablet/desktop/dark with a11y audit and visual diff",
+  design_tokens: "the project's colors, spacing and type scale to reuse",
+  component_catalog: "existing UI components to reuse",
+  mutation_check: "mutate the code under test to prove tests catch bugs",
+  coverage_delta: "coverage change caused by your edits",
+  bench_guard: "benchmark before/after to catch performance regressions",
+  license_check: "licenses of dependencies you added",
+  prune_scan: "unused exports and files",
+  env_diff: "missing/extra .env keys versus the example (names only)",
+  repo_map: "outline of code files and their top-level symbols",
+  trace_lookup: "map a pasted stack trace to local files and lines",
+  type_lookup: "installed declaration of a type or function",
+  log_tail: "recent lines of a configured log file",
+  sql_peek: "read-only SQL on the project's SQLite database",
+  openapi_lookup: "endpoints in the project's OpenAPI spec",
+  linked_repo: "read a linked sibling repository",
+  device: "your other machines running InfiniteOC: list, read, prompt",
+  session_data: "earlier conversations: search and read",
+  project: "start a new project in its own folder",
+  infiniteoc: "InfiniteOC status, mods and how-to recipes",
+}
+
+export const loadToolDescription = (available: ReadonlyArray<string>) =>
+  [
+    "Load specialist tools that are not in your tool list yet. They become callable from your next step on, for the rest of the session. Load only what the task needs (each adds its definition to every later request); several at once is fine.",
+    "Available:",
+    ...available.map((name) => `- ${name}: ${DEFERRED[name]}`),
+  ].join("\n")
+
+type Part = { type: string; name?: string; input?: unknown }
+/** Pure: deferred tools this transcript loaded (load_tools calls) or already used. */
+export function loadedTools(messages: ReadonlyArray<{ role: string; content: ReadonlyArray<Part> | string }>): Set<string> {
+  const loaded = new Set<string>()
+  for (const message of messages) {
+    if (message.role !== "assistant" || typeof message.content === "string") continue
+    for (const part of message.content) {
+      if (part.type !== "tool-call" || !part.name) continue
+      if (part.name in DEFERRED) loaded.add(part.name)
+      if (part.name !== LOAD_TOOL) continue
+      const names = (part.input as { names?: unknown } | undefined)?.names
+      for (const name of Array.isArray(names) ? names : []) if (typeof name === "string" && name in DEFERRED) loaded.add(name)
+    }
+  }
+  return loaded
+}
+
+/**
+ * Pure: removes deferred tools that are not loaded from a request's tool map, in place, and fits the
+ * load_tools description to what is left to load. Without load_tools (an agent not allowed to use it)
+ * nothing is removed, so no tool becomes unreachable. Returns the names it removed.
+ */
+export function deferTools(tools: Record<string, { description: string }>, loaded: ReadonlySet<string>): string[] {
+  const loader = tools[LOAD_TOOL]
+  if (!loader) return []
+  const removed = Object.keys(tools).filter((name) => name in DEFERRED && !loaded.has(name))
+  for (const name of removed) delete tools[name]
+  if (removed.length) loader.description = loadToolDescription(removed)
+  else delete tools[LOAD_TOOL]
+  return removed
+}
