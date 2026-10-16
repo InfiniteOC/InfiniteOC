@@ -1,8 +1,34 @@
-# InfiniteOC
+<p align="center">
+  <img src="assets/logo.svg" alt="InfiniteOC" width="420">
+</p>
 
-OpenCode with superpowers: a modded build of [OpenCode](https://github.com/sst/opencode) that keeps working
-until a job is done (`/goal`), runs subagent workflows in parallel, connects to ~90 apps (`/apps`), and is
-easy to extend with your own mods. It installs next to stock OpenCode and never changes it.
+<p align="center">
+  <b>OpenCode with superpowers.</b><br>
+  Keeps working until the job is done, runs subagent workflows in parallel, connects to ~90 apps, and is easy to extend.
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-c084fc"></a>
+  <img alt="Node 22+" src="https://img.shields.io/badge/node-22%2B-f472b6">
+  <img alt="Platforms" src="https://img.shields.io/badge/macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-555">
+</p>
+
+<p align="center">
+  <img src="assets/home.png" alt="InfiniteOC home screen" width="760">
+</p>
+
+InfiniteOC is a modded build of [OpenCode](https://github.com/sst/opencode). It keeps working until a job is done
+(`/goal`), runs subagent workflows in parallel, connects to ~90 apps (`/apps`), and is easy to extend with your
+own mods. It installs next to stock OpenCode and never changes it.
+
+## See it
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/commands.png" alt="Slash command menu"><br><sub>Type <code>/</code> for every command.</sub></td>
+    <td width="50%"><img src="assets/goal.png" alt="The /goal command"><br><sub><code>/goal</code> works until the goal is built and verified.</sub></td>
+  </tr>
+</table>
 
 ## Install
 
