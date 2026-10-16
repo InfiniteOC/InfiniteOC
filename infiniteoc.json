@@ -25,7 +25,8 @@
     "./mods/connectors/index.mjs",
     "./mods/projects/index.mjs",
     "./mods/sessions/index.mjs",
-    "./mods/devices/index.mjs"
+    "./mods/devices/index.mjs",
+    "./mods/crash-guard/index.mjs"
   ],
   "options": {
     "reducedMotion": false,

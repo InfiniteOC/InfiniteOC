@@ -120,3 +120,28 @@ test("client failures name the device, never the password", async (t) => {
   await assert.rejects(deviceSessions(await resolveDevice("gone", env), {}), /did not answer/)
   assert.ok(keysDir(env).endsWith("keys"))
 })
+
+test("plugin awaits async device calls (regression: Effect.try never awaits)", async (t) => {
+  const source = await readFile(new URL("./plugin.ts", import.meta.url), "utf8")
+  // resolveDevice/deviceOpen/devicePrompt are async: wrapping them in Effect.try
+  // succeeds with the Promise itself, so device.name/url come out undefined and
+  // every call fails with `Device "undefined" did not answer at undefined`.
+  for (const call of ["Devices.resolveDevice(", "Devices.deviceOpen(", "Devices.devicePrompt("]) {
+    assert.ok(source.includes(`Effect.tryPromise({ try: () => ${call}`), `${call} must go through Effect.tryPromise`)
+  }
+  assert.ok(!source.includes("Effect.try({ try: () => Devices."), "no sync Effect.try around async Devices calls")
+})
+
+test("un-awaited resolveDevice is a Promise with no name/url (the original failure)", async (t) => {
+  const { file } = await settings(t)
+  const env = envFor(file)
+  const { url } = await stub(t)
+  await addDevice({ name: "lab", url, password: SECRET, env })
+  const unawaited = resolveDevice("lab", env)
+  assert.ok(unawaited instanceof Promise, "async lib calls must be awaited (or tryPromise)")
+  assert.equal(unawaited.name, undefined)
+  assert.equal(unawaited.url, undefined)
+  const device = await unawaited
+  assert.equal(device.name, "lab")
+  assert.equal(device.url, url)
+})

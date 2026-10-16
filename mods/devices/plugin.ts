@@ -57,7 +57,7 @@ export const Plugin = define({
                 return { content: all.map((item) => `- ${item.name}: ${item.url}`).join("\n") }
               }
               if (!input.device?.trim()) return yield* Effect.fail(new ToolFailure({ message: `${input.action} needs a device name (find them with action "list").` }))
-              const device = yield* Effect.try({ try: () => Devices.resolveDevice(input.device!), catch: (error) => new ToolFailure({ message: (error as Error).message }) })
+              const device = yield* Effect.tryPromise({ try: () => Devices.resolveDevice(input.device!), catch: (error) => new ToolFailure({ message: (error as Error).message }) })
               if (input.action === "sessions") return { content: Devices.formatDeviceSessions(device, yield* Effect.promise(() => Devices.deviceSessions(device, { limit: input.limit }))) }
               if (input.action === "read") {
                 if (!input.session?.trim()) return yield* Effect.fail(new ToolFailure({ message: "read needs a session id (find them with action \"sessions\")." }))
@@ -67,13 +67,13 @@ export const Plugin = define({
               if (input.action === "open") {
                 if (!input.directory?.trim()) return yield* Effect.fail(new ToolFailure({ message: "open needs an absolute directory on the device." }))
                 yield* ask(device, `open ${input.directory}`, context)
-                const created = yield* Effect.try({ try: () => Devices.deviceOpen(device, { directory: input.directory!, title: input.title }), catch: (error) => new ToolFailure({ message: (error as Error).message }) })
+                const created = yield* Effect.tryPromise({ try: () => Devices.deviceOpen(device, { directory: input.directory!, title: input.title }), catch: (error) => new ToolFailure({ message: (error as Error).message }) })
                 return { content: `Opened session ${created?.id} on device "${device.name}" at ${input.directory}. Send it work with action "prompt".` }
               }
               if (!input.text?.trim()) return yield* Effect.fail(new ToolFailure({ message: "prompt needs text to send (and a session id)." }))
               if (!input.session?.trim()) return yield* Effect.fail(new ToolFailure({ message: "prompt needs a session id (open one with action \"open\")." }))
               yield* ask(device, `prompt session ${input.session}`, context)
-              const result = yield* Effect.try({ try: () => Devices.devicePrompt(device, { sessionID: input.session!, text: input.text! }), catch: (error) => new ToolFailure({ message: (error as Error).message }) })
+              const result = yield* Effect.tryPromise({ try: () => Devices.devicePrompt(device, { sessionID: input.session!, text: input.text! }), catch: (error) => new ToolFailure({ message: (error as Error).message }) })
               return { content: `Device "${device.name}" session ${result.sessionID} finished:\n${result.text}` }
             }).pipe(Effect.mapError((error) => (error instanceof ToolFailure ? error : new ToolFailure({ message: `device ${input.action}: ${error instanceof Error ? error.message : String(error)}`, error })))),
         })
