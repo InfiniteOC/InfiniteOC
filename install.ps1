@@ -45,8 +45,9 @@ $git = Get-Command git -ErrorAction SilentlyContinue
 if (-not $git) { Die "git is required (https://git-scm.com)" }
 $node = Get-Command node -ErrorAction SilentlyContinue
 if (-not $node) { Die "Node.js 22 or newer is required (https://nodejs.org)" }
-$major = (& node -p 'process.versions.node.split(".")[0]')
-if ([int]$major -lt 22) { Die "Node.js 22 or newer is required (found $(& node -v))" }
+$nodeVersion = ((& node -v) | Out-String).Trim()
+$major = ($nodeVersion.TrimStart('v').Split('.')[0])
+if ([int]$major -lt 22) { Die "Node.js 22 or newer is required (found $nodeVersion)" }
 
 $arch = $env:PROCESSOR_ARCHITECTURE
 if ($arch -eq "AMD64") { $arch = "x64" }
