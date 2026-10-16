@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="InfiniteOC" width="460">
+  <img src="assets/logo.svg" alt="InfiniteOC" width="420">
 </p>
 
 <p align="center">
