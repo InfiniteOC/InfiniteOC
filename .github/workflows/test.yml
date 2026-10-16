@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Windows is not covered: the daemon uses unix sockets and the launcher tests use sh stubs.
+        # The full suite uses sh stubs, so it runs on posix only.
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
@@ -19,3 +19,18 @@ jobs:
           node-version: 22
       # Tests that need the pinned upstream source skip themselves when .upstream is absent.
       - run: npm test
+  test-windows:
+    # Shell-free coverage for Windows: platform helpers, path handling and the
+    # installer scripts' syntax. Nothing here needs sh, a Unix socket or admin.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test test/platform.test.mjs
+      - run: node --check scripts/fetch-prebuilt.mjs
+      - run: node --check scripts/package-release.mjs
+      - run: node --check src/platform.mjs
+      - run: sh -n install.sh
+        shell: bash

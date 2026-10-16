@@ -7,6 +7,7 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { loadSettings, saveSettings, saveProvider, providerProtocols, providerConfigFile, settingsFile } from "../mods/infiniteoc/settings/settings-store.mjs"
 import { UPDATE_MODES } from "./updater.mjs"
+import { opencodeConfigDir, opencodeDataDir } from "./platform.mjs"
 
 export const THEMES = ["infiniteoc", "tokyonight", "catppuccin", "gruvbox", "nord", "dracula", "one-dark", "solarized", "rosepine", "kanagawa", "github", "monokai", "matrix", "synthwave84"]
 export const PONYTAIL_LEVELS = ["auto", "lite", "full", "ultra", "off"]
@@ -16,8 +17,8 @@ const PROTOCOLS = [
   ["openai-responses", "OpenAI (responses API)", "https://api.openai.com/v1"],
 ]
 const exists = (path) => access(path).then(() => true, () => false)
-const dataDir = (env) => join(env.XDG_DATA_HOME || join(homedir(), ".local/share"), "opencode")
-const configDir = (env) => join(env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode")
+const dataDir = (env) => opencodeDataDir(env)
+const configDir = (env) => opencodeConfigDir(env)
 
 /** Only a brand-new installation on a terminal: no settings file and no OpenCode data of any earlier use. */
 export async function needsWizard({ env = process.env, tty = process.stdin.isTTY && process.stderr.isTTY } = {}) {

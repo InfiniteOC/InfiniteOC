@@ -24,16 +24,14 @@ const CORE = "packages/core/src/plugin"
 const FEATURES = "packages/tui/src/infiniteoc-features"
 
 export const guidance = `[Agent display]
-You have your own isolated screen (Xvfb :99, 1280x800), separate from the user's display: programs you exec there get DISPLAY=:99 and no WAYLAND_DISPLAY. Use the agent_display tool.
-- Fast loop: exec (waits for the program's window and returns its id and geometry), then steps with several ops and screenshot: true, read the frame, repeat. One steps call can click, type, press keys, wait for a window and sleep; prefer it to many single win calls.
-- Click text by label instead of guessing pixels: { op: "click", label: "Consent" } finds that text on screen (OCR) and clicks its center; a button or link beats the same word inside a sentence, nth picks another match. find lists the visible text with x,y (cheaper than a screenshot); { op: "wait", label: "Done" } waits for text. Pixel guesses from screenshots are often 20-50px off; use x/y only for things without text (icons, canvas, games).
-- Coordinates: without window, x/y are screen pixels, the same pixels as a full screenshot. With window (id or title/class fragment), x/y are window-relative, matching a screenshot of that window.
-- Input is real (XTEST): a click hits whatever is on top at that point and moves keyboard focus there; type/key go to the focused window. keys are X keysyms, space separated: "Return", "ctrl+l", "ctrl+a BackSpace".
-- Take a screenshot when a claim depends on what is on the screen, and read it before describing it. show shares a frame with the user; the live page (stream) is for the user to watch, not for you.
-- It is a small desktop: openbox places windows and gives them title bars (close/maximize buttons work, alt+F4 too), a taskbar with a clock takes the bottom 36px, clicking a window focuses it. status says when the screen is bare X instead.
-- The user can turn on realistic input in /display: then the pointer glides, typing is human speed and steps pause briefly, so calls take longer. It is instant by default; status shows which.
-- Chromium: pass --ozone-platform=x11 and a fresh --user-data-dir per spawn, or it tries Wayland or opens its window in an instance that is already running.
-- exec, kill, stream and input ops go through the normal shell permission, so /readonly, allow-lists and yolo apply.`
+Your isolated screen (Xvfb :99, 1280x800), never the user's display: exec there with DISPLAY=:99, no WAYLAND_DISPLAY. Use the agent_display tool.
+- Fast loop: exec (waits for window, returns id+geometry), then steps with several ops + screenshot: true; read frame, repeat. Prefer one steps call over many single wins.
+- Click by label, not pixels: { op: "click", label: "Consent" } OCR-clicks center; button/link beats same word in sentence; nth picks next. find lists visible text+x,y (cheaper than screenshot); { op: "wait", label: "Done" } waits. Pixel x/y off by 20-50px: use x/y only for icon/canvas/game without text.
+- Coordinates: no window = screen pixels (same as full screenshot). With window (id/title/class) = window-relative.
+- Real input (XTEST): click focuses; type/key go to focused window. keys are X keysyms ("Return", "ctrl+l", "ctrl+a BackSpace").
+- Screenshot when claim depends on screen; read before describing. show shares frame; live stream page is for user watch, not you.
+- Desktop: openbox title bars, taskbar bottom 36px, click focuses. status tells bare X vs ready. /display realistic toggle: instant default, human-speed when on.
+- Chromium: --ozone-platform=x11 + fresh --user-data-dir per spawn, else Wayland/wrong instance. exec/kill/stream/input need shell permission, so /readonly/allow-lists/yolo apply.`
 const marker = "// infiniteoc:guidance-extensions"
 
 // safe-guard's /readonly refuses shells that may change state and editing subagents;

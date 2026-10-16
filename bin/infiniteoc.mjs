@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readdir, readFile } from "node:fs/promises"
+import { spawnSync } from "node:child_process"
 import { join } from "node:path"
 import { config, prepare, launch, doctor, doctorFix, exists, home, run } from "../src/launcher.mjs"
 import { update, settle } from "../src/updater.mjs"
@@ -16,6 +17,8 @@ import { serve, enableWebUi } from "../src/serve.mjs"
 try {
   const args = process.argv.slice(2)
   const help = args[0] === "help" || args[0] === "--help"
+  // A bundle made by `infiniteoc host bundle` only runs the web host (node host.mjs).
+  if (!help && args[0] !== "host" && await exists(join(home, "HOST_ONLY"))) throw new Error(`This copy of InfiniteOC only runs the web host: node ${join(home, "host.mjs")} (or npm start). Install InfiniteOC normally to use it in a terminal.`)
   // Help must still work when infiniteoc.json is broken.
   const settings = help ? undefined : await config()
   if (help) {
@@ -30,13 +33,21 @@ try {
   infiniteoc remote attach       Open the TUI on the backend the phone page watches
   infiniteoc serve [--hostname H] [--port N] [--cors ORIGIN]  Headless API server of this build (127.0.0.1, password required)
   infiniteoc web [--hostname H] [--port N] [--no-open]        The same server with the web UI, plus a one-time browser sign-in link
+  infiniteoc connect [ID [ARG]] [--ask] [--force]  List app connectors, or add one as an MCP server (/apps inside the TUI)
+  infiniteoc disconnect ID       Remove a connector (keeps a .bak of the OpenCode config)
+  infiniteoc device [list|add NAME URL|remove NAME]  Pair InfiniteOC servers on your other devices for the device agent tool
+  infiniteoc new NAME [--template node|python|web]  Create a project in the InfiniteOC projects folder and open it
+  infiniteoc projects            List the projects in that folder
+  infiniteoc host [--host H] [--port N] [--config FILE]  Password-guarded web app; projects live in each visitor's browser
+  infiniteoc host bundle DIR     A clean, web-host-only copy (node host.mjs, Dockerfile) to run anywhere
+  infiniteoc graph [--port N] [--no-open]  Local web graph of your projects, sessions and notes
   infiniteoc bench --a CFG --b CFG  Compare two configurations on a fixed task set (pass rate, tokens, time)
   infiniteoc mods                List configured mods (including installed packs)
   infiniteoc mod add URL         Install a mod pack from git, pinned by --commit and --sha256 (prompts if omitted)
   infiniteoc mod remove ID       Remove an installed pack
   infiniteoc doctor [--json]     Read-only checks; never downloads or changes anything
   infiniteoc doctor --fix        Repair: fetch missing tools, relink MCP paths, rebuild a stale build
-  infiniteoc feature new ID      Create a typed, working TUI slash-command mod (not enabled)
+  infiniteoc feature new ID      Create a typed, working TUI slash-command mod in your personal mods folder (not enabled)
   infiniteoc feature check ID    Check feature declarations and pinned UI integration
   infiniteoc feature enable ID   Check it, then append it to infiniteoc.json mods (keeps a .bak)
   infiniteoc feature disable ID  Remove it from infiniteoc.json mods (keeps a .bak)
@@ -51,18 +62,134 @@ Refused:       uninstall, upgrade (they act on stock OpenCode data)
 Configuration: ${home}/infiniteoc.json
 Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
   } else if (args[0] === "feature") {
-    const [, action, id] = args
-    const usage = "Usage: infiniteoc feature new|check|enable|disable ID"
-    if (!id || !/^[a-z][a-z0-9-]*$/.test(id) || args.length !== 3) throw new Error(usage)
-    if (action === "new") console.log(`Created ${await scaffoldFeature(home, id)}. Not enabled; see its README.`)
-    else if (action === "check") console.log(JSON.stringify(await checkFeatures(home, id), null, 2))
+    const repo = args.includes("--repo")
+    const [, action, id, ...extra] = args.filter(arg => arg !== "--repo")
+    const usage = "Usage: infiniteoc feature new|check|enable|disable ID   (new --repo: inside this checkout, for contributing to InfiniteOC)"
+    if (!id || !/^[a-z][a-z0-9-]*$/.test(id) || extra.length || (repo && action !== "new")) throw new Error(usage)
+    const { locateFeature } = await import("../src/feature-scaffold.mjs")
+    if (action === "new") {
+      const directory = await scaffoldFeature(home, id, { repo })
+      console.log(`Created ${directory}. Not enabled; see its README.${repo ? "" : "\nIt is in your personal mods folder (a local git repository, no remote), not in the InfiniteOC checkout."}`)
+    } else if (action === "check") console.log(JSON.stringify(await checkFeatures(home, id), null, 2))
     else if (action === "enable") {
-      if (!await exists(join(home, "mods", id, "index.mjs"))) throw new Error(`No mod at mods/${id}/index.mjs; existing: ${(await readdir(join(home, "mods"))).join(", ")}`)
-      // Load errors, invalid declarations and slash collisions fail before infiniteoc.json is written.
+      const found = await locateFeature(home, id)
+      if (!await exists(join(found.directory, "index.mjs"))) throw new Error(`No mod ${id}: looked in ${found.directory}. Create one with infiniteoc feature new ${id}`)
+      // Load errors, invalid declarations and slash collisions fail before anything is written.
       await checkFeatures(home, id)
-      console.log(await setFeatureEnabled(home, id, true) ? `Enabled ${id} (backup: infiniteoc.json.bak). A running opendaemon publishes its live commands now; compiled parts apply on the next launch, which rebuilds automatically.` : `${id} is already enabled.`)
-    } else if (action === "disable") console.log(await setFeatureEnabled(home, id, false) ? `Disabled ${id} (backup: infiniteoc.json.bak); the next launch rebuilds without it.` : `${id} is not enabled.`)
+      const where = found.personal ? "your personal mods.json" : "infiniteoc.json (backup: infiniteoc.json.bak)"
+      console.log(await setFeatureEnabled(home, id, true) ? `Enabled ${id} in ${where}. A running opendaemon publishes its live commands now; compiled parts apply on the next launch, which rebuilds automatically.` : `${id} is already enabled.`)
+    } else if (action === "disable") console.log(await setFeatureEnabled(home, id, false) ? `Disabled ${id}; the next launch rebuilds without it.` : `${id} is not enabled.`)
     else throw new Error(usage)
+  } else if (args[0] === "connect") {
+    // Loaded on demand: a problem in that mod must not break launching or any other command.
+    const { connect, connectorStatus, findConnector, formatStatus } = await import("../mods/connectors/connectors.mjs")
+    const positional = args.slice(1).filter(arg => !arg.startsWith("--"))
+    if (!positional.length) console.log(formatStatus(await connectorStatus()))
+    else {
+      const [id, arg] = positional
+      const entry = findConnector(id)
+      if (!entry) throw new Error(`Unknown connector "${id}". Run infiniteoc connect to list them.`)
+      const values = {}
+      const argVar = entry.vars?.find(item => item.arg)
+      if (arg && argVar) values[argVar.name] = arg
+      // Values are typed at a prompt (secrets hidden), never passed as arguments (shell history, ps).
+      if (args.includes("--ask") || args.includes("--token")) {
+        if (!entry.vars?.length) throw new Error(`${id} needs no values`)
+        if (!process.stdin.isTTY) throw new Error("--ask needs a terminal to type into")
+        const io = terminalIO()
+        try {
+          for (const item of entry.vars) {
+            if (values[item.name]) continue
+            const keep = process.env[item.name] ? `Enter keeps $${item.name}` : item.optional ? "Enter skips" : `Enter reads $${item.name} later`
+            values[item.name] = await io.ask(`${item.name}: ${item.help}${item.secret ? " (hidden)" : ""}\n  ${keep}: `, { secret: Boolean(item.secret) }) ?? ""
+          }
+        } finally { io.close() }
+      }
+      const result = await connect(id, { values, force: args.includes("--force") })
+      console.log(`Connected ${id} in ${result.configFile}${result.backup ? ` (backup: ${result.backup})` : ""}${result.keyFiles.length ? `\n  secrets stored in ${result.keyFiles.join(", ")} (mode 600), referenced from the config` : ""}\n${result.next.map(line => `  next: ${line}`).join("\n")}\n  next: restart InfiniteOC, or add it live with /apps`)
+    }
+  } else if (args[0] === "disconnect") {
+    const { disconnect } = await import("../mods/connectors/connectors.mjs")
+    if (!args[1]) throw new Error("Usage: infiniteoc disconnect ID")
+    const result = await disconnect(args[1])
+    console.log(`Removed ${args[1]} from ${result.configFile}${result.backup ? ` (backup: ${result.backup})` : ""}. Restart InfiniteOC to drop its tools.`)
+  } else if (args[0] === "device") {
+    // Paired InfiniteOC servers the agent's device tool works on. Passwords are typed at a prompt
+    // (hidden) or taken from INFINITEOC_DEVICE_PASSWORD, never passed as arguments (shell history, ps).
+    const Devices = await import("../mods/devices/lib.mjs")
+    const [sub, name, url] = args.slice(1).filter(arg => !arg.startsWith("--"))
+    if (!sub || sub === "list") {
+      const all = await Devices.listDevices()
+      console.log(all.length ? [`Paired devices:`, ...all.map(item => `  ${item.name.padEnd(24)} ${item.url}`), "", "Work on one: use the device tool in InfiniteOC."].join("\n") : "No devices paired. Pair one with: infiniteoc device add NAME URL")
+    } else if (sub === "add") {
+      if (!name || !url) throw new Error("Usage: infiniteoc device add NAME URL   (URL is the device's infiniteoc serve/host address)")
+      if (args.slice(1).filter(arg => !arg.startsWith("--")).length > 3) throw new Error("Usage: infiniteoc device add NAME URL   (URL is the device's infiniteoc serve/host address)")
+      let password = process.env.INFINITEOC_DEVICE_PASSWORD
+      if (!password && process.stdin.isTTY) {
+        const io = terminalIO()
+        try { password = await io.ask(`Server password for ${url} (hidden): `, { secret: true }) ?? "" } finally { io.close() }
+      }
+      if (!password) throw new Error("Set INFINITEOC_DEVICE_PASSWORD or type the password at a terminal.")
+      const added = await Devices.addDevice({ name, url, password })
+      console.log(`Paired ${added.name} (${added.url}). Secrets are stored mode 600, never in the registry.`)
+    } else if (sub === "remove") {
+      if (!name) throw new Error("Usage: infiniteoc device remove NAME")
+      if (args.slice(1).filter(arg => !arg.startsWith("--")).length > 2) throw new Error("Usage: infiniteoc device [list|add NAME URL|remove NAME]")
+      console.log(`Unpaired ${(await Devices.removeDevice(name)).name}.`)
+    } else throw new Error("Usage: infiniteoc device [list|add NAME URL|remove NAME]")
+  } else if (args[0] === "new" || args[0] === "projects") {
+    // The same managed folder the agent's project tool uses (mods/projects).
+    const Projects = await import("../mods/projects/lib.mjs")
+    const root = Projects.projectsRoot()
+    if (args[0] === "projects") {
+      const all = Projects.listProjects(root)
+      console.log(all.length ? [`Projects in ${root}:`, ...all.map(item => `  ${item.name.padEnd(28)} ${item.description}`), "", "Open one: infiniteoc " + JSON.stringify(all[0].dir)].join("\n") : `No projects yet in ${root}. Create one: infiniteoc new NAME [--template node|python|web]`)
+    } else {
+      const opt = (name) => args.includes(name) ? args[args.indexOf(name) + 1] : undefined
+      const name = args.slice(1).filter((arg, i, list) => !arg.startsWith("--") && !["--template", "--description"].includes(list[i - 1])).join(" ")
+      if (!name) throw new Error("Usage: infiniteoc new NAME [--template empty|node|python|web] [--description TEXT]")
+      const created = Projects.createProject({ name, template: opt("--template"), description: opt("--description") }, root)
+      spawnSync("git", ["init", "-q"], { cwd: created.dir, stdio: "ignore", windowsHide: true })
+      console.error(`[InfiniteOC] Created ${created.dir}`)
+      process.exitCode = await launch([created.dir], settings)
+    }
+  } else if (args[0] === "host") {
+    const opt = (name) => args.includes(name) ? args[args.indexOf(name) + 1] : undefined
+    if (settings.options?.webUi !== true) throw new Error(`infiniteoc host needs the web UI in the build: add "webUi": true to "options" in ${join(home, "infiniteoc.json")} (or run infiniteoc web once and accept), then try again.`)
+    const { binary } = await prepare(settings)
+    if (args[1] === "bundle") {
+      if (!args[2]) throw new Error("Usage: infiniteoc host bundle DIR")
+      const { bundleHost } = await import("../src/host-bundle.mjs")
+      const result = await bundleHost({ home, binary, target: args[2] })
+      console.log(`Wrote a web-host-only copy of InfiniteOC to ${result.directory} (${result.files} files).\n  Run it: cd ${JSON.stringify(result.directory)} && INFINITEOC_HOST_PASSWORD=... node host.mjs\n  Or with Docker: docker build -t infiniteoc-host . && docker run -p 8080:8080 -e INFINITEOC_HOST_PASSWORD=... infiniteoc-host\nSee HOSTING.md there.`)
+    } else {
+      const { startHost } = await import("../src/host.mjs")
+      let password = process.env.INFINITEOC_HOST_PASSWORD
+      let generated = false
+      if (!password && process.stdin.isTTY) {
+        const io = terminalIO()
+        try { password = await io.ask("Password for this host (12+ characters, Enter to generate one): ", { secret: true }) } finally { io.close() }
+      }
+      if (!password) { password = (await import("node:crypto")).randomBytes(18).toString("base64url"); generated = true }
+      const { providerConfigFile } = await import("../mods/infiniteoc/settings/settings-store.mjs")
+      const hostAddress = opt("--host") ?? "127.0.0.1"
+      const running = await startHost({ home, binary, password, host: hostAddress, port: Number(opt("--port") ?? 0), config: opt("--config") ?? providerConfigFile(), idleMinutes: Number(opt("--idle") ?? 30), secureCookies: args.includes("--secure-cookies"), log: (line) => console.error(line) })
+      console.log(`InfiniteOC host on ${running.url}${generated ? `\n  Password (generated, shown once): ${password}` : ""}\n  Projects live in each visitor's browser; this machine keeps only a temporary copy in ${running.root}, deleted when the host stops.${hostAddress === "127.0.0.1" ? "" : "\n  Reachable from other machines: put it behind HTTPS (a reverse proxy) before using it over the internet, then add --secure-cookies."}\nCtrl+C stops it.`)
+      const stop = async () => { await running.close(); process.exit(0) }
+      process.once("SIGINT", stop); process.once("SIGTERM", stop)
+      await running.exited
+      await running.close()
+      throw new Error("The OpenCode backend stopped")
+    }
+  } else if (args[0] === "graph") {
+    const opt = (name) => args.includes(name) ? args[args.indexOf(name) + 1] : undefined
+    const { startGraph } = await import("../src/graph.mjs")
+    const { openBrowser } = await import("../src/serve.mjs")
+    const graph = await startGraph({ port: Number(opt("--port") ?? 0) })
+    const opened = !args.includes("--no-open") && openBrowser(graph.link)
+    console.log(`Project graph on ${graph.url} (this machine only)\n  ${opened ? "Opened in your browser" : "Open"}: ${graph.link}\nCtrl+C stops it.`)
+    const stop = async () => { await graph.close(); process.exit(0) }
+    process.once("SIGINT", stop); process.once("SIGTERM", stop)
   } else if (args[0] === "bench") {
     const opt = (name) => args.includes(name) ? args[args.indexOf(name) + 1] : undefined
     const usage = "Usage: infiniteoc bench --a model=P/M[,agent=X][,ponytail=LEVEL] --b model=P/M[,...] [--runs N] [--tasks FILE] [--timeout SECONDS] [--json] [--yes]"
@@ -170,7 +297,7 @@ Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
     // The binary refuses too (mods/infiniteoc), but not with that mod disabled or from an older last-good build.
     // effect lets only its global settings precede a subcommand (--[no-]print-logs [bool], --log-level <level>, or --flag=value); any other flag there fails the parse or runs a built-in action instead.
     const command = forwarded.find((arg, i) => !/^--((no-)?print-logs|log-level)(=|$)/.test(arg) && forwarded[i - 1] !== "--log-level" && !(forwarded[i - 1] === "--print-logs" && /^(true|false|yes|no|on|off|[01yn])$/.test(arg)))
-    if (["uninstall", "upgrade", "update"].includes(command)) throw new Error(`${command} refused: it would act on your stock OpenCode install and the sessions, credentials and config InfiniteOC shares with it. Update InfiniteOC with infiniteoc update; remove it by deleting this checkout. For OpenCode itself run stock opencode ${command}.`)
+    if (["uninstall", "upgrade", "update"].includes(command)) throw new Error(`${command} refused: it would act on your stock OpenCode install and the sessions, credentials and config InfiniteOC shares with it. Update InfiniteOC with infiniteoc update; remove it with uninstall.sh/uninstall.ps1. For OpenCode itself run stock opencode ${command}.`)
     if (command === "serve" || command === "web") {
       // Also after --: the bind address and password policy must not be skippable.
       const at = forwarded.indexOf(command)

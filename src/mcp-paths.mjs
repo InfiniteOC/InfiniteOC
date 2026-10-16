@@ -3,6 +3,7 @@
 import { readFile, writeFile, access } from "node:fs/promises"
 import { homedir } from "node:os"
 import { join } from "node:path"
+import { isAbsolutePath, splitToolsPath } from "./platform.mjs"
 
 const exists = (path) => access(path).then(() => true, () => false)
 export const expand = (value, home) => value.replaceAll("{env:INFINITEOC_HOME}", home).replace(/^\$HOME(?=\/)|^~(?=\/)/, homedir()).replaceAll("${HOME}", homedir())
@@ -14,7 +15,7 @@ export async function missingPaths(config, home) {
   for (const [server, value] of Object.entries(servers))
     for (const raw of Array.isArray(value?.command) ? value.command : []) {
       const path = typeof raw === "string" ? expand(raw, home) : ""
-      if (path.startsWith("/") && !await exists(path)) found.push({ server, raw, path })
+      if (isAbsolutePath(path) && !await exists(path)) found.push({ server, raw, path })
     }
   return found
 }
@@ -25,7 +26,7 @@ export async function repairPaths(file, home) {
   try { text = await readFile(file, "utf8"); config = JSON.parse(text) } catch { return 0 }
   let fixed = 0
   for (const { raw, path } of await missingPaths(config, home)) {
-    const rest = path.split("/.tools/")[1]
+    const rest = splitToolsPath(path)[1]
     if (!rest || !await exists(join(home, ".tools", rest))) continue
     text = text.replaceAll(JSON.stringify(raw), JSON.stringify(`{env:INFINITEOC_HOME}/.tools/${rest}`))
     fixed++

@@ -119,8 +119,8 @@ test("applies after every enabled mod on pristine upstream: plugin, tool registr
   assert.ok(command)
   assert.deepEqual(command.aliases, ["wf"])
   assert.match(command.source, /export async function run\(ctx: FeatureContext\)/)
-  // Default off unless infiniteoc.json says otherwise.
-  assert.match(files.get("packages/core/src/plugin/infiniteoc-wf-settings.ts"), /  enabled: false,\n  maxParallel/)
+  // Off unless infiniteoc.json turns it on (options.workflows.enabled).
+  assert.ok(files.get("packages/core/src/plugin/infiniteoc-wf-settings.ts").includes(`  enabled: ${buildDefault(config.options)},\n  maxParallel`))
 })
 
 test("without safe-guard the readonly patch is skipped; a missing anchor fails closed", { skip: !gitOK && "no pinned upstream git objects" }, async () => {
@@ -585,14 +585,14 @@ test("settings: defaults, field-by-field fallback, build default, explicit file 
   assert.equal(S.normalize({ enabled: false }, true).enabled, false)
   const odd = S.normalize({ enabled: "yes", maxParallel: 99, notify: "x", models: { fast: "bad model", strong: "anthropic/x", default: "auto", strongMaxCostRatio: 0 }, agents: { custom: "strong", explore: "bogus" }, kinds: { review: "fast", search: "nope" } })
   assert.equal(odd.enabled, false)
-  assert.equal(odd.maxParallel, 3)
+  assert.equal(odd.maxParallel, S.DEFAULTS.maxParallel)
   assert.equal(odd.notify, "end")
   assert.deepEqual(odd.models, { fast: "auto", strong: "anthropic/x", default: "inherit", strongMaxCostRatio: 4 })
   assert.equal(odd.agents.custom, "strong")
   assert.equal(odd.agents.explore, "fast")
   assert.equal(odd.kinds.review, "fast")
   assert.equal(odd.kinds.search, "fast")
-  assert.match(S.summary(S.normalize({ enabled: true })), /^on · fast auto · strong auto · 3 parallel$/)
+  assert.match(S.summary(S.normalize({ enabled: true })), /^on · fast auto · strong auto · 5 parallel$/)
 })
 
 test("settings changes keep other keys and validate input", () => {
@@ -702,4 +702,37 @@ test("flag.mjs: other mods read and flip workflows.enabled without touching othe
     previous === undefined ? delete process.env.INFINITEOC_SETTINGS_FILE : (process.env.INFINITEOC_SETTINGS_FILE = previous)
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+test("a second subagent call in one message gets a workflow nudge, at most twice per session", () => {
+  const seen = new Map()
+  assert.equal(D.subagentNudge(seen, "s1", "m1"), undefined)
+  assert.match(D.subagentNudge(seen, "s1", "m1"), /one workflow call/)
+  // A third call in the same message is not nudged again.
+  assert.equal(D.subagentNudge(seen, "s1", "m1"), undefined)
+  // One subagent per message is fine.
+  assert.equal(D.subagentNudge(seen, "s1", "m2"), undefined)
+  // Another session counts on its own.
+  assert.equal(D.subagentNudge(seen, "s2", "m1"), undefined)
+  assert.match(D.subagentNudge(seen, "s2", "m1"), /workflow/)
+  // The second nudge in s1 is the last one.
+  D.subagentNudge(seen, "s1", "m3")
+  assert.match(D.subagentNudge(seen, "s1", "m3"), /workflow/)
+  D.subagentNudge(seen, "s1", "m4")
+  assert.equal(D.subagentNudge(seen, "s1", "m4"), undefined)
+  assert.equal(D.NUDGE_LIMIT, 2)
+  // The map stays bounded.
+  for (let i = 0; i < 600; i++) D.subagentNudge(seen, `x${i}`, "m")
+  assert.ok(seen.size <= 500)
+})
+
+test("the plugin wires the nudge to completed subagent calls and the guidance routes 2+ tasks to workflows", async () => {
+  const source = await readFile(new URL("./plugin.ts", import.meta.url), "utf8")
+  assert.match(source, /ctx\.tool\.hook\("execute\.after"[\s\S]*event\.tool !== "subagent" \|\| event\.status !== "completed" \|\| !settings\(\)\.enabled/)
+  assert.match(source, /D\.subagentNudge\(nudges, event\.sessionID, event\.messageID\)/)
+  const guidance = source.slice(source.indexOf("export const GUIDANCE"), source.indexOf("const Step ="))
+  assert.match(guidance, /two or more subagent calls/)
+  assert.match(guidance, /wait: true: the results come back in that call/)
+  const { guidance: main } = await import("../infiniteoc/workflow.mjs")
+  assert.match(main.build.split("[Subagents]")[1], /Two or more tasks, or a task plus its review: one workflow call/)
 })

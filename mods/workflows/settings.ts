@@ -37,7 +37,7 @@ export type Settings = {
 
 export const DEFAULTS: Settings = Object.freeze({
   enabled: false,
-  maxParallel: 3,
+  maxParallel: 5,
   maxSteps: 12,
   maxOutputChars: 12000,
   notify: "end",

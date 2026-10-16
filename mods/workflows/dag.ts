@@ -369,3 +369,26 @@ export function unchangedText(workflows: ReadonlyArray<Workflow>, sinceMs: numbe
     "You are notified automatically when a workflow finishes (and when a step messages you), so do not poll. Work on something else or end your turn. If you cannot continue without its next step, call status once with wait: true.",
   ].join("\n")
 }
+
+// ---- steering toward workflows -------------------------------------------------------------------
+
+/** Nudges per session at most, so a model that has a reason for separate subagents is not nagged. */
+export const NUDGE_LIMIT = 2
+export type NudgeState = { message: string; count: number; nudged: number }
+
+/**
+ * Counts subagent calls per assistant message. When one message starts a second subagent, returns a
+ * note for that call's result pointing at the workflow tool (at most NUDGE_LIMIT times per session).
+ */
+export function subagentNudge(sessions: Map<string, NudgeState>, sessionID: string, messageID: string): string | undefined {
+  const previous = sessions.get(sessionID)
+  const state = previous?.message === messageID ? previous : { message: messageID, count: 0, nudged: previous?.nudged ?? 0 }
+  state.count++
+  // Insertion order doubles as recency: a bounded map of the sessions seen most recently.
+  sessions.delete(sessionID)
+  sessions.set(sessionID, state)
+  if (sessions.size > 500) sessions.delete(sessions.keys().next().value!)
+  if (state.count !== 2 || state.nudged >= NUDGE_LIMIT) return undefined
+  state.nudged++
+  return "[Workflows] This message started several subagents one by one. Next time delegate them with one workflow call: it runs independent steps in parallel and dependent ones in order (for example a reviewer step after the implementing steps), picks a fast or strong model per step, and notifies you once when everything is done."
+}

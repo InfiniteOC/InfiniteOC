@@ -18,8 +18,13 @@ Paths and commands are relative to the checkout root. After `npm link`,
 node bin/infiniteoc.mjs feature new hello-ai
 ```
 
-This creates `mods/hello-ai/index.mjs`, `command.tsx`, and a README. It does not
-enable the mod or replace existing files. Edit `command.tsx` instead of finding
+This creates `hello-ai/index.mjs`, `command.tsx`, and a README in your **personal mods
+folder**, `~/.config/infiniteoc/mods/` (next to `settings.json`; `INFINITEOC_MODS_DIR`
+overrides it). That folder is a local git repository with no remote and its own
+`AGENTS.md`: commit your mod there if you like, but the InfiniteOC checkout itself stays
+untouched, so updates keep working and nothing of yours is pushed anywhere. (Working on
+InfiniteOC itself? `feature new ID --repo` puts it in this checkout's `mods/` instead.)
+It does not enable the mod or replace existing files. Edit `command.tsx` instead of finding
 and patching a command registry. The initial `/hello-ai` handler already shows a
 toast with the open-tab count. A fuller example:
 
@@ -102,9 +107,11 @@ After inspecting the code, enable it:
 node bin/infiniteoc.mjs feature enable hello-ai
 ```
 
-`enable` runs the same check, then appends `./mods/hello-ai/index.mjs` to the
-`mods` array, keeping other mods/options and the previous file as
-`infiniteoc.json.bak`; `feature disable hello-ai` removes it the same way. A
+`enable` runs the same check, then adds the mod to the personal folder's `mods.json`
+(personal mods load after the bundled ones, in the order you enabled them). For a
+`--repo` mod it appends `./mods/hello-ai/index.mjs` to `infiniteoc.json` instead, keeping
+other mods/options and the previous file as `infiniteoc.json.bak`. `feature disable
+hello-ai` removes it the same way. A
 running opendaemon publishes a ctx-only command to open UIs right away; the next
 launch rebuilds automatically (or run `node bin/infiniteoc.mjs rebuild`).
 

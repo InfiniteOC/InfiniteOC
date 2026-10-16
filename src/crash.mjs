@@ -4,6 +4,7 @@ import { readFile, writeFile, mkdir, readdir, stat } from "node:fs/promises"
 import { join } from "node:path"
 import { homedir, platform, arch, release } from "node:os"
 import { daemonRequest } from "./daemon-client.mjs"
+import { opencodeDataDir } from "./platform.mjs"
 
 // Clean exit, hangup, Ctrl+C and SIGTERM are not crashes. A TUI that exits non-zero by itself is; a one-shot command that does is a user error.
 export const isCrash = (code, { tui = false } = {}) => ![0, 129, 130, 143].includes(code) && (code > 128 || tui)
@@ -13,7 +14,7 @@ export const redact = (text) => text.replace(SECRET, "[redacted]")
 
 /** The newest log files under opencode's log directory, as the last `lines` lines of the newest one. */
 export async function logTail(env = process.env, lines = 200) {
-  const dir = join(env.XDG_DATA_HOME || join(homedir(), ".local/share"), "opencode/log")
+  const dir = join(opencodeDataDir(env), "log")
   try {
     const files = await Promise.all((await readdir(dir)).filter((name) => name.endsWith(".log")).map(async (name) => ({ name, mtime: (await stat(join(dir, name))).mtimeMs })))
     const newest = files.sort((a, b) => b.mtime - a.mtime)[0]

@@ -45,7 +45,7 @@ try {
   const command = args.shift() || "status"
   const show = status => console.log(json ? JSON.stringify(status, null, 2) : summary(status))
   if (["help", "--help"].includes(command)) {
-    console.log(`opendaemon — InfiniteOC live UI control (same-user Unix socket)
+    console.log(`opendaemon — InfiniteOC live UI control (same-user socket or named pipe)
 
   opendaemon start                    Start the background daemon, print its status
   opendaemon stop                     Stop the daemon (SIGTERM to the pid it reports)

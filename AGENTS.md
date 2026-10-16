@@ -9,7 +9,9 @@ first for new features. For source mods, also read
 - Live ctx-only command updates: read `OPENDAEMON.md`; use
   `opendaemon reload/status/watch` (or `/live` in the TUI). Do not run full rebuild
   during active agent work or claim compiled backend patches were applied live.
-- Scaffold: `node bin/infiniteoc.mjs feature new ID`.
+- Scaffold: `node bin/infiniteoc.mjs feature new ID`. It goes to the user's personal mods folder
+  (`~/.config/infiniteoc/mods`, its own local repo with no remote), not this checkout; `--repo` only when
+  changing InfiniteOC itself. In an installed copy, never commit or push here: installs refuse to push.
 - Check: `node bin/infiniteoc.mjs feature check ID`; then `feature enable ID`
   (checks again, keeps `infiniteoc.json.bak`) or `feature disable ID`.
 - **Tabs are not sessions**: closing UI tabs must not delete stored conversations,

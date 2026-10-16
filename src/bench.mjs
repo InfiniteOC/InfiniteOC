@@ -2,7 +2,7 @@
 // and compares pass rate, tokens and wall time. Each trial gets a fresh temp directory; a task passes when its
 // check command exits 0 there. The built-in tasks are deliberately tiny and deterministic; --tasks FILE brings your own.
 import { spawn } from "node:child_process"
-import { mkdtemp, mkdir, writeFile, rm, symlink, readdir } from "node:fs/promises"
+import { mkdtemp, mkdir, writeFile, rm, symlink, readdir, cp } from "node:fs/promises"
 import { tmpdir, homedir } from "node:os"
 import { dirname, join } from "node:path"
 
@@ -57,12 +57,18 @@ const run = (command, args, options) => new Promise((resolve) => {
 
 /** A config directory that mirrors the user's opencode config (symlinks) except for the ponytail level this trial needs. */
 async function configFor(config, env) {
-  const real = join(env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode")
+  const { opencodeConfigDir, isWindows } = await import("./platform.mjs")
+  const real = opencodeConfigDir(env)
   const root = await mkdtemp(join(tmpdir(), "infiniteoc-bench-cfg-"))
   const dir = join(root, "opencode")
   await mkdir(dir)
   if (config.ponytail) {
-    for (const name of await readdir(real).catch(() => [])) if (name !== ".ponytail-active") await symlink(join(real, name), join(dir, name))
+    for (const name of await readdir(real).catch(() => [])) {
+      if (name === ".ponytail-active") continue
+      // Symlinks need elevation/Developer Mode on Windows; copy there instead.
+      if (isWindows) await cp(join(real, name), join(dir, name), { recursive: true }).catch(() => {})
+      else await symlink(join(real, name), join(dir, name))
+    }
     await writeFile(join(dir, ".ponytail-active"), config.ponytail)
     return { XDG_CONFIG_HOME: root, cleanup: () => rm(root, { recursive: true, force: true }) }
   }

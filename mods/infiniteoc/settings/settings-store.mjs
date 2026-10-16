@@ -7,6 +7,7 @@ export function settingsFile(env = process.env) {
   return env.INFINITEOC_SETTINGS_FILE || path.join(os.homedir(), ".config/infiniteoc/settings.json")
 }
 export function providerConfigFile(env = process.env) {
+  // OpenCode uses ~/.config on every OS, Windows included (packages/util/src/global-roots.ts).
   return env.OPENCODE_CONFIG || path.join(env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "opencode/opencode.json")
 }
 const defaults = () => ({ traffic: { mode: "inherit", proxyURL: "", socksHost: "127.0.0.1", socksPort: 9050, noProxy: "" }, providers: {} })
@@ -30,7 +31,7 @@ export function validateTraffic(input = {}) {
   if (/[\r\n\0]/.test(result.noProxy)) throw new Error("Invalid no-proxy list")
   return result
 }
-async function readObject(file) {
+export async function readObject(file) {
   let raw
   try { raw = await readFile(file, "utf8") } catch (e) { if (e.code === "ENOENT") return { raw: null, value: {} }; throw new Error("Unable to read configuration file") }
   let value
@@ -38,7 +39,7 @@ async function readObject(file) {
   if (!record(value)) throw new Error("Configuration root must be an object")
   return { raw, value }
 }
-async function atomicWrite(file, text) {
+export async function atomicWrite(file, text) {
   await mkdir(path.dirname(file), { recursive: true, mode: 0o700 })
   try { if (!(await lstat(file)).isFile()) throw new Error("Configuration target must be a regular file") } catch (e) { if (e.code !== "ENOENT") throw e }
   const tmp = `${file}.${randomUUID()}.tmp`

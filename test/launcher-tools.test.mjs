@@ -136,6 +136,8 @@ test("MCP paths resolve from the install and legacy copies can be relinked", asy
 import { execFileSync } from "node:child_process"
 import { addPack, removePack, packEntries, treeDigest, readPacks } from "../src/packs.mjs"
 import { config } from "../src/launcher.mjs"
+// Personal mods (src/user-mods.mjs) must never touch the real ~/.config/infiniteoc/mods from a test.
+process.env.INFINITEOC_MODS_DIR = (await import("node:fs")).mkdtempSync((await import("node:path")).join((await import("node:os")).tmpdir(), "ioc-personal-mods-"))
 
 const git = (cwd, ...args) => execFileSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }).trim()
 
