@@ -50,14 +50,14 @@ test("pins: add, size limit, refreshed content, removal", async (t) => {
   store.addPin("ses_1", file)
   store.addPin("ses_1", file)
   assert.deepEqual(store.listPins("ses_1"), [file])
-  assert.match(store.renderPins("ses_1", project), /<pinned path="a.txt">\nv1\n<\/pinned>/)
+  assert.deepEqual(store.pinBlocks("ses_1", project), [["a.txt", '<pinned path="a.txt">\nv1\n</pinned>']])
   await writeFile(file, "v2")
-  assert.match(store.renderPins("ses_1", project), /v2/)
+  assert.match(store.pinBlocks("ses_1", project)[0][1], /v2/)
   await writeFile(path.join(project, "big.txt"), "x".repeat(store.MAX_PIN_BYTES + 1))
   assert.throws(() => store.addPin("ses_1", path.join(project, "big.txt")), /Too large/)
   assert.throws(() => store.addPin("ses_1", project), /Not a file/)
   assert.deepEqual(store.removePin("ses_1", "a.txt"), [file])
-  assert.equal(store.renderPins("ses_1", project), undefined)
+  assert.deepEqual(store.pinBlocks("ses_1", project), [])
   assert.deepEqual(store.listPins("ses_other"), [])
 })
 
@@ -251,8 +251,78 @@ test("mod patches compaction, read tool, internal plugin list and guidance again
   assert.match(read, /paths: nearby/)
   assert.match(files.get("packages/core/src/plugin/internal.ts"), /import \* as InfiniteocCtx from ".\/infiniteoc-ctx.js"\nimport \{ WarmingPlugin \}[\s\S]*  InfiniteocCtx\.Plugin,\n  WarmingPlugin\.Plugin,/)
   assert.match(files.get("packages/core/src/infiniteoc/guidance.ts"), /\[Project context\][\s\S]*\/\/ infiniteoc:guidance-extensions/)
-  for (const name of ["infiniteoc-ctx.ts", "infiniteoc-ctx-store.ts", "infiniteoc-ctx-knowledge.ts"]) assert.ok(files.has(`packages/core/src/plugin/${name}`), name)
+  const context = files.get("packages/core/src/session/context.ts")
+  assert.match(context, /import \* as InfiniteocCtxInstruction from "..\/plugin\/infiniteoc-ctx-instruction.js"/)
+  assert.match(context, /loaded\.builtins,\n          InfiniteocCtxInstruction\.make\(location\.directory, sessionID\),\n          loaded\.entries,/)
+  for (const name of ["infiniteoc-ctx.ts", "infiniteoc-ctx-instruction.ts", "infiniteoc-ctx-store.ts", "infiniteoc-ctx-knowledge.ts"]) assert.ok(files.has(`packages/core/src/plugin/${name}`), name)
   for (const slash of ["context", "memory", "pins"]) assert.match(files.get(`command:${slash}`), /export async function run\(ctx: FeatureContext\)/)
   // The pure source files must not depend on each other under names that only exist in one place.
   assert.doesNotMatch(files.get("packages/core/src/plugin/infiniteoc-ctx-knowledge.ts"), /from "\.\//)
+})
+
+/** instruction.ts without its upstream-only parts (the Instructions.make wrapper). */
+async function instructionModule(t) {
+  const dir = await mkdtemp(path.join(tmpdir(), "ctx-instruction-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const source = (await readFile(new URL("./instruction.ts", import.meta.url), "utf8"))
+    .split("export const make")[0]
+    .replace(/^import \{ (Effect|Instructions)[^\n]*\n/gm, "")
+    .replace('"./infiniteoc-ctx-knowledge.js"', JSON.stringify(new URL("./knowledge.ts", import.meta.url).href))
+    .replace('"./infiniteoc-ctx-store.js"', JSON.stringify(new URL("./store.ts", import.meta.url).href))
+  await writeFile(path.join(dir, "instruction.ts"), source)
+  return import(path.join(dir, "instruction.ts"))
+}
+
+test("project context is an instruction source: full text first, then only what changed", async (t) => {
+  const { project } = await sandbox(t)
+  const I = await instructionModule(t)
+  store.addItem(store.memoryFile(project), "run tests with npm test")
+  const pinned = path.join(project, "notes.txt")
+  await writeFile(pinned, "v1")
+  store.addPin("ses_1", pinned)
+  await writeFile(path.join(project, "package.json"), JSON.stringify({ dependencies: { left: "^1.0.0" } }))
+  const first = I.contextSections(project, "ses_1")
+  assert.deepEqual(Object.keys(first).filter((key) => key !== "machine"), ["libraries", "memory", "pin:notes.txt"])
+  const initial = I.renderInitial(first)
+  assert.match(initial, /Project memory[\s\S]*- run tests with npm test[\s\S]*The user pinned these files[\s\S]*<pinned path="notes.txt">\nv1\n<\/pinned>/)
+  // Reading again without changes gives identical bytes: nothing new for upstream to append.
+  assert.deepEqual(I.contextSections(project, "ses_1"), first)
+  store.addItem(store.memoryFile(project), "never edit dist/")
+  await writeFile(pinned, "v2")
+  const second = I.contextSections(project, "ses_1")
+  const update = I.renderChanged(first, second)
+  assert.match(update, /^\[InfiniteOC project context update/)
+  assert.match(update, /- never edit dist\//)
+  assert.match(update, /<pinned path="notes.txt">\nv2\n<\/pinned>/)
+  assert.doesNotMatch(update, /Dependency versions/)
+  store.removePin("ses_1", "all")
+  assert.match(I.renderChanged(second, I.contextSections(project, "ses_1")), /<pinned path="notes.txt">\(unpinned\)<\/pinned>/)
+})
+
+test("old tool screenshots are dropped in batches, newest and user images always kept", () => {
+  const shot = (n) => ({ role: "tool", content: [{ type: "tool-result", name: "agent_display", result: { type: "content", value: [{ type: "text", text: `shot ${n}` }, { type: "file", mime: "image/png", uri: `data:image/png;base64,${n}` }] } }] })
+  const user = { role: "user", content: [{ type: "media", media: { mediaType: "image/png" } }] }
+  const history = (count) => [user, ...Array.from({ length: count }, (_, n) => shot(n))]
+  const kept = (messages) => messages.flatMap((message) => message.content.flatMap((part) => (part.type === "tool-result" ? part.result.value.filter((item) => item.type === "file").map((item) => item.uri.split(",")[1]) : [])))
+  for (const count of [0, 4, 11]) {
+    const messages = history(count)
+    assert.equal(store.trimToolImages(messages), 0)
+    assert.equal(kept(messages).length, count)
+  }
+  const messages = history(12)
+  assert.equal(store.trimToolImages(messages), 8)
+  assert.deepEqual(kept(messages), ["8", "9", "10", "11"])
+  assert.equal(messages[1].content[0].result.value[1].text, store.IMAGE_DROPPED)
+  assert.equal(messages[1].content[0].result.value[0].text, "shot 0")
+  assert.equal(messages[0], user)
+  // Between batches the dropped set stays the same, so the request prefix does not move.
+  const next = history(19)
+  store.trimToolImages(next)
+  assert.deepEqual(kept(next), ["8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18"])
+  assert.equal(JSON.stringify(next.slice(0, 13)), JSON.stringify(messages.slice(0, 13).map((message, index) => (index < 9 ? message : next[index]))))
+})
+
+test("breakdown counts an image as one image, not its base64 length", () => {
+  const request = { system: [{ text: "base" }], tools: {}, messages: [{ role: "tool", content: [{ type: "tool-result", name: "agent_display", result: { type: "content", value: [{ type: "file", mime: "image/png", uri: `data:image/png;base64,${"A".repeat(400_000)}` }] } }] }] }
+  assert.ok(store.breakdown(request).rows.find((row) => row.label === "Tool output").tokens < 2000)
 })

@@ -212,13 +212,16 @@ export const Plugin = define({
 
     // ---- gates around tool calls -------------------------------------------------------------------
 
+    // Whether the request last built for a session could contain a plan or ask-first marker. Without
+    // one neither gate can refuse, so an edit skips loading the whole transcript (slow in long sessions).
+    const gated = new Map<string, boolean>()
     yield* ctx.tool.hook("execute.before", (event) =>
       Effect.gen(function* () {
         const state = stuck.get(event.sessionID)
         if (state && readSettings().stuck && state.blocked.has(L.callKey(event.tool, event.input)))
           return yield* Effect.fail(new Tool.Error({ message: L.stuckRefusal(event.tool) }))
         const files = L.targets(event.tool, event.input)
-        if (files.length === 0) return
+        if (files.length === 0 || gated.get(event.sessionID) === false) return
         const messages = yield* ctx.session.context({ sessionID: event.sessionID }).pipe(
           // Fail open: an unreadable transcript must not block editing.
           Effect.catchCause((cause) => warn("gate check", event.sessionID)(cause).pipe(Effect.as([] as ReadonlyArray<any>))),
@@ -253,6 +256,10 @@ export const Plugin = define({
     // ---- instructions before a request -------------------------------------------------------------
 
     yield* ctx.session.hook("context", (event) => {
+      gated.set(
+        event.sessionID,
+        event.messages.some((message) => message.role === "user" && message.content.some((part) => part.type === "text" && (part.text.includes(L.MARK.plan) || part.text.includes(L.MARK.askOn)))),
+      )
       if (SKIP.has(event.agent)) return Effect.void
       const settings = readSettings()
       const transcript = event.messages.map((message) => ({
@@ -322,6 +329,8 @@ export const Plugin = define({
       add("plan", "plan first, approve or edit, then execute with a checklist: /plan <task>", (sessionID, args, input) => {
         if (!args) return toast("Usage: /plan <task>. The agent writes a checklist and asks you to approve before it edits anything.", "warning", "Plan")
         return note(sessionID, L.planText(args), `Plan mode: ${args}`).pipe(
+          // The marker is in the history now: the next edit of a step already running must look.
+          Effect.tap(() => Effect.sync(() => gated.delete(sessionID))),
           Effect.andThen(ctx.session.prompt({ ...input.prompt, sessionID, text: args, delivery: input.delivery }).pipe(Effect.asVoid)),
         )
       })
@@ -333,6 +342,7 @@ export const Plugin = define({
           if (/^status$/i.test(args)) return yield* toast(`Ask-first is ${current ? "on" : "off"}.`, "info", "Ask first")
           const want = /^(on|true)$/i.test(args) ? true : /^(off|false)$/i.test(args) ? false : !current
           yield* note(sessionID, want ? L.MARK.askOn : L.MARK.askOff, `Ask-first mode ${want ? "on" : "off"}`)
+          gated.delete(sessionID)
           yield* toast(want ? "Ask-first is on: the agent asks one question before changing more than one file." : "Ask-first is off.", "info", "Ask first")
         }),
       )
