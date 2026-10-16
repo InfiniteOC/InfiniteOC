@@ -263,10 +263,19 @@ export const Plugin = define({
       return result.status === 0 ? result.stdout : undefined
     }
 
+    // Whether the request last built for a session holds a /testfirst start. Without one the gate is off,
+    // so a source edit skips loading the whole transcript (slow in long sessions).
+    const gated = new Map<string, boolean>()
+    yield* ctx.session.hook("context", (event) =>
+      Effect.sync(() => {
+        gated.set(event.sessionID, event.messages.some((message) => message.role === "user" && message.content.some((part) => part.type === "text" && part.text.includes(MARK.start))))
+      }),
+    )
+
     yield* ctx.tool.hook("execute.before", (event) => {
       if (event.tool === "shell") started.set(event.id, Date.now())
       const files = targets(event.tool, event.input).filter(isSourceFile)
-      if (files.length === 0) return Effect.void
+      if (files.length === 0 || gated.get(event.sessionID) === false) return Effect.void
       return ctx.session.context({ sessionID: event.sessionID }).pipe(
         Effect.map((messages) => testFirstPhase(eventsFromMessages(messages))),
         // Fail open: an unreadable transcript must not block editing.
@@ -353,6 +362,7 @@ export const Plugin = define({
           if (/^(stop|off|cancel)$/i.test(task))
             return ctx.session.synthetic({ sessionID: input.sessionID, text: `${MARK.stopped}\nTest-first mode ended.`, description: "Test-first mode ended", resume: false }).pipe(Effect.asVoid)
           if (!task) return toast("Test first", "Usage: /testfirst <the bug or behavior>, and /testfirst stop to end it.")
+          gated.delete(input.sessionID)
           return ctx.session
             .prompt({
               ...input.prompt,

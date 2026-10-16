@@ -464,19 +464,20 @@ export const Plugin = define({
     })
 
     // The goal in the model's system prompt on every step while it is active; the tool only then.
-    const inject = (kind: "context" | "compaction" | "generate") => (event: { sessionID: string; system: Array<SystemPart>; tools: Record<string, unknown> }) =>
+    const inject = (event: { sessionID: string; system: Array<SystemPart>; tools: Record<string, unknown> }) =>
       Effect.sync(() => {
         const record = recall(event.sessionID)
         if (!record || record.status !== "active") {
           delete event.tools[PROGRESS_TOOL]
           return
         }
-        // Compaction and side generations keep the tool list (cache-stable) but not the goal block.
-        if (kind === "context") event.system.push(SystemPart.make(goalSystem(record)))
+        // The same block (constant while the goal runs) on compaction and side generations keeps their
+        // prompt prefix identical to the session's, so they reuse its cache instead of re-reading it all.
+        event.system.push(SystemPart.make(goalSystem(record)))
       })
-    yield* ctx.session.hook("context", inject("context"))
-    yield* ctx.session.hook("compaction", inject("compaction"))
-    yield* ctx.session.hook("generate", inject("generate"))
+    yield* ctx.session.hook("context", inject)
+    yield* ctx.session.hook("compaction", inject)
+    yield* ctx.session.hook("generate", inject)
 
     yield* ctx.event.subscribe().pipe(
       Stream.runForEach((event) => {

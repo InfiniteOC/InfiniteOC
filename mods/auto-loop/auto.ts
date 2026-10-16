@@ -5,7 +5,7 @@
 //   before a request:   persona and ask-first instructions
 //   commands:           /loop /queue /timebox /plan /askfirst /why /macro /auto
 // Pure decisions live in infiniteoc-auto-logic.ts (tested); files and processes in infiniteoc-auto-project.ts.
-import { Message } from "@opencode/ai"
+import { SystemPart, type Message } from "@opencode/ai"
 import { define } from "@opencode/plugin/effect/plugin"
 import { Model } from "@opencode/schema/model"
 import type { Session } from "@opencode/schema/session"
@@ -255,23 +255,38 @@ export const Plugin = define({
 
     // ---- instructions before a request -------------------------------------------------------------
 
+    // In the system prompt, not before the turn's message: these stay the same turn after turn, and a
+    // block that moved with every turn made the provider re-read the previous turn uncached. Compaction
+    // and side generations get the same bytes as the session's last request, so they reuse its cache.
+    const instructions = (messages: ReadonlyArray<Message>) => {
+      const settings = readSettings()
+      const transcript = messages.map((message) => ({
+        type: message.role === "user" ? "user" : "other",
+        text: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
+      }))
+      const blocks = [settings.persona && L.personas[settings.persona], L.askFirstOn(transcript) && L.askFirstBlock].filter((block): block is string => !!block)
+      return blocks.length ? blocks.join("\n\n") : undefined
+    }
+    const sent = new Map<string, string | undefined>()
     yield* ctx.session.hook("context", (event) => {
       gated.set(
         event.sessionID,
         event.messages.some((message) => message.role === "user" && message.content.some((part) => part.type === "text" && (part.text.includes(L.MARK.plan) || part.text.includes(L.MARK.askOn)))),
       )
       if (SKIP.has(event.agent)) return Effect.void
-      const settings = readSettings()
-      const transcript = event.messages.map((message) => ({
-        type: message.role === "user" ? "user" : "other",
-        text: message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n"),
-      }))
-      const blocks = [settings.persona && L.personas[settings.persona], L.askFirstOn(transcript) && L.askFirstBlock].filter((block): block is string => !!block)
-      if (blocks.length === 0) return Effect.void
-      const last = event.messages.findLastIndex((message) => message.role === "user")
-      event.messages.splice(last === -1 ? event.messages.length : last, 0, Message.user(blocks.join("\n\n")))
+      const text = instructions(event.messages)
+      sent.set(event.sessionID, text)
+      if (text) event.system.push(SystemPart.make(text))
       return Effect.void
     })
+    const replay = (event: { sessionID: string; agent: string; system: Array<SystemPart>; messages: ReadonlyArray<Message> }) =>
+      Effect.sync(() => {
+        if (SKIP.has(event.agent)) return
+        const text = sent.has(event.sessionID) ? sent.get(event.sessionID) : instructions(event.messages)
+        if (text) event.system.push(SystemPart.make(text))
+      })
+    yield* ctx.session.hook("compaction", replay)
+    yield* ctx.session.hook("generate", replay)
 
     // Macro recording: user prompts typed while recording, in order.
     yield* ctx.session.hook("prompt", (event) => {

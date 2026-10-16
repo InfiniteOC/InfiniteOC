@@ -668,7 +668,7 @@ export const Plugin = define({
       })
       .pipe(Effect.orDie)
 
-    const hook = (kind: "context" | "compaction" | "generate") => (event: SessionHooks["context"]) =>
+    const hook = (event: SessionHooks["context"]) =>
       Effect.gen(function* () {
         const current = settings()
         if (!current.enabled) delete event.tools[TOOL]
@@ -700,8 +700,9 @@ export const Plugin = define({
           "",
           `Model tiers now: fast = ${current.models.fast}, strong = ${current.models.strong}, default = ${current.models.default}. At most ${current.maxParallel} steps run at once, ${current.maxSteps} steps per workflow.`,
         ].join("\n")
-        // Compaction and side generations keep the same tool list (cache-stable) but not the guidance.
-        if (kind === "context") event.system.push(SystemPart.make(GUIDANCE))
+        // Compaction and side generations get the same tools and guidance as the session's requests, so
+        // their prompt prefix matches and they reuse its cache instead of re-reading the conversation.
+        event.system.push(SystemPart.make(GUIDANCE))
       })
     // Several subagent calls from one message are a workflow done by hand: say so in the second result.
     const nudges = new Map<string, D.NudgeState>()
@@ -714,8 +715,8 @@ export const Plugin = define({
       return Effect.void
     })
 
-    yield* ctx.session.hook("context", hook("context"))
-    yield* ctx.session.hook("compaction", hook("compaction"))
-    yield* ctx.session.hook("generate", hook("generate"))
+    yield* ctx.session.hook("context", hook)
+    yield* ctx.session.hook("compaction", hook)
+    yield* ctx.session.hook("generate", hook)
   }),
 })
