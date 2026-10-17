@@ -27,7 +27,8 @@
     "./mods/sessions/index.mjs",
     "./mods/devices/index.mjs",
     "./mods/crash-guard/index.mjs",
-    "./mods/session-import/index.mjs"
+    "./mods/session-import/index.mjs",
+    "./mods/effort/index.mjs"
   ],
   "options": {
     "reducedMotion": false,
