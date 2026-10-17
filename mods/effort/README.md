@@ -44,9 +44,10 @@ a rank fall back to position. A model with no effort controls is left alone (no 
 ## Checking
 
 - `node --test mods/effort/test.mjs` — pure choice/heuristic/rewrite cases and ordered application
-  over disposable fixtures, including the mods/infinicode-composed model catalog.
+  over disposable fixtures (anchors fail closed on a second application or a changed upstream).
 - `node skills/infiniteoc-mod-development/scripts/check-mod.mjs mods/effort/index.mjs .` — full
   ordered application against pristine upstream with all enabled mods.
-- `node bin/infiniteoc.mjs feature enable effort`, restart, then pick `Auto` with `ctrl+t`/`/variants`.
+- `node bin/infiniteoc.mjs feature enable effort`, restart, then pick `auto` with `ctrl+t` (it keeps
+  the id as its label; only InfiniCode's own name is prettified).
 
 Rollback: `node bin/infiniteoc.mjs feature disable effort`, restart.
