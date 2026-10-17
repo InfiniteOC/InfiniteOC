@@ -114,8 +114,12 @@ export const Plugin = define({
         const turn = messages[start]?.id as string | undefined
         const done = turn !== undefined && settled.get(sessionID) === turn
         if (edited && !done) {
-          if (settings.critique && !messages.slice(start + 1).some((message) => message.type === "synthetic" && message.text.startsWith(L.MARK.critique))) {
-            yield* nudge(sessionID, L.critiqueText, "Self-critique before done")
+          if (
+            settings.critique &&
+            L.editedFiles(messages, start).length >= L.CRITIQUE_MIN_FILES &&
+            !messages.slice(start + 1).some((message) => message.type === "synthetic" && message.text.startsWith(L.MARK.critique))
+          ) {
+            yield* nudge(sessionID, L.critiqueText(L.recentRequests(messages)), "Check against the request before done")
             return true
           }
           if (settings.reviewerModel && !messages.slice(start + 1).some((message) => message.type === "synthetic" && message.text.startsWith(L.MARK.review))) {

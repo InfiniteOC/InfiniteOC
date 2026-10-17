@@ -174,7 +174,7 @@ test("settings normalize, change one key at a time, and reject bad values", () =
   assert.deepEqual(next({ escalateModel: "a/b" }, "escalate", "off"), {})
   for (const [key, value] of [["verify", "maybe"], ["retries", "0"], ["retries", "x"], ["reviewer", "nomodel"], ["persona", "pirate"], ["nope", "1"], ["timeout", "1"]])
     assert.ok("error" in L.applySetting({}, key, value), `${key} ${value}`)
-  assert.match(L.describeSettings(L.defaults), /verify on.*stuck on.*critique off.*reviewer off.*escalate off.*persona off/)
+  assert.match(L.describeSettings(L.defaults), /verify on.*stuck on.*critique on.*reviewer off.*escalate off.*persona off/)
 })
 
 test("goal templates expand to goals with the detected command", () => {
@@ -189,7 +189,19 @@ test("macros and queue prompts stay plain, timebox and why texts keep their inst
   assert.match(L.timeboxText("30m"), /Stop starting new work[\s\S]*summarize/)
   assert.match(L.whyText(""), /evidence[\s\S]*Do not make any changes/)
   assert.match(L.whyText("the rename"), /Focus: the rename/)
-  assert.match(L.critiqueText, /git diff/)
+  const critique = L.critiqueText(L.recentRequests([
+    { type: "user", text: "fix the footer" },
+    { type: "user", text: "add /import so I can continue Claude sessions here" },
+    { type: "assistant", content: [] },
+    { type: "user", text: "also rebase on the other model's commits" },
+  ], 2))
+  assert.match(critique, /continue Claude sessions here\n---\nalso rebase/)
+  assert.doesNotMatch(critique, /fix the footer/)
+  assert.ok(critique.startsWith(L.MARK.critique))
+  assert.match(critique, /continue Claude sessions here/)
+  assert.match(critique, /manual steps standing in for the real behavior do not count/)
+  assert.match(critique, /git diff/)
+  assert.equal(L.CRITIQUE_MIN_FILES, 2)
   assert.ok(L.personas.terse && L.personas.teacher && L.personas.pair)
   assert.match(L.planText("do it"), /question tool[\s\S]*Approve and execute[\s\S]*- \[x\]/)
 })

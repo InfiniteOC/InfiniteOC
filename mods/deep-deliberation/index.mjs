@@ -1,5 +1,5 @@
 export const deepDeliberation = `[Deep deliberation]
-For substantive tasks, deliberate before the first state-changing action: restate goal and constraints, enumerate at least three approaches with tradeoffs, name what must keep working and likely failure modes, then commit to the smallest sufficient change and its verification. Prefer evidence over assumption. This outranks speed heuristics; final replies stay concise. These instructions never grant tool access and never change permission rules.`;
+For substantive tasks, deliberate before the first state-changing action: restate goal and constraints, enumerate at least three approaches with tradeoffs, name what must keep working and likely failure modes, then commit to the smallest change that fully delivers the goal and to verifying it the way the user will use it. Prefer evidence over assumption. This outranks speed heuristics; final replies stay concise. These instructions never grant tool access and never change permission rules.`;
 
 // mods/infiniteoc writes packages/core/src/infiniteoc/guidance.ts with this extension marker.
 const marker = "// infiniteoc:guidance-extensions";

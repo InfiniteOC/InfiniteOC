@@ -14,7 +14,7 @@ Change them with `/auto <key> <value>`; `/auto` alone prints them.
 | `retries` | 2 | most fix-up turns per prompt (1-5) |
 | `timeout` | 300 | seconds before the check is killed |
 | `stuck` | on | block a call that failed 3 times with the same output |
-| `critique` | off | one self-critique turn before a change is reported done |
+| `critique` | on | before a change of 2+ files is reported done, one turn that checks it against the user's request (real behavior, not manual steps or stubs; claims backed by output; the diff) |
 | `reviewer` | off | `provider/model`; that model reviews the diff before done (the diff is sent to it) |
 | `escalate` | off | `provider/model`; used for the fix-up after repeated failure, then dropped back |
 | `persona` | off | `terse`, `teacher` or `pair` (prompt style only) |

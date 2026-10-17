@@ -218,7 +218,7 @@ export const defaults: Settings = {
   verifyRetries: 2,
   verifyTimeout: 300,
   stuck: true,
-  critique: false,
+  critique: true,
   reviewerModel: "",
   escalateModel: "",
   persona: "",
@@ -326,11 +326,30 @@ export const whyText = (extra: string) =>
 
 // ---- 9, 10. critique and second opinion ----------------------------------------------------------
 
-export const critiqueText = `${MARK.critique}
-Before reporting this done, do a quick self-critique of your own change: read your diff (git diff), then check for a wrong assumption, an unhandled edge case, a missed caller, a missing or weak test, and anything you claimed but did not run. Fix what you find and re-run the relevant check. Then give the final summary; list anything still unverified.`
+/** The user's last few typed messages, oldest first: a turn's request often comes with later corrections. */
+export const recentRequests = (messages: ReadonlyArray<Msg>, count = 3) =>
+  messages.filter((message) => message.type === "user").slice(-count).map((message) => textOf(message))
+
+/** A turn that edited at least this many files gets the critique pass (when on); smaller edits skip it. */
+export const CRITIQUE_MIN_FILES = 2
+
+/**
+ * The check before a change is reported done, against the user's own request: agents tend to ship an
+ * easier stand-in (manual steps, a stub, a dialog explaining what to do) and to call things confirmed
+ * that no output showed.
+ */
+export const critiqueText = (requests: ReadonlyArray<string>) => `${MARK.critique}
+Before reporting this done, check it against what the user asked for (their latest messages, oldest first):
+"""
+${requests.map((text) => text.trim()).filter(Boolean).join("\n---\n").slice(-1500) || "(see the conversation)"}
+"""
+1. Outcome: walk through what the user will do to use this and what then happens. Does it do the job they asked for, where they will use it? Instructions, placeholders, stubs, mocks or manual steps standing in for the real behavior do not count. If you reduced the scope, finish it now; if that is truly impossible, say so first in your reply, with what you tried, and ask before settling for less.
+2. Evidence: every "works", "confirmed", "verified" or "proven" you are about to write needs a command run or file read in this session whose output shows it. Empty, unrelated or stubbed results show nothing: test the real thing, or call it unverified.
+3. Code: read your diff (git diff) for a wrong assumption, a missed caller or edge case, and tests that do not exercise the change. Fix what you find and re-run the checks.
+Then reply with what does not work or was not verified first, then what was done.`
 
 export const reviewPrompt = (request: string, diff: string) =>
-  `You are an independent code reviewer giving a second opinion on a change an AI coding agent just made. Find real defects only: bugs, unhandled edge cases, regressions, security problems, tests that do not test the change. No style nits.\n\nThe user's request:\n${request}\n\nThe diff:\n${diff}\n\nReply with a ranked list, each item as "- severity (blocker|major|minor), file:line, the problem and its trigger". If you find no real defects, reply with exactly: NO DEFECTS`
+  `You are an independent code reviewer giving a second opinion on a change an AI coding agent just made. Find real defects only: a change that does not deliver what the user asked (a stand-in such as manual steps, instructions, a stub or a partial path is a blocker), bugs, unhandled edge cases, regressions, security problems, tests that do not test the change. No style nits.\n\nThe user's request:\n${request}\n\nThe diff:\n${diff}\n\nReply with a ranked list, each item as "- severity (blocker|major|minor), file:line, the problem and its trigger". If you find no real defects, reply with exactly: NO DEFECTS`
 
 export const reviewClean = (reply: string) => /^\s*NO DEFECTS\b/i.test(reply)
 
