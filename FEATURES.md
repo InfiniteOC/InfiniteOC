@@ -66,6 +66,7 @@ Handlers support `async` and get a typed context:
 | `await ctx.ui.alert/confirm/prompt/select({...})` | Promise dialogs that resolve with the answer, or `undefined` on Esc. `confirm`'s `label` is `{ confirm?, cancel? }`; `ctx.ui.set({ size: "large" })` widens the open dialog |
 | `ctx.dialog` | Upstream dialog API; `replace(() => <YourComponent />)` adds Solid/OpenTUI UI (compiled mods only) |
 | `ctx.toast` | `show({ variant, title?, message, duration?, action? })`; one toast at a time, replaced by the next unless hovered |
+| `ctx.client` | The backend this UI is connected to; `ctx.client.api` is the typed SDK (`session.get/list/import/export`, models, ...). Use it to do the work in place instead of telling the user to run a command |
 
 Toast actions are mouse-only and toasts render under an open dialog's backdrop, so
 give every side-effecting choice a keyboard path (`ctx.ui`) and keep feedback for

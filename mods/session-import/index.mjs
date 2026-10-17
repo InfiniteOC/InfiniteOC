@@ -1,8 +1,9 @@
 // session-import: continue Claude Code and Antigravity CLI sessions in
 // InfiniteOC. Foreign transcripts are converted to ordinary sessions through
 // the backend's session-import API, so the agent continues with full history.
-// This mod is a TUI browser plus a standalone CLI (import.mjs); it writes no
-// upstream source and registers no hooks.
+// /import in the TUI imports the picked session through the UI's own backend
+// connection and opens it; import.mjs is the same as a CLI for scripts. It
+// writes no upstream source and registers no hooks.
 import { readFile } from "node:fs/promises"
 
 export default {

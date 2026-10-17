@@ -63,6 +63,7 @@ import type { useRoute } from "../context/route"
 import type { useDialog } from "../ui/dialog"
 import type { useToast } from "../ui/toast"
 import type { createDialogApi } from "../plugin/api"
+import type { useClient } from "../context/client"
 
 /** Local TUI context; closing tabs never deletes or interrupts sessions. */
 export type FeatureContext = {
@@ -72,6 +73,8 @@ export type FeatureContext = {
   toast: ReturnType<typeof useToast>
   /** Promise dialogs: alert, confirm, prompt and select resolve with the answer (undefined on Esc). */
   ui: ReturnType<typeof createDialogApi>
+  /** The backend this UI is connected to: client.api is the typed SDK (sessions, models, import/export ...). */
+  client: ReturnType<typeof useClient>
 }
 `
 
@@ -141,7 +144,7 @@ ${entries}
   await api.write("packages/tui/src/infiniteoc-features/live-runtime.ts", await readFile(new URL("./live-runtime.ts", import.meta.url), "utf8"))
   await api.write("packages/tui/src/infiniteoc-features/daemon-client.mjs", await readFile(new URL("./daemon-client.mjs", import.meta.url), "utf8"))
   app = replaceExact(app, 'import { SessionTabsProvider, useSessionTabs } from "./context/session-tabs"', 'import { SessionTabsProvider, useSessionTabs } from "./context/session-tabs"\nimport { infiniteocCommands } from "./infiniteoc-features"\nimport { createLiveCommands } from "./infiniteoc-features/live-runtime"\nimport { createDialogApi } from "./plugin/api"', "app import")
-  app = replaceExact(app, '  const appCommands = createMemo(() =>\n    [', '  const infiniteocContext = { tabs: sessionTabs, route, dialog, toast, ui: createDialogApi(dialog, (render) => render()) }\n  const liveCommands = createLiveCommands(infiniteocContext, () => infiniteocCommands(infiniteocContext))\n  const appCommands = createMemo(() =>\n    [\n      ...liveCommands(),', "appCommands")
+  app = replaceExact(app, '  const appCommands = createMemo(() =>\n    [', '  const infiniteocContext = { tabs: sessionTabs, route, dialog, toast, ui: createDialogApi(dialog, (render) => render()), client }\n  const liveCommands = createLiveCommands(infiniteocContext, () => infiniteocCommands(infiniteocContext))\n  const appCommands = createMemo(() =>\n    [\n      ...liveCommands(),', "appCommands")
   await api.patch(appFile, () => app)
   await api.write("infiniteoc-features.json", JSON.stringify(commands.map(({ source, ...metadata }) => metadata), null, 2) + "\n")
 }

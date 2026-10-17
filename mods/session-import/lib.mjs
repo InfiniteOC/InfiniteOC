@@ -4,13 +4,13 @@
 // (summaries live in summaries.mjs, used by the CLI only), so the TUI command
 // can reuse this file directly. Read-only against foreign data: never writes
 // outside the payload it returns.
-import { readdirSync, readFileSync, statSync } from "node:fs"
+import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
 import { randomUUID } from "node:crypto"
 
 export const MAX_SCAN_BYTES = 50 * 1024 * 1024
-export const MAX_IMPORT_CHARS = 60_000
+export const MAX_IMPORT_CHARS = 240_000
 export const MAX_THINKING_CHARS = 1000
 export const MAX_TOOL_CHARS = 1000
 
@@ -74,14 +74,17 @@ export function summarizeClaudeFile(file) {
         if (lastTime === undefined || ms > lastTime) lastTime = ms
       }
     }
-    if (entry.type === "user" && !entry.isSidechain) {
-      user++
-      if (firstText === undefined) firstText = claudeText(entry.message?.content)
+    if (entry.type === "user") {
+      const said = claudeUserEntry(entry)
+      if (said?.typed) {
+        user++
+        firstText ??= said.text.replace(/\s+/g, " ")
+      }
     } else if (entry.type === "assistant" && !entry.isSidechain) {
       assistant++
     }
   }
-  if (!user && !assistant) return undefined
+  if (!user) return undefined
   return {
     id: path.basename(file, ".jsonl"),
     file,
@@ -128,6 +131,27 @@ export function claudeText(content) {
   return parts.join("\n\n")
 }
 
+const HARNESS_NOTE = /^<(local-command-stdout|local-command-caveat|task-notification|system-reminder)>/
+
+/**
+ * A Claude Code user entry as conversation: undefined for harness bookkeeping (meta caveats and
+ * reminders, local command output, task notices, a bare /login), "[ran /name args]" for a slash
+ * command with arguments, else its text. typed is false for entries that only carry tool results.
+ */
+export function claudeUserEntry(entry) {
+  if (entry.isMeta || entry.isSidechain) return undefined
+  const content = entry.message?.content
+  const text = claudeText(content).trim()
+  if (!text || HARNESS_NOTE.test(text)) return undefined
+  const name = /<command-name>\/?([^<]*)<\/command-name>/.exec(text)?.[1]?.trim()
+  if (name !== undefined) {
+    const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim()
+    return args ? { text: `[ran /${name} ${args}]`, typed: true } : undefined
+  }
+  const typed = typeof content === "string" || (Array.isArray(content) && content.some((block) => block?.type === "text" || block?.type === "image"))
+  return { text, typed }
+}
+
 /** Full Claude Code session to normalized turns (oldest first). */
 export function readClaudeSession(file) {
   const stat = safeStat(file)
@@ -145,9 +169,16 @@ export function readClaudeSession(file) {
       continue
     }
     if (entry.cwd && !cwd) cwd = entry.cwd
-    if (entry.type === "user" && !entry.isSidechain) {
-      const text = claudeText(entry.message?.content).trim()
-      if (text) turns.push({ role: "user", text, time: timeMs(entry.timestamp) })
+    if (entry.type === "user") {
+      const said = claudeUserEntry(entry)
+      if (!said) continue
+      // Tool results belong to the reply that ran the tool, not to the user.
+      const last = turns.at(-1)
+      if (!said.typed) {
+        if (last?.role === "assistant") last.text += `\n\n${said.text}`
+        continue
+      }
+      turns.push({ role: "user", text: said.text, time: timeMs(entry.timestamp) })
     } else if (entry.type === "assistant" && !entry.isSidechain) {
       const text = claudeText(entry.message?.content).trim()
       if (text) {
@@ -169,19 +200,24 @@ export function listAntigravitySessions(home) {
     const transcript = path.join(brain, id, ".system_generated", "logs", "transcript.jsonl")
     const stat = safeStat(transcript)
     if (!stat) continue
+    if (stat.size > MAX_SCAN_BYTES) continue
     let user = 0
     let assistant = 0
+    let title
     try {
       for (const line of readFileSync(transcript, "utf8").split("\n")) {
         if (!line.trim()) continue
         const entry = JSON.parse(line)
-        if (entry.source === "USER_EXPLICIT") user++
-        else if (entry.source === "MODEL") assistant++
+        if (entry.source === "USER_EXPLICIT") {
+          user++
+          // The first request names the session (conversation_summaries.db titles need sqlite: CLI only).
+          title ??= unwrapUserRequest(entry.content)?.replace(/\s+/g, " ").trim().slice(0, 80) || undefined
+        } else if (entry.source === "MODEL") assistant++
       }
     } catch {
       continue
     }
-    out.push({ harness: "antigravity", id, file: transcript, title: id, userTurns: user, assistantTurns: assistant, mtimeMs: stat.mtimeMs, bytes: stat.size })
+    out.push({ harness: "antigravity", id, file: transcript, title: title ?? id, userTurns: user, assistantTurns: assistant, mtimeMs: stat.mtimeMs, bytes: stat.size })
   }
   return out.sort((a, b) => b.mtimeMs - a.mtimeMs)
 }
@@ -249,45 +285,97 @@ const hexId = (prefix) => `${prefix}${randomUUID().replace(/-/g, "")}`
  * Assistant turns become synthetic messages (no fabricated model refs);
  * the whole import is capped and the cap is disclosed in the transcript.
  */
-export function toImportPayload(turns, { harness, sourceId, title, directory }) {
+/**
+ * A session id made the way OpenCode makes every session's (upstream packages/schema/src/identifier.ts,
+ * descending): the time of creation, inverted, then 14 random base62 characters. The provider gateway
+ * refuses sessions whose id OpenCode could not have created (OpenCode's free tier answers "can only be
+ * used from within OpenCode"), so an imported session must get a real one, made now.
+ */
+const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+let lastStamp = 0
+let counter = 0
+export function newSessionId(now = Date.now()) {
+  if (now !== lastStamp) {
+    lastStamp = now
+    counter = 0
+  }
+  const value = ~(BigInt(now) * 0x1000n + BigInt(++counter))
+  const time = Array.from({ length: 6 }, (_, index) => Number((value >> BigInt(40 - 8 * index)) & 0xffn).toString(16).padStart(2, "0")).join("")
+  return `ses_${time}${Array.from(crypto.getRandomValues(new Uint8Array(14)), (byte) => BASE62[byte % 62]).join("")}`
+}
+
+// Which InfiniteOC session each foreign session became, so importing it again opens that one.
+export const importsFile = () => path.join(process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"), "infiniteoc", "session-import.json")
+const importKey = (harness, sourceId) => `${harness}:${sourceId}`
+const readImports = () => {
+  try {
+    return JSON.parse(readFileSync(importsFile(), "utf8")) ?? {}
+  } catch {
+    return {}
+  }
+}
+export const importedAs = (harness, sourceId) => readImports()[importKey(harness, sourceId)]
+export function recordImport(harness, sourceId, sessionID) {
+  const file = importsFile()
+  mkdirSync(path.dirname(file), { recursive: true })
+  const temp = `${file}.${process.pid}.tmp`
+  writeFileSync(temp, JSON.stringify({ ...readImports(), [importKey(harness, sourceId)]: sessionID }, null, 2))
+  renameSync(temp, file)
+}
+
+export function toImportPayload(turns, { harness, sourceId, title, directory, id = newSessionId() }) {
   const usable = turns.filter((t) => (t.role === "user" || t.role === "assistant") && t.text?.trim())
   if (!usable.length) throw new Error("Nothing importable: no user or assistant turns found")
   const now = Date.now()
   const created = usable.find((t) => t.time)?.time ?? now
-  const messages = []
-  let chars = 0
-  let truncated = false
-  for (const turn of usable) {
-    const text = turn.role === "user" ? turn.text : `Originally from ${harness}${turn.model ? ` (${turn.model})` : ""}:\n\n${turn.text}`
-    if (chars + text.length > MAX_IMPORT_CHARS) {
-      truncated = true
-      break
-    }
-    chars += text.length
-    messages.push(
-      turn.role === "user"
-        ? { id: hexId("msg_"), time: { created: turn.time ?? now }, text, type: "user" }
-        : {
-            id: hexId("msg_"),
-            time: { created: turn.time ?? now },
-            text,
-            description: `imported from ${harness} session ${sourceId}`,
-            type: "synthetic",
-          },
-    )
+  const render = (turn) => turn.text
+  const source = harness === "claude" ? "Claude Code" : "Antigravity"
+  // Continuing needs the latest context most: keep the first user turn (the original goal, up to a
+  // quarter of the budget) and as many of the newest turns as fit, and say what was left out between.
+  const first = usable.findIndex((t) => t.role === "user")
+  const head = first >= 0 ? [{ turn: usable[first], text: render(usable[first]).slice(0, MAX_IMPORT_CHARS / 4) }] : []
+  let budget = MAX_IMPORT_CHARS - (head[0]?.text.length ?? 0)
+  let from = usable.length
+  while (from > first + 1 && render(usable[from - 1]).length <= budget) budget -= render(usable[--from]).length
+  const tail = usable.slice(from).map((turn) => ({ turn, text: render(turn) }))
+  // A newest turn larger than the whole budget still comes along, cut to fit.
+  if (!tail.length && from > first + 1) tail.push({ turn: usable.at(-1), text: render(usable.at(-1)).slice(0, budget) })
+  const picked = [...head, ...tail]
+  const omitted = usable.length - picked.length
+  // Replies stay assistant messages, attributed to the harness and model that wrote them (provider
+  // "claude-code"/"antigravity", not an InfiniteOC model): the UI shows them as replies and the model
+  // reads them as its earlier turns, like after a model switch.
+  const message = ({ turn, text }) =>
+    turn.role === "user"
+      ? { id: hexId("msg_"), time: { created: turn.time ?? now }, text, type: "user" }
+      : {
+          id: hexId("msg_"),
+          type: "assistant",
+          agent: "build",
+          model: { providerID: harness === "claude" ? "claude-code" : "antigravity", id: turn.model ?? "unknown" },
+          content: [{ type: "text", text }],
+          finish: "stop",
+          time: { created: turn.time ?? now, completed: turn.time ?? now },
+        }
+  const intro = {
+    id: hexId("msg_"),
+    time: { created: picked[0]?.turn.time ?? now },
+    text: `[import note: this conversation was imported from ${source} (session ${sourceId}) and continues here in InfiniteOC. Earlier replies were written there, with its tools; "[used …]" and "[tool result: …]" lines summarize those tool calls.]`,
+    description: `Imported from ${source}`,
+    type: "synthetic",
   }
-  if (truncated)
-    messages.push({
-      id: hexId("msg_"),
-      time: { created: now },
-      text: `[import note: the source session continues beyond ${MAX_IMPORT_CHARS} characters; the remainder was not imported]`,
-      description: "import truncation note",
-      type: "synthetic",
-    })
+  const note = {
+    id: hexId("msg_"),
+    time: { created: picked[0]?.turn.time ?? now },
+    text: `[import note: ${omitted} earlier turn${omitted === 1 ? "" : "s"} of the ${harness} session were left out to fit; the conversation continues from its most recent part below]`,
+    description: "import truncation note",
+    type: "synthetic",
+  }
+  const messages = [intro, ...head.map(message), ...(omitted > 0 ? [note] : []), ...tail.map(message)]
   if (!messages.length) throw new Error("Nothing importable within the size cap")
   return {
     info: {
-      id: hexId("ses_"),
+      id,
       projectID: "global",
       title: title ?? `imported from ${harness} ${sourceId}`,
       cost: 0,

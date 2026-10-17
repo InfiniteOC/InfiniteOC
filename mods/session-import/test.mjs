@@ -12,14 +12,20 @@ import { createServer } from "node:http"
 import mod from "./index.mjs"
 import {
   claudeText,
+  claudeUserEntry,
   listAntigravitySessions,
   listClaudeSessions,
   readAntigravitySession,
   readClaudeSession,
   toImportPayload,
+  newSessionId,
+  importedAs,
+  MAX_IMPORT_CHARS,
 } from "./lib.mjs"
 
 const hasStrip = Boolean(module.stripTypeScriptTypes)
+// Import records go to $XDG_DATA_HOME/infiniteoc; keep them out of the real one (children inherit it).
+process.env.XDG_DATA_HOME = await mkdtemp(path.join(tmpdir(), "session-import-data-"))
 const here = new URL(".", import.meta.url).pathname
 
 const CLAUDE_FIXTURE = [
@@ -58,7 +64,7 @@ test("claude discovery lists mains, skips subagent forks", async () => {
     assert.equal(sessions.length, 1)
     assert.equal(sessions[0].id, "s1")
     assert.equal(sessions[0].harness, "claude")
-    assert.equal(sessions[0].userTurns, 2)
+    assert.equal(sessions[0].userTurns, 1) // typed messages; the tool result is not one
     assert.equal(sessions[0].assistantTurns, 1)
     assert.equal(sessions[0].title, "fix the login bug")
   } finally {
@@ -80,11 +86,11 @@ test("claude session parses to turns with model and cwd", async () => {
   const home = await fixtureHome()
   try {
     const { turns, cwd, requestedModel } = readClaudeSession(path.join(home, ".claude", "projects", "-repo", "s1.jsonl"))
-    assert.equal(turns.length, 3)
-    assert.deepEqual(turns.map((t) => t.role), ["user", "assistant", "user"])
+    // The tool result joins the reply that ran the tool; only typed text is the user's.
+    assert.deepEqual(turns.map((t) => t.role), ["user", "assistant"])
     assert.match(turns[1].text, /On it\./)
     assert.match(turns[1].text, /\[reasoning: check auth\]/)
-    assert.match(turns[2].text, /\[tool result: file bytes here\]/)
+    assert.match(turns[1].text, /\[used Read[\s\S]*\[tool result: file bytes here\]/)
     assert.equal(cwd, "/repo")
     assert.equal(requestedModel, "claude-x")
   } finally {
@@ -118,16 +124,35 @@ test("import payload uses ses_/msg_ ids, marks assistant origin, caps and disclo
     { role: "system", text: "noise" },
   ]
   const payload = toImportPayload(turns, { harness: "claude", sourceId: "s1", directory: "/tmp" })
-  assert.match(payload.info.id, /^ses_[0-9a-f]{32}$/)
   assert.equal(payload.info.projectID, "global")
   assert.deepEqual(payload.info.tokens, { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } })
-  assert.equal(payload.messages.length, 2)
-  assert.equal(payload.messages[0].type, "user")
-  assert.match(payload.messages[1].text, /^Originally from claude \(claude-x\):/)
-  assert.match(payload.messages[1].id, /^msg_[0-9a-f]{32}$/)
+  // An origin note, then the turns: replies are assistant messages attributed to their real source.
+  assert.deepEqual(payload.messages.map((m) => m.type), ["synthetic", "user", "assistant"])
+  assert.match(payload.messages[0].text, /imported from Claude Code \(session s1\)/)
+  assert.equal(payload.messages[1].text, "hello")
+  assert.deepEqual(payload.messages[2].model, { providerID: "claude-code", id: "claude-x" })
+  assert.deepEqual(payload.messages[2].content, [{ type: "text", text: "hi there" }])
+  assert.match(payload.messages[2].id, /^msg_[0-9a-f]{32}$/)
   assert.throws(() => toImportPayload([{ role: "system", text: "x" }], { harness: "c", sourceId: "s", directory: "/t" }), /Nothing importable/)
-  const big = toImportPayload([{ role: "user", text: "a".repeat(70000) }], { harness: "c", sourceId: "s", directory: "/t" })
-  assert.ok(big.messages.at(-1).text.includes("not imported"))
+  // Ids are made the way OpenCode makes them (time-ordered, newest first), never random hex: the
+  // provider gateway refuses a session whose id OpenCode could not have created.
+  assert.match(payload.info.id, /^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/)
+  const now = Date.now()
+  assert.ok(newSessionId(now + 1000).slice(0, 16) < newSessionId(now).slice(0, 16), "descending: newer ids sort first, like upstream")
+  // Long sessions keep the original request and the newest turns, with a note for the gap.
+  const long = [{ role: "user", text: "GOAL: build it" }]
+  for (let i = 0; i < 40; i++) long.push({ role: "assistant", text: `step ${i} ` + "x".repeat(10_000) }, { role: "user", text: `next ${i}` })
+  const cut = toImportPayload(long, { harness: "claude", sourceId: "long", directory: "/t" })
+  const textOf = (m) => m.text ?? m.content.map((part) => part.text).join("")
+  assert.equal(cut.messages[1].text, "GOAL: build it")
+  assert.match(cut.messages[2].text, /^\[import note: \d+ earlier turns of the claude session were left out/)
+  assert.equal(cut.messages.at(-1).text, "next 39")
+  assert.match(textOf(cut.messages.at(-2)), /step 39 /)
+  assert.ok(cut.messages.slice(1).reduce((sum, m) => sum + textOf(m).length, 0) <= MAX_IMPORT_CHARS + 500)
+  // A single newest turn bigger than everything still comes along, cut to fit.
+  const huge = toImportPayload([{ role: "user", text: "hi" }, { role: "assistant", text: "z".repeat(MAX_IMPORT_CHARS * 2) }], { harness: "c", sourceId: "s", directory: "/t" })
+  assert.equal(huge.messages.length, 3)
+  assert.ok(huge.messages[2].content[0].text.length < MAX_IMPORT_CHARS)
 })
 
 test("CLI lists and reads from a fixture home", async () => {
@@ -193,7 +218,7 @@ test("CLI imports through a stub backend", async () => {
   }
 })
 
-test("mod registers /import and ships the lib; command lists read-only", { skip: !hasStrip && "needs Node type stripping" }, async () => {
+test("/import imports the picked session through the UI's backend client and opens it", { skip: !hasStrip && "needs Node type stripping" }, async () => {
   assert.equal(mod.id, "session-import")
   const written = {}
   const commands = []
@@ -216,7 +241,57 @@ test("mod registers /import and ships the lib; command lists read-only", { skip:
   assert.equal(commands[0].slash, "import")
   const stripped = module.stripTypeScriptTypes(commands[0].source).replace("./session-import-lib.mjs", new URL("./lib.mjs", import.meta.url).href)
   const { run } = await import(`data:text/javascript,${encodeURIComponent(stripped)}`)
-  const alerts = []
-  await run({ ui: { select: async () => "close", alert: async (a) => alerts.push(a), set: () => {} }, toast: { show: () => {} } })
-  assert.equal(alerts.length, 0)
+  const home = await fixtureHome()
+  const previous = process.env.HOME
+  process.env.HOME = home
+  try {
+    const imported = new Map()
+    const calls = { opened: [], selected: [], alerts: [], toasts: [] }
+    const ctx = (pick) => ({
+      ui: { select: async ({ options }) => options.findIndex((o) => o.title.startsWith(pick)).toString(), alert: async (a) => calls.alerts.push(a) },
+      toast: { show: (t) => calls.toasts.push(t) },
+      tabs: { enabled: () => true, open: (id) => calls.opened.push(id), select: (id) => calls.selected.push(id) },
+      route: { navigate: () => assert.fail("tabs are enabled") },
+      client: {
+        api: {
+          session: {
+            get: async ({ sessionID }) => imported.get(sessionID) ?? Promise.reject(new Error("404")),
+            import: async (input) => void imported.set(input.info.id, input),
+          },
+        },
+      },
+    })
+    await run(ctx("Claude"))
+    const id = importedAs("claude", "s1")
+    assert.deepEqual(calls.alerts, [])
+    assert.match(id, /^ses_[0-9a-f]{12}[0-9A-Za-z]{14}$/)
+    assert.ok(imported.has(id), "imported into the backend")
+    assert.equal(imported.get(id).info.title, "Claude: fix the login bug")
+    assert.deepEqual(imported.get(id).location, { directory: imported.get(id).info.location.directory })
+    assert.deepEqual([calls.opened, calls.selected], [[id], [id]])
+    // Picking it again opens the first copy instead of importing a second one.
+    await run(ctx("Claude"))
+    assert.equal(imported.size, 1)
+    assert.deepEqual(calls.selected, [id, id])
+    assert.match(calls.toasts.at(-1).title, /Already imported/)
+    // Antigravity sessions are titled by their first request.
+    await run(ctx("Antigravity"))
+    assert.match(imported.get(importedAs("antigravity", "agy1")).info.title, /^Antigravity: (?!agy1$)/)
+  } finally {
+    process.env.HOME = previous
+    await rm(home, { recursive: true, force: true })
+  }
+})
+
+test("Claude Code bookkeeping is not conversation: caveats, local commands, their output, notices", () => {
+  const user = (content, extra = {}) => ({ type: "user", message: { role: "user", content }, ...extra })
+  assert.equal(claudeUserEntry(user("<local-command-caveat>The command below was run directly</local-command-caveat>", { isMeta: true })), undefined)
+  assert.equal(claudeUserEntry(user("<command-name>/login</command-name>\n<command-message>login</command-message>\n<command-args></command-args>")), undefined)
+  assert.equal(claudeUserEntry(user("<local-command-stdout>Login successful</local-command-stdout>")), undefined)
+  assert.equal(claudeUserEntry(user("<task-notification>\n<task-id>b1</task-id></task-notification>")), undefined)
+  assert.equal(claudeUserEntry(user("<system-reminder>interrupted</system-reminder>", { isMeta: true })), undefined)
+  assert.deepEqual(claudeUserEntry(user("<command-message>ponytail</command-message>\n<command-name>/ponytail</command-name>\n<command-args>ultra</command-args>")), { text: "[ran /ponytail ultra]", typed: true })
+  assert.deepEqual(claudeUserEntry(user("fix the login bug")), { text: "fix the login bug", typed: true })
+  assert.deepEqual(claudeUserEntry(user([{ type: "tool_result", tool_use_id: "t", content: "ok" }])), { text: "[tool result: ok]", typed: false })
+  assert.equal(claudeUserEntry(user("subagent", { isSidechain: true })), undefined)
 })

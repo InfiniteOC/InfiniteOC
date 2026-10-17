@@ -16,7 +16,9 @@ import {
   listAntigravitySessions,
   listClaudeSessions,
   readAntigravitySession,
+  importedAs,
   readClaudeSession,
+  recordImport,
   toImportPayload,
 } from "./lib.mjs"
 import { readSummaries } from "./summaries.mjs"
@@ -120,6 +122,8 @@ async function main() {
     const password = process.env.IOC_IMPORT_PASSWORD ?? process.env.IOC_PROXY_PASSWORD ?? process.env.OPENCODE_PASSWORD ?? ""
     if (!password) throw new Error("Backend password missing (IOC_IMPORT_PASSWORD or OPENCODE_PASSWORD from infiniteoc serve)")
     const session = findSession(await listAll(options.home, options), options.import, options.from)
+    const earlier = importedAs(session.harness, session.id)
+    if (earlier) throw new Error(`Already imported as session ${earlier}; open that one (in the TUI, /import opens it too)`)
     const { turns, cwd } = readTurns(session, options.home)
     let directory = options.dir ?? (cwd && existsSync(cwd) && statSync(cwd).isDirectory() ? cwd : process.cwd())
     const payload = toImportPayload(turns, { harness: session.harness, sourceId: session.id, title: options.title, directory })
@@ -137,9 +141,10 @@ async function main() {
       throw new Error(`Backend did not answer at ${upstream} (${error.cause?.message ?? error.message})`)
     }
     if (response.status === 401) throw new Error("Backend refused the password (401); use the password infiniteoc serve prints")
-    if (response.status === 409) throw new Error("Backend already imported this session id (409); import once only")
+    if (response.status === 409) throw new Error(`Session id ${payload.info.id} already exists; run the import again`)
     if (!response.ok) throw new Error(`Backend answered ${response.status}: ${(await response.text().catch(() => "")).slice(0, 200)}`)
     const created = (await response.json()).data
+    recordImport(session.harness, session.id, created.id)
     console.log(`Imported ${session.harness} ${session.id} as session ${created.id} (${payload.messages.length} messages).`)
     console.log(`Continue it: open the TUI on ${upstream} and pick "${created.title ?? created.id}" in /sessions.`)
     return

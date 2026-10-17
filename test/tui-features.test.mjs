@@ -33,7 +33,9 @@ test("typed UI command integration uses frontend registry, not server prompts", 
   assert.equal(result.features[0].slash, "clearall")
   const app = await readFile(join(root, "packages/tui/src/app.tsx"), "utf8")
   assert.match(app, /import \{ createDialogApi \} from "\.\/plugin\/api"/)
-  assert.match(app, /const infiniteocContext = \{ tabs: sessionTabs, route, dialog, toast, ui: createDialogApi\(dialog, \(render\) => render\(\)\) \}/)
+  assert.match(app, /const infiniteocContext = \{ tabs: sessionTabs, route, dialog, toast, ui: createDialogApi\(dialog, \(render\) => render\(\)\), client \}/)
+  // The backend client is declared before the commands are built.
+  assert.ok(app.indexOf("const client = useClient()") < app.indexOf("const infiniteocContext"))
   assert.match(app, /createLiveCommands\(infiniteocContext, \(\) => infiniteocCommands\(infiniteocContext\)\)/)
   assert.match(await readFile(join(root, "packages/tui/src/infiniteoc-features/api.ts"), "utf8"), /ui: ReturnType<typeof createDialogApi>/)
   const generated = await readFile(join(root, "packages/tui/src/infiniteoc-features/index.ts"), "utf8")
