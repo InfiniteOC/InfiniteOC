@@ -1,11 +1,13 @@
-# Homebrew formula for a personal tap (for example riz3y0/homebrew-infiniteoc). Not submitted anywhere.
-#   brew tap riz3y0/infiniteoc && brew install --HEAD infiniteoc
+# Homebrew formula for a tap under the InfiniteOC organization. The repository is
+# private: run `gh auth setup-git` (or configure a git credential helper) first so
+# brew can clone it.
+#   brew tap InfiniteOC/infiniteoc && brew install --HEAD infiniteoc
 # InfiniteOC builds into its own directory and updates itself with git, so the formula installs a small wrapper
 # that keeps a writable checkout in ~/.infiniteoc (override with INFINITEOC_DIR) instead of a read-only Cellar copy.
 class Infiniteoc < Formula
   desc "Source-backed OpenCode launcher and local mod framework"
-  homepage "https://github.com/riz3y0/InfiniteOC"
-  head "https://github.com/riz3y0/InfiniteOC.git", branch: "main"
+  homepage "https://github.com/InfiniteOC/InfiniteOC"
+  head "https://github.com/InfiniteOC/InfiniteOC.git", branch: "main"
   license :cannot_represent
 
   depends_on "git"
@@ -29,6 +31,7 @@ class Infiniteoc < Formula
 
   def caveats
     <<~EOS
+      The repository is private: run `gh auth setup-git` (or set GH_TOKEN) so git can clone it.
       The first run of `infiniteoc` clones InfiniteOC into ~/.infiniteoc and builds it (several minutes).
       Updates come from `infiniteoc update`, not from brew upgrade.
     EOS

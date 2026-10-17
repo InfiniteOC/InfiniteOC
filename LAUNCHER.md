@@ -4,14 +4,21 @@ Everything here lives in `src/` and `bin/`; none of it patches OpenCode.
 
 ## Install
 
+The repository is private and invite-only, so installing needs credentials. Sign the
+[GitHub CLI](https://cli.github.com) in once (`gh auth login`); `install.sh`/`install.ps1` then run
+`gh auth setup-git` so git can clone it. A `GH_TOKEN`/`GITHUB_TOKEN`, a git credential helper, or
+`INFINITEOC_REPO` set to an SSH URL also work. Fetch the script with gh so you can read it:
+
 ```sh
-curl -fsSL https://raw.githubusercontent.com/riz3y0/InfiniteOC/main/install.sh | sh   # read it first
-brew tap riz3y0/infiniteoc && brew install --HEAD infiniteoc                          # personal tap, see Formula/
+gh api -H "Accept: application/vnd.github.raw" /repos/InfiniteOC/InfiniteOC/contents/install.sh | sh   # read it first
+brew tap InfiniteOC/infiniteoc && brew install --HEAD infiniteoc   # private tap, see Formula/ (run gh auth setup-git first)
 ```
 
 ```powershell
-irm https://raw.githubusercontent.com/riz3y0/InfiniteOC/main/install.ps1 | iex        # Windows PowerShell, read it first
+(gh api -H "Accept: application/vnd.github.raw" /repos/InfiniteOC/InfiniteOC/contents/install.ps1) | iex   # Windows PowerShell, read it first
 ```
+
+Or clone first and run the copy you can read (`gh repo clone InfiniteOC/InfiniteOC ~/.infiniteoc && sh ~/.infiniteoc/install.sh`).
 
 `install.sh` clones (or fast-forwards) into `~/.infiniteoc`, links `infiniteoc` and `opendaemon` into
 `~/.local/bin` and runs the first build. On Windows, run `install.sh` from Git Bash

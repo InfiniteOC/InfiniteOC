@@ -32,18 +32,26 @@ own mods. It installs next to stock OpenCode and never changes it.
 
 ## Install
 
-You need [Node.js 22+](https://nodejs.org) and [Git](https://git-scm.com). No administrator rights.
+InfiniteOC is a private, invite-only repository: only people the owner added can install it. You need
+[Node.js 22+](https://nodejs.org), [Git](https://git-scm.com) and the
+[GitHub CLI](https://cli.github.com) (to prove you have access). No administrator rights.
+
+Sign in once so git and gh can clone it:
+
+```sh
+gh auth login        # also wires git's credential helper (gh auth setup-git)
+```
 
 **macOS / Linux**
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/riz3y0/InfiniteOC/main/install.sh | sh
+gh api -H "Accept: application/vnd.github.raw" /repos/InfiniteOC/InfiniteOC/contents/install.sh | sh
 ```
 
 **Windows** (PowerShell)
 
 ```powershell
-irm https://raw.githubusercontent.com/riz3y0/InfiniteOC/main/install.ps1 | iex
+(gh api -H "Accept: application/vnd.github.raw" /repos/InfiniteOC/InfiniteOC/contents/install.ps1) | iex
 ```
 
 That's it. Open a new terminal, go to a project and run:

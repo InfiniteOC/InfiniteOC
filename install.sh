@@ -1,16 +1,23 @@
 #!/bin/sh
 # InfiniteOC installer: clones (or fast-forwards) the repository, links infiniteoc
 # and opendaemon onto your PATH, and runs the first build.
-#   curl -fsSL https://raw.githubusercontent.com/riz3y0/InfiniteOC/main/install.sh | sh
-# On Windows, run this from Git Bash (https://git-scm.com), or use install.ps1
-# from PowerShell instead. Nothing outside the install directory and the bin
-# directory is touched, and nothing needs administrator: everything is user-local.
-# Read it before piping it to a shell.
+#
+# The repository is private: only people the owner invited can install it, and
+# cloning needs credentials. The GitHub CLI is the easiest source of them:
+#   gh auth login
+#   gh api -H "Accept: application/vnd.github.raw" \
+#     /repos/InfiniteOC/InfiniteOC/contents/install.sh | sh        # read it first
+# or clone first and run the copy you can read:
+#   gh repo clone InfiniteOC/InfiniteOC ~/.infiniteoc && sh ~/.infiniteoc/install.sh
+# GH_TOKEN/GITHUB_TOKEN work with gh too. On Windows, run this from Git Bash
+# (https://git-scm.com), or use install.ps1 from PowerShell instead. Nothing
+# outside the install directory and the bin directory is touched, and nothing
+# needs administrator: everything is user-local. Read it before piping it to a shell.
 #
 # Environment:
 #   INFINITEOC_DIR       install directory            (default $HOME/.infiniteoc)
 #   INFINITEOC_BIN       where the commands are linked (default $HOME/.local/bin)
-#   INFINITEOC_REPO      git URL                       (default https://github.com/riz3y0/InfiniteOC.git)
+#   INFINITEOC_REPO      git URL                       (default https://github.com/InfiniteOC/InfiniteOC.git)
 #   INFINITEOC_REF       branch to track               (default main)
 #   INFINITEOC_NO_LINK   1 = do not link commands (a package manager provides them)
 #   INFINITEOC_NO_SETUP  1 = do not run the first build (it takes several minutes and downloads dependencies)
@@ -20,7 +27,7 @@ set -eu
 
 DIR=${INFINITEOC_DIR:-$HOME/.infiniteoc}
 BIN=${INFINITEOC_BIN:-$HOME/.local/bin}
-REPO=${INFINITEOC_REPO:-https://github.com/riz3y0/InfiniteOC.git}
+REPO=${INFINITEOC_REPO:-https://github.com/InfiniteOC/InfiniteOC.git}
 REF=${INFINITEOC_REF:-main}
 
 say() { printf '[InfiniteOC] %s\n' "$*"; }
@@ -50,6 +57,15 @@ case "$TARGET" in
   *) die "unsupported platform $TARGET; InfiniteOC runs on Linux, macOS and Windows (x64/arm64)" ;;
 esac
 
+# The repository is private, so cloning and updating need credentials. When the
+# GitHub CLI is installed and signed in (gh auth login), wire it into git's
+# credential helper so plain git clone/fetch authenticate; gh uses
+# GH_TOKEN/GITHUB_TOKEN too. Otherwise git needs its own credentials (a
+# credential helper, or INFINITEOC_REPO set to an SSH URL).
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  gh auth setup-git >/dev/null 2>&1 || true
+fi
+
 if [ -d "$DIR/.git" ]; then
   say "Updating $DIR"
   git -C "$DIR" fetch --quiet origin "$REF"
@@ -58,7 +74,8 @@ elif [ -e "$DIR" ] && [ -n "$(ls -A "$DIR" 2>/dev/null)" ]; then
   die "$DIR exists and is not an InfiniteOC checkout; set INFINITEOC_DIR to another path"
 else
   say "Cloning $REPO into $DIR"
-  git clone --quiet --branch "$REF" "$REPO" "$DIR"
+  git clone --quiet --branch "$REF" "$REPO" "$DIR" ||
+    die "clone failed: $REPO is private; run 'gh auth login' (then 'gh auth setup-git'), set GH_TOKEN, or set INFINITEOC_REPO to an SSH URL"
 fi
 
 # An install is not a development clone: nothing here is ever pushed to the InfiniteOC repository, even when

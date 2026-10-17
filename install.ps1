@@ -1,13 +1,20 @@
 # InfiniteOC installer for Windows PowerShell (5.1 and 7+).
-#   irm https://raw.githubusercontent.com/riz3y0/InfiniteOC/main/install.ps1 | iex
-# Or download it first so you can read it, then run it. Nothing needs
-# administrator: the install directory, the command shims and the PATH entry
-# are all per-user. Read it before running it.
+#
+# The repository is private: only people the owner invited can install it, and
+# cloning needs credentials. The GitHub CLI is the easiest source of them:
+#   gh auth login
+#   (gh api -H "Accept: application/vnd.github.raw" `
+#      /repos/InfiniteOC/InfiniteOC/contents/install.ps1) | iex   # read it first
+# or clone first and run the copy you can read:
+#   gh repo clone InfiniteOC/InfiniteOC "$HOME\.infiniteoc"; & "$HOME\.infiniteoc\install.ps1"
+# GH_TOKEN/GITHUB_TOKEN work with gh too. Nothing needs administrator: the
+# install directory, the command shims and the PATH entry are all per-user.
+# Read it before running it.
 #
 # Environment (or -Dir/-Bin/-Repo/-Ref parameters):
 #   INFINITEOC_DIR       install directory            (default $env:LOCALAPPDATA\InfiniteOC)
 #   INFINITEOC_BIN       where the command shims go    (default <install dir>\bin)
-#   INFINITEOC_REPO      git URL                       (default https://github.com/riz3y0/InfiniteOC.git)
+#   INFINITEOC_REPO      git URL                       (default https://github.com/InfiniteOC/InfiniteOC.git)
 #   INFINITEOC_REF       branch to track               (default main)
 #   INFINITEOC_NO_SETUP  1 = skip the first build (it takes several minutes)
 #   INFINITEOC_PREBUILT  0 = never download a prebuilt binary; always build from source
@@ -29,7 +36,7 @@ if ([string]::IsNullOrEmpty($Dir)) {
   $Dir = Join-Path $localAppData "InfiniteOC"
 }
 if ([string]::IsNullOrEmpty($Bin)) { $Bin = Join-Path $Dir "bin" }
-if ([string]::IsNullOrEmpty($Repo)) { $Repo = "https://github.com/riz3y0/InfiniteOC.git" }
+if ([string]::IsNullOrEmpty($Repo)) { $Repo = "https://github.com/InfiniteOC/InfiniteOC.git" }
 if ([string]::IsNullOrEmpty($Ref)) { $Ref = "main" }
 
 # Administrator is never required. Warn when elevated so a sudo mishap does not
@@ -55,6 +62,18 @@ elseif ($arch -eq "ARM64") { $arch = "arm64" }
 else { Die "unsupported architecture $arch; InfiniteOC runs on x64 and arm64" }
 $Target = "win32-$arch"
 
+# The repository is private, so cloning and updating need credentials. When the
+# GitHub CLI is installed and signed in (gh auth login), wire it into git's
+# credential helper so plain git clone/fetch authenticate; gh uses
+# GH_TOKEN/GITHUB_TOKEN too.
+$gh = Get-Command gh -ErrorAction SilentlyContinue
+if ($gh) {
+  try {
+    & gh auth status *> $null
+    if ($LASTEXITCODE -eq 0) { & gh auth setup-git *> $null }
+  } catch { }
+}
+
 if ((Test-Path (Join-Path $Dir ".git")) -and (Test-Path $Dir)) {
   Say "Updating $Dir"
   & git -C $Dir fetch --quiet origin $Ref
@@ -66,7 +85,7 @@ if ((Test-Path (Join-Path $Dir ".git")) -and (Test-Path $Dir)) {
 } else {
   Say "Cloning $Repo into $Dir"
   & git clone --quiet --branch $Ref $Repo $Dir
-  if ($LASTEXITCODE -ne 0) { Die "git clone failed" }
+  if ($LASTEXITCODE -ne 0) { Die "clone failed: $Repo is private; run 'gh auth login' (then 'gh auth setup-git'), set GH_TOKEN, or set INFINITEOC_REPO to an SSH URL" }
 }
 
 # An install is not a development clone: nothing here is ever pushed to the InfiniteOC repository, even when
