@@ -1,8 +1,9 @@
 // InfiniteOC self-updater: fast-forwards this git checkout to its tracked remote branch. It never
-// touches stock OpenCode, the pinned upstream tag, or a checkout with local commits or edits.
+// touches stock OpenCode or a checkout with local commits or edits. When the update moves the pinned
+// OpenCode tag, that tag is fetched into .upstream first, so a network failure stops before the code moves.
 // The launcher checks at most every six hours (settings.json "updates": {"mode": "auto"|"ask"|"off"}).
 import { spawn } from "node:child_process"
-import { readFile, writeFile, mkdir } from "node:fs/promises"
+import { access, readFile, writeFile, mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { fx } from "./fx.mjs"
 import { isOffline, onBattery } from "./netpower.mjs"
@@ -67,7 +68,19 @@ export async function inspect(home, { fetch = true, tags = false } = {}) {
     fromFull: await git(home, ["rev-parse", "HEAD"]),
     toFull: await git(home, ["rev-parse", "@{u}"]),
     commits: behind ? (await git(home, ["log", "--format=%s", "--max-count=6", "HEAD..@{u}"])).split("\n") : [],
+    pin: behind ? await pinChange(home) : undefined,
     blocked: ahead ? "this checkout has local commits" : dirty ? "this checkout has uncommitted changes" : undefined,
+  }
+}
+
+// The pinned OpenCode tag (infiniteoc.json "upstream") before and after the update, when it changes.
+async function pinChange(home) {
+  const pin = async (ref) => JSON.parse(await git(home, ["show", `${ref}:infiniteoc.json`])).upstream
+  try {
+    const [from, to] = [await pin("HEAD"), await pin("@{u}")]
+    return from !== to && /^v\d+\.\d+\.\d+$/.test(to) ? { from, to } : undefined
+  } catch {
+    return undefined
   }
 }
 
@@ -133,6 +146,7 @@ function banner(ui, info) {
       return { text: `${ui.gradient("•")} ${short}`, plain: `• ${short}` }
     }),
     ...(info.behind > info.commits.length ? [{ text: ui.dim(`… and ${info.behind - info.commits.length} more`), plain: `… and ${info.behind - info.commits.length} more` }] : []),
+    ...(info.pin ? [{ text: `${ui.gradient("◆")} OpenCode ${ui.bold(info.pin.from)} ${ui.dim("→")} ${ui.bold(info.pin.to)}`, plain: `◆ OpenCode ${info.pin.from} → ${info.pin.to}` }] : []),
   ]
   ui.write(`${ui.box(rows)}\n`)
 }
@@ -213,6 +227,13 @@ export async function update({ home, saved, motion = true, explicit = false, str
       return undefined
     }
   }
+  // A moved pin: fetch the new OpenCode tag before the code moves, so a network failure leaves everything as it was.
+  // The build checks it out (launcher pinUpstream); a fresh install without .upstream clones it there.
+  const source = join(home, ".upstream")
+  if (info.pin && await access(join(source, ".git")).then(() => true, () => false))
+    await ui.spin(`Fetching OpenCode ${info.pin.to}`, () => git(source, ["fetch", "--quiet", "--depth", "1", "--no-tags", "origin", "tag", info.pin.to], 180000)).catch((error) => {
+      throw new Error(`InfiniteOC was not updated: fetching OpenCode ${info.pin.to} failed (${error.message}); try again when online`)
+    })
   // The exact commit that was inspected (and verified), not whatever the branch has since become.
   await ui.spin(`Updating to ${info.to}`, () => git(home, ["merge", "--ff-only", "--quiet", info.toFull]))
   await writeState(home, { ...(await readState(home)), pending: { from: info.fromFull, to: info.toFull } })
@@ -226,7 +247,7 @@ export async function update({ home, saved, motion = true, explicit = false, str
  * the commit it was fast-forwarded from and `setup` runs again to rebuild the previous version.
  * Returns { ok, rolledBack?, restored?, code }. Never touches a checkout that moved or changed since the update.
  */
-export async function settle(home, setup, { stream = process.stderr } = {}) {
+export async function settle(home, setup, { stream = process.stderr, motion = true } = {}) {
   const code = await setup()
   const state = await readState(home)
   const pending = state.pending
@@ -235,17 +256,24 @@ export async function settle(home, setup, { stream = process.stderr } = {}) {
     if (pending) await writeState(home, { ...state, pending: undefined })
     return { ok: code === 0, code }
   }
+  const ui = fx(stream, { motion })
+  const [from, to] = [pending.from.slice(0, 7), pending.to.slice(0, 7)]
   const head = await git(home, ["rev-parse", "HEAD"])
   const dirty = await git(home, ["status", "--porcelain", "--untracked-files=no"]) !== ""
   await writeState(home, { ...state, pending: undefined })
+  ui.write("\n")
   if (head !== pending.to || dirty) {
-    stream.write(`[InfiniteOC] The update failed to build, but this checkout changed since the update, so it was not rolled back\n`)
+    ui.write(`${ui.fail(`Update ${to} did not build (exit ${code}); this checkout changed since the update, so it was not rolled back`)}\n`)
     return { ok: false, code }
   }
-  await git(home, ["reset", "--hard", "--quiet", pending.from])
+  ui.write(`${ui.fail(`Update ${to} did not build (exit ${code}); its output is above`)}\n`)
+  await ui.spin(`Rolling back to ${from}`, () => git(home, ["reset", "--hard", "--quiet", pending.from]))
   await writeState(home, { ...(await readState(home)), skip: pending.to, rolledBack: { ...pending, at: new Date().toISOString() } })
-  stream.write(`[InfiniteOC] The update did not build (exit ${code}); rolled back to ${pending.from.slice(0, 7)} and rebuilding it\n`)
+  await ui.shimmer(`◆ Rebuilding ${from}`, { duration: 500 })
   const restored = (await setup()) === 0
-  stream.write(restored ? `[InfiniteOC] Previous version restored. The failed update ${pending.to.slice(0, 7)} will not be retried automatically; run infiniteoc update to try again\n` : `[InfiniteOC] Rolled back to ${pending.from.slice(0, 7)}, but rebuilding it also failed; run infiniteoc doctor --fix\n`)
+  const rows = restored
+    ? [`${from} is back and built. ${to} will not be retried automatically.`, "infiniteoc update tries it again."]
+    : [`Rolled back to ${from}, but rebuilding it also failed.`, "infiniteoc doctor --fix repairs tools and the build."]
+  ui.write(`${restored ? ui.ok("Previous version restored") : ui.fail("Previous version did not rebuild")}\n${ui.box(rows.map((text) => ({ text: ui.dim(text), plain: text })))}\n`)
   return { ok: false, rolledBack: true, restored, code }
 }

@@ -184,11 +184,12 @@ test("uninstall, upgrade and update are refused before anything is prepared", as
   assert.equal(self.status, 1)
   assert.match(self.stderr, /git not found on PATH|not a git checkout/)
   assert.ok(!self.stderr.includes("refused"), self.stderr)
-  // Only the subcommand position counts, and a root flag's value is not one; these launches get as far as bootstrap (no npm on the fake PATH).
+  // Only the subcommand position counts, and a root flag's value is not one; these launches get as far as bootstrap
+  // (fetching the pinned source; no git on the fake PATH).
   for (const args of [["--print-logs", "run", "update"], ["--prompt", "update"]]) {
     const run = cli(base, args)
     assert.equal(run.status, 1, args.join(" "))
-    assert.match(run.stderr, /npm not found on PATH/)
+    assert.match(run.stderr, /Fetching OpenCode v2\.0\.21[\s\S]*git not found on PATH/)
     assert.ok(!run.stderr.includes("refused"), run.stderr)
   }
 })
@@ -267,12 +268,59 @@ test("a missing build and an MCP path that does not exist are warnings, and doct
 
 test("a bun that cannot run is bootstrapped again", async t => {
   const base = await install(t)
+  await bootstrapped(base)
   await script(path.join(base, ".tools/node_modules/.bin/bun"), "exit 1")
   await script(path.join(base, "fake-bin/npm"), `echo "$@" > "$0.args"; exit 1`)
   const result = cli(base, ["setup"])
   assert.equal(result.status, 1)
   assert.match(result.stderr, /\[InfiniteOC\] npm install failed \(exit 1\)/)
   assert.match(await readFile(path.join(base, "fake-bin/npm.args"), "utf8"), /^install --prefix .+ bun@1\.4\.2$/m)
+})
+
+test("bun older than the pinned source's packageManager is updated; a newer one is kept", async t => {
+  const base = await install(t)
+  await bootstrapped(base)
+  await writeFile(path.join(base, ".upstream/package.json"), JSON.stringify({ version: "2.0.21", packageManager: "bun@1.5.0" }))
+  await script(path.join(base, "fake-bin/npm"), `echo "$@" > "$0.args"; exit 1`)
+  const result = cli(base, ["setup"])
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Updating Bun 1\.4\.2 → 1\.5\.0/)
+  assert.match(await readFile(path.join(base, "fake-bin/npm.args"), "utf8"), /bun@1\.5\.0$/m)
+  await writeFile(path.join(base, ".upstream/package.json"), JSON.stringify({ version: "2.0.21", packageManager: "bun@1.4.1" }))
+  await rm(path.join(base, "fake-bin/npm.args"))
+  cli(base, ["setup"])
+  await assert.rejects(stat(path.join(base, "fake-bin/npm.args")), { code: "ENOENT" })
+})
+
+test("a moved pin moves the pristine source; a source with local changes is refused", async t => {
+  const dir = await lab(t)
+  const git = (cwd, ...args) => spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } })
+  // A stand-in for the OpenCode repository with two release tags.
+  const origin = path.join(dir, "origin")
+  await mkdir(origin)
+  git(origin, "init", "-q", "-b", "dev")
+  for (const version of ["2.0.21", "2.0.32"]) {
+    await writeFile(path.join(origin, "package.json"), JSON.stringify({ version }))
+    git(origin, "add", "-A")
+    git(origin, "commit", "-qm", version)
+    git(origin, "tag", `v${version}`)
+  }
+  const upstream = path.join(dir, ".upstream")
+  git(dir, "clone", "-q", "--depth", "1", "--branch", "v2.0.21", pathToFileURL(origin).href, upstream)
+  const { pinUpstream } = await import("../src/launcher.mjs")
+  const quiet = { spin: (label, task) => task() }
+  await pinUpstream(upstream, "v2.0.32", quiet)
+  assert.equal(JSON.parse(await readFile(path.join(upstream, "package.json"), "utf8")).version, "2.0.32")
+  // A rollback pins the earlier tag again.
+  await pinUpstream(upstream, "v2.0.21", quiet)
+  assert.equal(JSON.parse(await readFile(path.join(upstream, "package.json"), "utf8")).version, "2.0.21")
+  await writeFile(path.join(upstream, "edited.ts"), "mine")
+  await assert.rejects(pinUpstream(upstream, "v2.0.32", quiet), /has local changes, so it was not moved from v2\.0\.21 to v2\.0\.32/)
+  assert.equal(await readFile(path.join(upstream, "edited.ts"), "utf8"), "mine")
+  await rm(path.join(upstream, "edited.ts"))
+  // A tag that does not exist fails with git's own reason, and the source stays where it was.
+  await assert.rejects(pinUpstream(upstream, "v9.9.9", quiet), /git failed \(exit 128\)\n.*couldn't find remote ref refs\/tags\/v9\.9\.9/)
+  assert.equal(JSON.parse(await readFile(path.join(upstream, "package.json"), "utf8")).version, "2.0.21")
 })
 
 test("launch keeps --server, runs without the daemon, warns about Tor and exits", async t => {

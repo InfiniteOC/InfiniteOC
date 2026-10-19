@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { fx } from "../src/fx.mjs"
 import { readdir, readFile } from "node:fs/promises"
 import { spawnSync } from "node:child_process"
 import { join } from "node:path"
@@ -287,10 +288,12 @@ Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
     const saved = await loadSettings(settingsFile()).catch(error => { throw new Error(`${settingsFile()}: ${error.message}. Fix or delete it to restore defaults.`) })
     const summary = await update({ home, saved, explicit: true, motion: !settings.options?.reducedMotion })
     // If the new version does not build, the checkout returns to the previous commit and that is rebuilt.
-    if (summary) process.exitCode = (await settle(home, () => run(process.execPath, [join(home, "bin/infiniteoc.mjs"), "setup"]))).ok ? 0 : 1
+    if (summary) process.exitCode = (await settle(home, () => run(process.execPath, [join(home, "bin/infiniteoc.mjs"), "setup"]), { motion: !settings.options?.reducedMotion })).ok ? 0 : 1
   } else if (["setup", "rebuild"].includes(args[0])) {
     const result = await prepare(settings, args[0] === "rebuild", { clean: args[0] === "rebuild" && args.includes("--clean") })
-    console.log(`[InfiniteOC] Ready: ${result.binary}`)
+    // Scripts read stdout; a terminal gets the same line with a check mark.
+    if (process.stdout.isTTY) console.log(fx(process.stdout, { motion: false }).ok(`Ready: ${result.binary}`))
+    else console.log(`[InfiniteOC] Ready: ${result.binary}`)
   } else {
     const forwarded = args[0] === "--" ? args.slice(1) : args
     // Upstream uninstall deletes the data, config and sessions shared with stock OpenCode; upgrade reinstalls stock OpenCode.
@@ -317,6 +320,10 @@ Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
     } else process.exitCode = await launch(forwarded, settings)
   }
 } catch (error) {
-  console.error(`[InfiniteOC] ${error.message}`)
+  // A terminal gets the first line as a red cross and the rest (a failed tool's output) dimmed below it.
+  const ui = fx(process.stderr, { motion: false })
+  const [first, ...rest] = error.message.split("\n")
+  if (ui.color) console.error(`${ui.fail(first)}${rest.length ? `\n${ui.dim(rest.map((line) => `  ${line}`).join("\n"))}` : ""}`)
+  else console.error(`[InfiniteOC] ${error.message}`)
   process.exitCode = error.exitCode ?? 1
 }

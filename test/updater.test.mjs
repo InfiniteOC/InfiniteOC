@@ -164,3 +164,37 @@ test("requireSigned refuses an unsigned target and accepts a signed commit or ta
   assert.match(await update({ home, saved, explicit: true, stream: sink() }), /\(1 commit\)$/)
   assert.equal(await verifyTarget(home, "HEAD"), "signed tag v1")
 })
+
+test("an update that moves the OpenCode pin fetches the new tag first, and does not move the code when that fails", async (t) => {
+  const { home, upstream, root } = await checkouts(t)
+  // A stand-in OpenCode repository with two tags, and the install's .upstream cloned at the old one.
+  const opencode = join(root, "opencode")
+  git(root, "init", "--quiet", "-b", "dev", opencode)
+  for (const version of ["2.0.21", "2.0.32"]) {
+    await writeFile(join(opencode, "package.json"), JSON.stringify({ version }))
+    git(opencode, "add", ".")
+    git(opencode, "commit", "--quiet", "-m", version)
+    git(opencode, "tag", `v${version}`)
+  }
+  git(root, "clone", "--quiet", "--depth", "1", "--branch", "v2.0.21", `file://${opencode}`, join(home, ".upstream"))
+  const pin = async (tag, message) => {
+    await writeFile(join(upstream, "infiniteoc.json"), JSON.stringify({ upstream: tag, mods: [] }))
+    git(upstream, "add", ".")
+    git(upstream, "commit", "--quiet", "-m", message)
+    git(upstream, "push", "--quiet")
+  }
+  await pin("v2.0.21", "Pin")
+  git(home, "pull", "--quiet", "--ff-only")
+  await pin("v9.9.9", "Bump to a tag that does not exist")
+  const before = git(home, "rev-parse", "HEAD")
+  const failed = sink()
+  await assert.rejects(update({ home, saved: {}, explicit: true, stream: failed }), /InfiniteOC was not updated: fetching OpenCode v9\.9\.9 failed/)
+  assert.match(failed.text, /◆ OpenCode v2\.0\.21 → v9\.9\.9/)
+  assert.equal(git(home, "rev-parse", "HEAD"), before, "the code did not move")
+  await pin("v2.0.32", "Bump OpenCode")
+  const stream = sink()
+  assert.match(await update({ home, saved: {}, explicit: true, stream }), /\(2 commits\)$/)
+  assert.match(stream.text, /Fetching OpenCode v2\.0\.32/)
+  // The tag is local now; the build's pinUpstream checks it out without the network.
+  assert.equal(git(join(home, ".upstream"), "rev-parse", "--verify", "--quiet", "refs/tags/v2.0.32^{commit}").length, 40)
+})

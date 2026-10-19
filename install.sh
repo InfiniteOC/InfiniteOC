@@ -30,8 +30,45 @@ BIN=${INFINITEOC_BIN:-$HOME/.local/bin}
 REPO=${INFINITEOC_REPO:-https://github.com/InfiniteOC/InfiniteOC.git}
 REF=${INFINITEOC_REF:-main}
 
-say() { printf '[InfiniteOC] %s\n' "$*"; }
-die() { printf '[InfiniteOC] %s\n' "$*" >&2; exit 1; }
+# Colors and a spinner on a terminal (not with NO_COLOR or TERM=dumb); plain [InfiniteOC] lines otherwise.
+if [ -t 2 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
+  FX=1 P=$(printf '\033[38;2;192;132;252m') K=$(printf '\033[38;2;244;114;182m') G=$(printf '\033[38;2;134;239;172m') R=$(printf '\033[38;2;252;165;165m') D=$(printf '\033[2m') N=$(printf '\033[0m')
+else
+  FX=0 P='' K='' G='' R='' D='' N=''
+fi
+say() { if [ "$FX" = 1 ]; then printf '%s◆%s %s\n' "$P" "$N" "$*"; else printf '[InfiniteOC] %s\n' "$*"; fi; }
+die() { if [ "$FX" = 1 ]; then printf '%s✗%s %s\n' "$R" "$N" "$*" >&2; else printf '[InfiniteOC] %s\n' "$*" >&2; fi; exit 1; }
+# step LABEL COMMAND...: runs COMMAND with its output in a log, behind a spinner on a terminal. Ends with a
+# check mark, or a cross and the log's last lines (then returns COMMAND's status).
+step() {
+  label=$1; shift
+  log=$(mktemp "${TMPDIR:-/tmp}/infiniteoc-install.XXXXXX")
+  if [ "$FX" = 1 ]; then
+    "$@" >"$log" 2>&1 &
+    pid=$! i=0
+    printf '\033[?25l' >&2
+    while kill -0 "$pid" 2>/dev/null; do
+      case $((i % 10)) in 0) f=⠋ ;; 1) f=⠙ ;; 2) f=⠹ ;; 3) f=⠸ ;; 4) f=⠼ ;; 5) f=⠴ ;; 6) f=⠦ ;; 7) f=⠧ ;; 8) f=⠇ ;; *) f=⠏ ;; esac
+      printf '\r\033[2K%s%s%s %s %s%ss%s' "$K" "$f" "$N" "$label" "$D" "$((i / 10))" "$N" >&2
+      i=$((i + 1))
+      sleep 0.1
+    done
+    if wait "$pid"; then code=0; else code=$?; fi
+    printf '\r\033[2K\033[?25h' >&2
+  else
+    printf '[InfiniteOC] %s...\n' "$label" >&2
+    if "$@" >"$log" 2>&1; then code=0; else code=$?; fi
+  fi
+  if [ "$code" = 0 ]; then
+    if [ "$FX" = 1 ]; then printf '%s✓%s %s\n' "$G" "$N" "$label" >&2; fi
+  else
+    if [ "$FX" = 1 ]; then printf '%s✗%s %s\n' "$R" "$N" "$label" >&2; else printf '[InfiniteOC] %s failed\n' "$label" >&2; fi
+    tail -n 15 "$log" | sed "s/^/  $D/;s/\$/$N/" >&2
+  fi
+  rm -f "$log"
+  return "$code"
+}
+[ "$FX" = 1 ] && printf '\n%s◆ Infinite%sOC%s %sinstaller%s\n\n' "$P" "$K" "$N" "$D" "$N"
 
 command -v git >/dev/null 2>&1 || die "git is required (https://git-scm.com)"
 command -v node >/dev/null 2>&1 || die "Node.js 22 or newer is required (https://nodejs.org)"
@@ -67,14 +104,14 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
 fi
 
 if [ -d "$DIR/.git" ]; then
+  # InfiniteOC's own updater: it fetches a moved OpenCode pin before the code moves, rebuilds, and rolls back to
+  # the previous version if the new one does not build.
   say "Updating $DIR"
-  git -C "$DIR" fetch --quiet origin "$REF"
-  git -C "$DIR" merge --ff-only --quiet "origin/$REF" || die "$DIR has local changes or commits; update it yourself with git"
+  node "$DIR/bin/infiniteoc.mjs" update || die "update failed; $DIR is unchanged or back on its previous version (see above)"
 elif [ -e "$DIR" ] && [ -n "$(ls -A "$DIR" 2>/dev/null)" ]; then
   die "$DIR exists and is not an InfiniteOC checkout; set INFINITEOC_DIR to another path"
 else
-  say "Cloning $REPO into $DIR"
-  git clone --quiet --branch "$REF" "$REPO" "$DIR" ||
+  step "Cloning $REPO into $DIR" git clone --quiet --branch "$REF" "$REPO" "$DIR" ||
     die "clone failed: $REPO is private; run 'gh auth login' (then 'gh auth setup-git'), set GH_TOKEN, or set INFINITEOC_REPO to an SSH URL"
 fi
 

@@ -96,20 +96,55 @@ export async function config(base = home) {
     throw new Error("must contain an exact upstream tag and mods array")
   } catch (error) { throw new Error(`${file}: ${error.message}`) }
 }
-export async function bootstrap(settings) {
-  const upstream = join(home, ".upstream")
-  let bun = await resolveBun()
-  if (!await bunVersion(bun)) {
-    await checked(...npmCommand(["install", "--prefix", join(home, ".tools"), "--ignore-scripts", "bun@1.4.2"]))
-    await checked(process.execPath, ["install.js"], { cwd: join(home, ".tools/node_modules/bun") })
-    bun = await resolveBun()
-  }
+// Runs a tool behind a spinner with its output captured: a failure carries the output's last lines.
+async function quiet(ui, label, command, args, options = {}) {
+  let text = ""
+  return ui.spin(label, () => checked(command, args, { ...options, output: chunk => { text += chunk } }).catch(error => {
+    const tail = text.trim().split("\n").slice(-12).join("\n")
+    if (tail && !error.exitCode) error.message += `\n${tail}`
+    throw error
+  }))
+}
+const UPSTREAM_URL = "https://github.com/sst/opencode.git"
+const sourceVersion = upstream => readFile(join(upstream, "package.json"), "utf8").then(text => `v${JSON.parse(text).version}`, () => undefined)
+const older = (version, than) => {
+  const [a, b] = [version, than].map(value => value.split(/[.-]/).slice(0, 3).map(Number))
+  for (let index = 0; index < 3; index++) if (a[index] !== b[index]) return a[index] < b[index]
+  return false
+}
+/**
+ * Puts the pinned OpenCode source at `tag`. .upstream is pristine source nobody edits (mods patch a copy), so
+ * moving it to the tag an update or a rollback pins loses nothing; a tree with local changes is refused instead.
+ */
+export async function pinUpstream(upstream, tag, ui = fx(process.stderr, { motion: !reducedMotion })) {
+  const found = await exists(join(upstream, ".git")) ? await sourceVersion(upstream) : undefined
   if (!await exists(join(upstream, ".git")))
     // LF line endings everywhere: Git for Windows defaults to autocrlf, and CRLF would break every multi-line mod anchor.
-    await checked("git", ["clone", "--config", "core.autocrlf=false", "--depth", "1", "--branch", settings.upstream, "https://github.com/sst/opencode.git", upstream])
+    await quiet(ui, `Fetching OpenCode ${tag}`, "git", ["clone", "--quiet", "--config", "core.autocrlf=false", "--depth", "1", "--branch", tag, UPSTREAM_URL, upstream])
+  else if (found !== tag) {
+    let changed = ""
+    await run("git", ["-C", upstream, "status", "--porcelain"], { output: chunk => { changed += chunk } })
+    if (changed.trim()) throw new Error(`${upstream} has local changes, so it was not moved from ${found ?? "its version"} to ${tag}. It must stay pristine (mods patch a copy): discard them with git -C ${upstream} checkout -- . && git -C ${upstream} clean -fd, or delete the folder, then run infiniteoc setup`)
+    await quiet(ui, `Moving OpenCode ${found ?? "source"} → ${tag}`, "git", ["-C", upstream, "fetch", "--quiet", "--depth", "1", "--no-tags", "origin", "tag", tag])
+    await quiet(ui, `Checking out OpenCode ${tag}`, "git", ["-C", upstream, "-c", "advice.detachedHead=false", "checkout", "--quiet", tag])
+  }
+  const version = await sourceVersion(upstream)
+  if (version !== tag) throw new Error(`Source in ${upstream} is ${version ?? "unreadable"}, config requests ${tag}. Delete ${upstream} and run infiniteoc setup to fetch it again.`)
+}
+export async function bootstrap(settings) {
+  const upstream = join(home, ".upstream")
+  const ui = fx(process.stderr, { motion: !reducedMotion })
+  await pinUpstream(upstream, settings.upstream, ui)
+  // The Bun the pinned source declares (packageManager); an older or broken one under .tools is replaced.
   const pkg = JSON.parse(await readFile(join(upstream, "package.json"), "utf8"))
-  if (`v${pkg.version}` !== settings.upstream)
-    throw new Error(`Source is v${pkg.version}, config requests ${settings.upstream}. Use a matching tag; no automatic destructive update.`)
+  const wanted = /^bun@(\d+\.\d+\.\d+)$/.exec(pkg.packageManager ?? "")?.[1] ?? "1.4.2"
+  let bun = await resolveBun()
+  const have = await bunVersion(bun)
+  if (!have || older(have, wanted)) {
+    await quiet(ui, have ? `Updating Bun ${have} → ${wanted}` : `Installing Bun ${wanted}`, ...npmCommand(["install", "--prefix", join(home, ".tools"), "--ignore-scripts", `bun@${wanted}`]))
+    await quiet(ui, "Unpacking Bun", process.execPath, ["install.js"], { cwd: join(home, ".tools/node_modules/bun") })
+    bun = await resolveBun()
+  }
   return { upstream, bun }
 }
 export async function fingerprint(settings, mods) {

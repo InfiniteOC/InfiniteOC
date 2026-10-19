@@ -28,8 +28,42 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function Say([string]$Message) { Write-Host "[InfiniteOC] $Message" }
-function Die([string]$Message) { Write-Error "[InfiniteOC] $Message"; exit 1 }
+# Colors and a spinner in an interactive console (not with NO_COLOR or redirected output); plain lines otherwise.
+$Fx = -not $env:NO_COLOR -and -not [Console]::IsOutputRedirected
+function Say([string]$Message) {
+  if ($Fx) { Write-Host "◆ " -ForegroundColor Magenta -NoNewline; Write-Host $Message } else { Write-Host "[InfiniteOC] $Message" }
+}
+function Die([string]$Message) {
+  if ($Fx) { Write-Host "✗ " -ForegroundColor Red -NoNewline; Write-Host $Message }
+  Write-Error "[InfiniteOC] $Message"; exit 1
+}
+# Runs a command with its output in a log behind a spinner; a check mark, or a cross with the log's last lines.
+# Returns the command's exit code.
+function Step([string]$Label, [string]$Command, [string[]]$Arguments) {
+  $log = [IO.Path]::GetTempFileName()
+  $err = [IO.Path]::GetTempFileName()
+  $process = Start-Process -FilePath $Command -ArgumentList $Arguments -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError $err
+  $frames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".ToCharArray()
+  $i = 0
+  if (-not $Fx) { Write-Host "[InfiniteOC] $Label..." }
+  while (-not $process.HasExited) {
+    if ($Fx) { Write-Host ("`r" + $frames[$i % 10] + " $Label " + [int]($i / 10) + "s") -NoNewline -ForegroundColor Magenta }
+    $i++
+    Start-Sleep -Milliseconds 100
+  }
+  $process.WaitForExit()
+  $code = $process.ExitCode
+  if ($Fx) { Write-Host ("`r" + (" " * ($Label.Length + 12)) + "`r") -NoNewline }
+  if ($code -eq 0) {
+    if ($Fx) { Write-Host "✓ " -ForegroundColor Green -NoNewline; Write-Host $Label }
+  } else {
+    if ($Fx) { Write-Host "✗ " -ForegroundColor Red -NoNewline; Write-Host $Label } else { Write-Host "[InfiniteOC] $Label failed" }
+    Get-Content $log, $err -ErrorAction SilentlyContinue | Select-Object -Last 15 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+  }
+  Remove-Item $log, $err -ErrorAction SilentlyContinue
+  return $code
+}
+if ($Fx) { Write-Host ""; Write-Host "◆ Infinite" -ForegroundColor Magenta -NoNewline; Write-Host "OC" -ForegroundColor Red -NoNewline; Write-Host " installer" -ForegroundColor DarkGray; Write-Host "" }
 
 if ([string]::IsNullOrEmpty($Dir)) {
   $localAppData = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { Join-Path $HOME "AppData\Local" }
@@ -75,17 +109,16 @@ if ($gh) {
 }
 
 if ((Test-Path (Join-Path $Dir ".git")) -and (Test-Path $Dir)) {
+  # InfiniteOC's own updater: it fetches a moved OpenCode pin before the code moves, rebuilds, and rolls back to
+  # the previous version if the new one does not build.
   Say "Updating $Dir"
-  & git -C $Dir fetch --quiet origin $Ref
-  if ($LASTEXITCODE -ne 0) { Die "git fetch failed" }
-  & git -C $Dir merge --ff-only --quiet "origin/$Ref"
-  if ($LASTEXITCODE -ne 0) { Die "$Dir has local changes or commits; update it yourself with git" }
+  & node "$Dir\bin\infiniteoc.mjs" update
+  if ($LASTEXITCODE -ne 0) { Die "update failed; $Dir is unchanged or back on its previous version (see above)" }
 } elseif ((Test-Path $Dir) -and ((Get-ChildItem $Dir -Force | Measure-Object).Count -gt 0)) {
   Die "$Dir exists and is not an InfiniteOC checkout; set INFINITEOC_DIR to another path"
 } else {
-  Say "Cloning $Repo into $Dir"
-  & git clone --quiet --branch $Ref $Repo $Dir
-  if ($LASTEXITCODE -ne 0) { Die "clone failed: $Repo is private; run 'gh auth login' (then 'gh auth setup-git'), set GH_TOKEN, or set INFINITEOC_REPO to an SSH URL" }
+  $cloned = Step "Cloning $Repo into $Dir" "git" @("clone", "--quiet", "--branch", $Ref, $Repo, "`"$Dir`"")
+  if ($cloned -ne 0) { Die "clone failed: $Repo is private; run 'gh auth login' (then 'gh auth setup-git'), set GH_TOKEN, or set INFINITEOC_REPO to an SSH URL" }
 }
 
 # An install is not a development clone: nothing here is ever pushed to the InfiniteOC repository, even when
