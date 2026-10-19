@@ -70,6 +70,13 @@ is launched. If that build fails, the checkout goes back to the commit it came f
 notice says so; the failed commit is not retried automatically (`infiniteoc update` retries). A checkout that
 changed after the update is never reset.
 
+An update that moves the pinned OpenCode tag (`"upstream"` in infiniteoc.json) shows it in the update box and
+fetches that tag into `.upstream` before the code moves, so a network failure leaves everything as it was. The
+build then checks the pristine `.upstream` out at the pinned tag (a rollback pins the previous one again) and
+installs the Bun version the source declares when the one under `.tools` is older. A `.upstream` with local
+edits is never moved; the error says how to restore it. Re-running `install.sh` / `install.ps1` over an install
+goes through the same updater.
+
 `"updates": {"requireSigned": true}` makes the updater fast-forward only to a target that `git verify-commit`
 accepts, or that carries a tag `git verify-tag` accepts (tags are fetched for this). It uses your git/gpg
 setup; InfiniteOC creates no keys. An unsigned target is refused with the reason.
