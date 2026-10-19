@@ -25,7 +25,7 @@ try {
     console.log(`InfiniteOC — source-backed OpenCode mod launcher
 
   infiniteoc setup               Fetch dependencies, apply mods, build isolated CLI
-  infiniteoc rebuild             Reapply mods from pristine source and rebuild
+  infiniteoc rebuild [--clean]   Reapply mods from pristine source and rebuild (--clean: also reinstall dependencies, drop web UI caches)
   infiniteoc wizard              Re-run the first-run setup (provider, model, theme, updates, ponytail)
   infiniteoc team [trust|revoke] Show or approve the project's infiniteoc.team.json
   infiniteoc update              Fast-forward this checkout to its remote branch, then rebuild
@@ -289,7 +289,7 @@ Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
     // If the new version does not build, the checkout returns to the previous commit and that is rebuilt.
     if (summary) process.exitCode = (await settle(home, () => run(process.execPath, [join(home, "bin/infiniteoc.mjs"), "setup"]))).ok ? 0 : 1
   } else if (["setup", "rebuild"].includes(args[0])) {
-    const result = await prepare(settings, args[0] === "rebuild")
+    const result = await prepare(settings, args[0] === "rebuild", { clean: args[0] === "rebuild" && args.includes("--clean") })
     console.log(`[InfiniteOC] Ready: ${result.binary}`)
   } else {
     const forwarded = args[0] === "--" ? args.slice(1) : args

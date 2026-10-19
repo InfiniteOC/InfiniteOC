@@ -65,6 +65,7 @@ turn them on. The server listens on 127.0.0.1 only; the page's API needs the ran
 ## Builds and launches
 
 - A launch rebuilds only when `infiniteoc.json`, the framework or a mod changed; the build prints its reason, timed `[1/4]`…`[4/4]` steps and `Ready in Ns`.
+- Rebuilds are incremental: the generated tree is synced back to the pinned source (only files mods touched are restored, `node_modules` stays), and the web UI archive is reused when nothing it is built from changed, or per compressed file otherwise. The source tree and the embedded web UI archive are byte-identical to a clean build's; `infiniteoc rebuild --clean` starts from nothing.
 - `.runtime/prepare.lock` heals itself: a dead owner's lock (or a pid-less one older than 30 minutes) is reclaimed, a second launch waits and reuses the fresh build, and Ctrl+C removes it.
 - Each successful build is kept in `.runtime/last-good`. If a build or mod fails at launch, that build starts instead, without mod hooks; fix the mod, then `infiniteoc rebuild`.
 - That fallback, an unavailable opendaemon, or an unreachable Tor/SOCKS listener never stops a launch: it is printed and shown again as a TUI warning toast.

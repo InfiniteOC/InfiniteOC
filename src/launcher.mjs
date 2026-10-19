@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process"
-import { access, readFile, writeFile, mkdir, cp, rm, stat, link, copyFile } from "node:fs/promises"
+import { access, readFile, writeFile, mkdir, rm, stat, link, copyFile } from "node:fs/promises"
 import { createWriteStream, rmSync } from "node:fs"
 import { resolve, join, dirname, basename } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -25,6 +25,7 @@ import {
 } from "./platform.mjs"
 import { installDaemonTool } from "./opendaemon-tool.mjs"
 import { installExportTool } from "./export-tool.mjs"
+import { archivePath, keepArchive, patchAppAssets, pruneBrotli, syncTree, webKey } from "./build-cache.mjs"
 import { update, settle } from "./updater.mjs"
 import { fx } from "./fx.mjs"
 import { needsWizard, runWizard, terminalIO } from "./wizard.mjs"
@@ -165,7 +166,8 @@ async function step(label, task, streams = false, progress) {
   process.stderr.write(`[InfiniteOC] ${label}…${streams ? "\n" : ""}`)
   try { return await task() } finally { process.stderr.write(`${streams ? `[InfiniteOC] ${label} ` : " "}${seconds(started)}\n`) }
 }
-export async function prepare(settings, force = false) {
+// `clean` (infiniteoc rebuild --clean) also discards node_modules and the web UI caches.
+export async function prepare(settings, force = false, { clean = false } = {}) {
   reducedMotion = !!settings.options?.reducedMotion
   if (!supported) throw new Error(`Unsupported platform ${target}; InfiniteOC builds on Linux, macOS and Windows (x64/arm64)`)
   const { upstream, bun } = await bootstrap(settings)
@@ -215,9 +217,12 @@ export async function prepare(settings, force = false) {
       ui.write(`${ui.dim(`  ${reason}`)}\n`)
     } else console.error(`[InfiniteOC] Building: ${reason}`)
     await rm(marker, { force: true })
-    await timed("[1/4] Copying pinned source", async () => {
-      await rm(root, { recursive: true, force: true })
-      await cp(upstream, root, { recursive: true, filter: file => ![".git", "node_modules"].includes(basename(file)) })
+    const cache = join(runtime, "cache")
+    // The tree is synced, not recopied: only files mods touched are restored and node_modules stays,
+    // so dependency installation finds nothing to do (src/build-cache.mjs).
+    await timed("[1/4] Syncing pinned source", async () => {
+      if (clean) await Promise.all([root, cache].map(dir => rm(dir, { recursive: true, force: true })))
+      await syncTree(upstream, root)
     })
     const applied = await timed(`[2/4] Applying ${mods.length} mod(s)`, async () => {
       // With INFINITEOC=1 every ServerConnection.resolve caller starts a private server, so the
@@ -254,10 +259,29 @@ export async function prepare(settings, force = false) {
     const env = { ...process.env, PATH: prependPath(dirname(bun), process.env.PATH), HUSKY: "0", OPENCODE_CHANNEL: "infiniteoc", OPENCODE_VERSION: `${settings.upstream.slice(1)}-infiniteoc` }
     // The web UI (packages/app, a vite build embedded in the binary) is opt-in: it makes every build slower and hungrier.
     const webUi = settings.options?.webUi === true
+    // Its archive is reused whole when its inputs match an earlier build, else per brotli-compressed file.
+    let web
+    if (webUi) {
+      const assets = join(root, "packages/cli/script/app-assets.ts")
+      const patched = patchAppAssets(await readFile(assets, "utf8").catch(() => ""))
+      if (patched) {
+        await writeFile(assets, patched)
+        const key = await webKey(root, { env, bun: await bunVersion(bun) })
+        web = { key, archive: archivePath(cache, key), brotli: join(cache, `brotli-${settings.upstream}`) }
+        web.reused = await exists(web.archive)
+        Object.assign(env, { INFINITEOC_APP_ARCHIVE: web.archive, INFINITEOC_BROTLI_CACHE: web.brotli })
+      } else console.error("[InfiniteOC] Web UI build cache off: upstream app-assets.ts changed; this build compresses every asset")
+    }
     await timed("[3/4] Installing dependencies", output => checked(bun, ["install", "--frozen-lockfile"], { cwd: root, env, ...sink(output) }), true)
-    await timed(`[4/4] Building ${target}${webUi ? " with the web UI" : ""}`, output => checked(bun, ["run", "script/build.ts", "--single", "--skip-install", ...(webUi ? [] : ["--skip-web-ui"])], { cwd: join(root, "packages/cli"), env, ...sink(output) }), true)
+    const building = Date.now()
+    await timed(`[4/4] Building ${target}${webUi ? ` with the web UI${web?.reused ? " (unchanged, reused)" : ""}` : ""}`, output => checked(bun, ["run", "script/build.ts", "--single", "--skip-install", ...(webUi ? [] : ["--skip-web-ui"])], { cwd: join(root, "packages/cli"), env, ...sink(output) }), true)
     const builtBinary = await resolveBinary()
     if (!builtBinary) throw new Error(`Build missing expected ${target} artifact`)
+    // Best-effort like last-good below: a cache that cannot be written only makes the next build slower.
+    if (web && !web.reused) try {
+      await keepArchive(join(root, "packages/cli/.cache/bun-app-archive.bin"), cache, web.key)
+      await pruneBrotli(web.brotli, building)
+    } catch (error) { console.error(`[InfiniteOC] Could not keep the web UI build for reuse: ${error.message}`) }
     manifest = { key, upstream: settings.upstream, builtAt: new Date().toISOString(), mods: mods.map(mod => mod.id), webUi, changes: applied.changes, timings }
     await writeFile(marker, JSON.stringify(manifest, null, 2))
     // launch() falls back to this when a later build fails; a hardlink survives the next rm of root.

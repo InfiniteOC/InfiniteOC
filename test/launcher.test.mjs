@@ -386,7 +386,7 @@ test("setup builds in four steps, keeps a last good fallback, and the idle resul
   }
   const setup = cli(base, ["setup"])
   assert.equal(setup.status, 0, setup.stderr)
-  for (const text of ["Building: no finished build yet", "[1/4] Copying pinned source", "[2/4] Applying 0 mod(s)", "[3/4] Installing dependencies", `[4/4] Building ${process.platform}-${process.arch}`, "Ready in"])
+  for (const text of ["Building: no finished build yet", "[1/4] Syncing pinned source", "[2/4] Applying 0 mod(s)", "[3/4] Installing dependencies", `[4/4] Building ${process.platform}-${process.arch}`, "Ready in"])
     assert.ok(setup.stderr.includes(text), `${text}\n${setup.stderr}`)
   await kept()
   const before = (await stat(binary)).ino
