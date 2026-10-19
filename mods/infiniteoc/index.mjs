@@ -81,6 +81,9 @@ export default {
   }),
 })`))
     await api.patch("packages/core/src/plugin/agent.ts", (source) => {
+      // The subagents below merge permission rulesets; upstream stopped importing Permission here in v2.0.32.
+      if (!source.includes('import { Permission } from "../permission.js"'))
+        source = replace(source, 'import { Agent } from "../agent.js"\n', 'import { Agent } from "../agent.js"\nimport { Permission } from "../permission.js"\n')
       source = replace(source,
         '"General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel."',
         '"Implementation worker for a bounded, well-specified change or multi-step task in files you assign. Give it the goal, owned files, constraints and the checks that define done; it reports changed files and check results. Run several in parallel only on non-overlapping files."')

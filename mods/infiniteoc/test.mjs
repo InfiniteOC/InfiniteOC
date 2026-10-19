@@ -41,6 +41,9 @@ test("applies against local source, preserving all permission-rule code", async 
     assert.match(line, /action: "(read|grep|glob|webfetch|websearch|skill)"/, line)
   assert.match(block, /Agent\.ID\.make\("reviewer"\)[\s\S]*action: "edit", resource: "\*", effect: "deny"/)
   assert.match(files.get(file), /Agent\.Name\.make\("InfiniteOC"\)/)
+  // The subagents call Permission.merge, so the module must import it (upstream v2.0.32 stopped doing so;
+  // without it the agent plugin fails to load and no agent exists, not even build).
+  assert.equal(files.get(file).split('import { Permission } from "../permission.js"').length, 2)
   assert.match(files.get(file), /editor\.update\(Agent\.defaultID/)
   for (const target of ["packages/core/src/plugin/plan.ts", "packages/core/src/config/plugin/agent.ts"]) {
     assert.deepEqual(rules(files.get(target)), rules(await readFile(path.join(root, target), "utf8")))

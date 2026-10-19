@@ -253,6 +253,8 @@ test("bundled mod applies through the real loader to a minimal copy of pinned up
     .replace(/item.description = "Unified primary agent[^\n]+/, 'item.description = "The default agent. Executes tools based on configured permissions."')
     .replace(/"Implementation worker for a bounded[^"]+"/, '"General-purpose agent for researching complex questions and executing multi-step tasks. Use this agent to execute multiple units of work in parallel."')
     .replace(/      \/\/ InfiniteOC subagents;[\s\S]*?(?=      editor\.update\(Agent\.ID\.make\("compaction"\))/, "")
+    // The subagent block needs Permission, which upstream v2.0.32 no longer imports here.
+    .replace('import { Agent } from "../agent.js"\nimport { Permission } from "../permission.js"\n', 'import { Agent } from "../agent.js"\n')
   assert.equal(normalized, originals.get(targets[4]))
   const plan = await read(targets[5])
   assert.match(plan, /item.hidden = true/)
