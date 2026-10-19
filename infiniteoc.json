@@ -28,7 +28,8 @@
     "./mods/devices/index.mjs",
     "./mods/crash-guard/index.mjs",
     "./mods/session-import/index.mjs",
-    "./mods/effort/index.mjs"
+    "./mods/effort/index.mjs",
+    "./mods/tool-spacing/index.mjs"
   ],
   "options": {
     "reducedMotion": false,
