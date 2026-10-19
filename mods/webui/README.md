@@ -1,26 +1,44 @@
 # webui
 
-Build-side part of `infiniteoc serve` / `infiniteoc web`. The commands, the bind and password policy and the
-startup auth check live in the launcher (`src/serve.mjs`); see [LAUNCHER.md](../../LAUNCHER.md#serve-and-web).
+Build-side part of `infiniteoc serve` / `infiniteoc web`, and InfiniteOC inside the web UI. The commands, the bind
+and password policy and the startup auth check live in the launcher (`src/serve.mjs`); see
+[LAUNCHER.md](../../LAUNCHER.md#serve-and-web). Listed **last** in `infiniteoc.json`: its web commands cover the
+features of every mod applied before it.
 
 - **Server password out of tools' reach**: upstream's `serve` deletes `OPENCODE_PASSWORD` /
   `OPENCODE_SERVER_PASSWORD` from its own environment only in `--stdio` mode. In InfiniteOC builds
-  (`OPENCODE_CHANNEL=infiniteoc`) it does so in every mode, right after reading it, so the agent's shell commands
-  cannot read the password of a server other machines may reach (`packages/cli/src/server-process.ts`).
-- **Web UI branding** (only visible when `"options": {"webUi": true}` builds the web UI in):
-  - `packages/ui/src/theme/themes/infiniteoc.json`: an "InfiniteOC" theme with the TUI theme's purple
-    (`#c084fc` dark / `#9333ea` light) and pink (`#f472b6` / `#db2777`). Upstream finds it by itself
-    (`import.meta.glob("./themes/*.json")`).
-  - It is the default when no theme is stored: `defaultTheme="infiniteoc"` on the app's `ThemeProvider`
-    (`packages/app/src/app.tsx`) and the same fallback in `packages/app/public/oc-theme-preload.js`, which runs before
-    the app and would otherwise flash `oc-2`.
-  - Its name in the theme picker before the file loads (`packages/ui/src/theme/context.tsx`) and the page title
-    (`packages/app/index.html`).
+  (`OPENCODE_CHANNEL=infiniteoc`) it does so in every mode, right after reading it (`packages/cli/src/server-process.ts`).
+- **Theme**: `packages/ui/src/theme/themes/infiniteoc.json` (the TUI theme's purple `#c084fc`/`#9333ea` and pink
+  `#f472b6`/`#db2777`) is the default when no theme is stored (`app.tsx`, `oc-theme-preload.js`), named in the picker
+  before it loads; any upstream theme can still be chosen.
+- **Logo**: the TUI's block-character wordmark (`mods/infiniteoc/wordmark.mjs`, shared with the TUI) converted to SVG
+  cell for cell (`wordmark.mjs`: a terminal cell is 1×2, ▀/▄ are halves, shadow cells at 25%, purple→pink gradient).
+  It replaces upstream's `Logo`, `Mark`, `Splash` (`packages/ui/src/components/logo.tsx`) and `Wordmark`, so the
+  new-session screen, the empty side panel, the error page and the sign-in screen show InfiniteOC. Favicon, Apple
+  touch icon and PWA icons (`icons/`, rendered from the "OC" mark) replace the "dev" channel icons the web build
+  copies; the page title and the installed-app name are InfiniteOC. Settings › About keeps OpenCode's wordmark and
+  credits: that page is upstream's attribution.
+- **Server toasts**: InfiniteOC's server features report through `tui.toast.show` events (`/ponytail`, `/goal`,
+  workflows, ...). Upstream's web app received them and showed nothing; they are now web toasts.
+- **InfiniteOC commands** (palette and `/` in the composer, category InfiniteOC): `/context`, `/octx`, `/memory`
+  (memory and glossary: browse, add, remove), `/pins` (pin, unpin), `/workflows` (steps, status, cancel), `/usage`,
+  and `/yolo` (upstream's auto-accept toggle). Server commands (`/goal`, `/ponytail`, `/plan`, `/testfirst`,
+  `/pin`, `/glossary`, ...) were already listed by upstream. The `auto` effort is in the variant picker.
 
-Any upstream theme can still be chosen in the web UI's settings. Nothing else is restyled. Every change is an
-`api.patchExact` with a unique anchor in pinned v2.0.21, so an upstream change fails the build instead of being
-skipped.
+## How the commands work
 
-Tests: `node --test mods/webui/test.mjs test/serve.test.mjs`. They check the anchors against `.upstream`, apply the
-mod through the real loader in a disposable tree, and run `serve`/`web` through the real launcher against a fake
-server binary. Not covered: a real build with the web UI and a browser session (see the caveats in the PR notes).
+One RPC, `infiniteoc` (`run` and `features`, JSON strings in and out), registered by a generated server plugin
+(`packages/core/src/plugin/infiniteoc-web.ts`). It serves `views.ts`: server-driven views (title, preformatted
+text, selectable items, buttons, a text field) built from the same stores the TUI commands use (ctx-context's,
+InfiniteOCTX's, the workflow store, prov-kit's usage). The browser side (`app/`) is one generic dialog that renders
+a view and sends back the next action, plus `useInfiniteocWeb`, called once per session screen beside upstream's
+command hooks. A feature appears only when its store is in the build, so disabling a mod never breaks the web
+build. Session ids are checked before they reach a store; the actions only touch InfiniteOC's own state files.
+
+Not in the web UI yet (TUI only): `/settings` (InfiniteOC settings), `/health`, `/import`, `/display`, `/rea`,
+`/serve`, `/local`, `/envdiff`, `/clearall` (the web app has its own tabs) and the TUI's transcript map and status line.
+
+Tests: `node --test mods/webui/test.mjs test/serve.test.mjs`: anchors against `.upstream`, application through the
+real loader in a disposable tree, the glyph conversion, the generated sources, and every view against in-memory
+stores. Verified in a real browser (headless Chromium) against an isolated server: sign-in, slash suggestions,
+`/octx`, `/context`, `/memory` add, the `/ponytail` toast and the new-session wordmark.

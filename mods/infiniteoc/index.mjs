@@ -1,3 +1,4 @@
+import { logo } from "./wordmark.mjs"
 import { readFile } from "node:fs/promises"
 import path from "node:path"
 import { installSettings } from "./settings/index.mjs"
@@ -269,8 +270,8 @@ const upstreamWordmark = `export const logo = {
   right: ["             ▄     ", "█▀▀▀ █▀▀█ █▀▀█ █▀▀█", "█___ █__█ █__█ █^^^", "▀▀▀▀ ▀▀▀▀ ▀▀▀▀ ▀▀▀▀"],
 }`
 const wordmark = `export const logo = {
-  left: ["▀       █▀ ▀      ▀  ▄      ", "█ █▀▀▄ ▀█▀ █ █▀▀▄ █ ▀█▀ █▀▀█", "█ █__█  █  █ █__█ █  █  █^^^", "▀ ▀~~▀  ▀  ▀ ▀~~▀ ▀  ▀▀ ▀▀▀▀"],
-  right: ["         ", "█▀▀█ █▀▀▀", "█__█ █___", "▀▀▀▀ ▀▀▀▀"],
+  left: ${JSON.stringify(logo.left).replaceAll('","', '", "')},
+  right: ${JSON.stringify(logo.right).replaceAll('","', '", "')},
 }`
 // Generated module: guidance per agent ID, joined into one instruction block per session.
 function guidanceSource() {
