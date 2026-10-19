@@ -17,7 +17,6 @@
     "./mods/hash-mentions/index.mjs",
     "./mods/tool-perf/index.mjs",
     "./mods/yolo/index.mjs",
-    "./mods/webui/index.mjs",
     "./mods/accounts/index.mjs",
     "./mods/workflows/index.mjs",
     "./mods/infinicode/index.mjs",
@@ -29,11 +28,15 @@
     "./mods/crash-guard/index.mjs",
     "./mods/session-import/index.mjs",
     "./mods/effort/index.mjs",
-    "./mods/tool-spacing/index.mjs"
+    "./mods/tool-spacing/index.mjs",
+    "./mods/infinithink/index.mjs",
+    "./mods/infiniteoctx/index.mjs",
+    "./mods/infinitokensave/index.mjs",
+    "./mods/webui/index.mjs"
   ],
   "options": {
     "reducedMotion": false,
-    "webUi": true,
+    "webUi": false,
     "workflows": {
       "enabled": true
     }
