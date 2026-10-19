@@ -97,18 +97,21 @@ test("the tool installs into the plugin tree with approval and project scoping",
   t.after(() => rm(root, { recursive: true, force: true }))
   const file = path.join(root, "packages/core/src/tool/plugin/opencode.ts")
   await mkdir(path.dirname(file), { recursive: true })
-  await writeFile(file, 'import { Effect, Schema } from "effect"\n    yield* ctx.session.hook("generate", hook)\n    yield* ctx.tool\n        draft.add({\n          name: "session_rename",\n')
+  await writeFile(
+    file,
+    'import { Effect, Schema } from "effect"\nimport { FileAccess } from "../../file-access.js"\nimport { Permission } from "../../permission.js"\n    const access = yield* FileAccess.Service\n    const permission = yield* Permission.Service\n    yield* ctx.session.hook("generate", hook)\n    yield* ctx.tool\n        draft.add({\n          name: "session_rename",\n',
+  )
   await installExportTool(root)
   const installed = await readFile(file, "utf8")
   assert.ok(installed.includes('name: "project_export"'))
   assert.ok(installed.includes('import { exportProject } from "./infiniteoc-export.mjs"'))
-  assert.ok(installed.includes('import { FileAccess } from "../../file-access.js"'))
-  assert.ok(installed.includes('import { Permission } from "../../permission.js"'))
   assert.ok(installed.includes("access.resolve({ path: input.path ??"))
   assert.ok(installed.includes("access.authorizeExternal([target], context)"))
-  // Services come from plugin setup (execute requires nothing); every failure reaches the agent as a ToolFailure.
-  assert.ok(installed.includes("    const access = yield* FileAccess.Service\n    const permission = yield* Permission.Service\n    yield* ctx.tool\n"))
-  assert.ok(!/execute: \(input, context\) =>\s+Effect\.gen\(function\* \(\) \{\s+const access/.test(installed))
+  // Upstream already binds FileAccess/Permission for this plugin, so the tool reuses them and must not re-declare.
+  assert.equal(installed.split('import { FileAccess } from "../../file-access.js"').length, 2)
+  assert.equal(installed.split('import { Permission } from "../../permission.js"').length, 2)
+  assert.equal(installed.split("const access = yield* FileAccess.Service").length, 2)
+  assert.equal(installed.split("const permission = yield* Permission.Service").length, 2)
   assert.ok(installed.includes("Effect.mapError((error) => (error instanceof ToolFailure ? error : new ToolFailure("))
   assert.ok(installed.includes('permission.assert({ action: "project_export"'))
   assert.ok(installed.includes("The link works once, on this machine"))

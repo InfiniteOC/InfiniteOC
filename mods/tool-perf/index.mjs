@@ -73,7 +73,7 @@ export const patches = [
   [`${core}/tool/plugin/edit.ts`, `              const replaced = (input.replaceAll === true ? matches : matches.slice(0, 1))
                 .toReversed()
                 .reduce(
-                  (content, match) => \`\${content.slice(0, match.start)}\${newString}\${content.slice(match.end)}\`,
+                  (content, match) => \`\${content.slice(0, match.start)}\${replace(match)}\${content.slice(match.end)}\`,
                   source,
                 )`, `              // Single forward pass: matches are ascending and non-overlapping,
               // so joining segments is O(n) instead of re-slicing per replacement.
@@ -83,7 +83,7 @@ export const patches = [
                 const parts: string[] = []
                 let cursor = 0
                 for (const match of selected) {
-                  parts.push(source.slice(cursor, match.start), newString)
+                  parts.push(source.slice(cursor, match.start), replace(match))
                   cursor = match.end
                 }
                 parts.push(source.slice(cursor))

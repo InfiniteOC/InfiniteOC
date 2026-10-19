@@ -192,8 +192,8 @@ test("applies after infiniteoc, prov-kit and tstat-status: plugin order, builtin
   assert.match(files.get("packages/tui/src/component/dialog-config.tsx"), /"api key", "account"\]/)
 
   const commands = files.get("packages/cli/src/commands/commands.ts")
-  assert.match(commands, /Spec\.make\("rename", \{[\s\S]*?name: Argument\.string\("name"\)[\s\S]*?\}\),\n        Spec\.make\("switch", \{/)
-  assert.match(commands, /Flag\.string\("method"\)[^\n]*\n            label: Flag\.string\("label"\)/)
+  assert.match(commands, /Spec\.make\("rename", \{[\s\S]*?name: Argument\.String\("name"\)[\s\S]*?\}\),\n        Spec\.make\("switch", \{/)
+  assert.match(commands, /Flag\.String\("method"\)[^\n]*\n            label: Flag\.String\("label"\)/)
   assert.match(files.get("packages/cli/src/index.ts"), /switch: \(\) => import\("\.\/commands\/handlers\/auth\/switch"\),\n    rename: \(\) => import\("\.\/commands\/handlers\/auth\/rename"\),/)
   assert.match(files.get("packages/cli/src/commands/handlers/auth/account.ts"), /action: "log out" \| "switch to" \| "rename",/)
   assert.match(files.get("packages/cli/src/commands/handlers/auth/list.ts"), /index === 0 && integration\.connections\.length > 1 \? ", active" : ""/)

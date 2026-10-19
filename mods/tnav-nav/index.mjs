@@ -32,7 +32,14 @@ export const patches = [
   [`${tui}/routes/session/sidebar.tsx`, "          </title_shimmer>\n        </box>", "          </title_shimmer>\n          </InlineTitle>\n        </box>"],
   [`${tui}/component/command-palette.tsx`, 'import { DialogConfig, settingID, settings } from "./dialog-config"', 'import { DialogConfig, settingID, settings } from "./dialog-config"\nimport { paletteExtras } from "../feature-plugins/tnav/palette"'],
   [`${tui}/component/command-palette.tsx`, "  let ref: DialogSelectRef<string>\n  const list = () => {\n    if (ref?.filter) return [...options(), ...settingOptions]", "  const extras = paletteExtras()\n  let ref: DialogSelectRef<string>\n  const list = () => {\n    if (ref?.filter) return [...options(), ...settingOptions, ...extras.options(ref.filter)]"],
-  [`${tui}/component/command-palette.tsx`, 'title="Commands" options={list()} flat={true} filterThreshold={0.7} />', 'title="Commands" options={list()} flat={true} filterThreshold={0.7} onFilter={extras.setFilter} />'],
+  [`${tui}/component/command-palette.tsx`, `      options={list()}
+      flat={true}
+      filterThreshold={0.7}
+    />`, `      options={list()}
+      flat={true}
+      filterThreshold={0.7}
+      onFilter={extras.setFilter}
+    />`],
 ]
 
 export default {

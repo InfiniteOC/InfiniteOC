@@ -5,9 +5,8 @@ import { replaceExact } from "./tui-features.mjs"
 export async function installExportTool(root) {
   const file = path.join(root, "packages/core/src/tool/plugin/opencode.ts")
   let source = await readFile(file, "utf8")
-  source = replaceExact(source, 'import { Effect, Schema } from "effect"', 'import { Effect, Schema } from "effect"\nimport { FileAccess } from "../../file-access.js"\nimport { Permission } from "../../permission.js"\nimport { exportProject } from "./infiniteoc-export.mjs"', "export tool imports")
-  // Services are bound once at plugin setup, as upstream's file tools do, so execute requires nothing.
-  source = replaceExact(source, '    yield* ctx.session.hook("generate", hook)\n    yield* ctx.tool\n', '    yield* ctx.session.hook("generate", hook)\n    const access = yield* FileAccess.Service\n    const permission = yield* Permission.Service\n    yield* ctx.tool\n', "export tool services")
+  source = replaceExact(source, 'import { Effect, Schema } from "effect"', 'import { Effect, Schema } from "effect"\nimport { exportProject } from "./infiniteoc-export.mjs"', "export tool imports")
+  // Upstream declares FileAccess/Permission for this plugin itself now, so the export tool reuses them.
   source = replaceExact(source, '        draft.add({\n          name: "session_rename",', `        draft.add({
           name: "project_export",
           description: "Export the project (or one of its subdirectories) as a downloadable archive. Resolves paths against the session directory, asks for approval like any other tool, then returns a one-click download link that works once, on this machine, for the next 10 minutes. Use when the user wants a copy of their project.",

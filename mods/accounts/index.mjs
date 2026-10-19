@@ -15,15 +15,15 @@ export const renameSpec = `        Spec.make("rename", {
           description: "rename a saved account",
           params: {
             ...ServerParams,
-            target: Argument.string("target").pipe(
+            target: Argument.String("target").pipe(
               Argument.withDescription("Integration ID or name"),
               Argument.optional,
             ),
-            credential: Argument.string("credential").pipe(
+            credential: Argument.String("credential").pipe(
               Argument.withDescription("Credential ID or label (opens an account picker when omitted)"),
               Argument.optional,
             ),
-            name: Argument.string("name").pipe(
+            name: Argument.String("name").pipe(
               Argument.withDescription("New account name (prompted when omitted)"),
               Argument.optional,
             ),
@@ -31,7 +31,7 @@ export const renameSpec = `        Spec.make("rename", {
         }),
 `
 const labelFlag = `
-            label: Flag.string("label").pipe(
+            label: Flag.String("label").pipe(
               Flag.withDescription("Name for the new account (default: the integration name, numbered)"),
               Flag.optional,
             ),`
@@ -76,7 +76,7 @@ export default {
     await api.write(`${auth}/rename.ts`, await read("./cli-rename.ts"))
     await api.patch("packages/cli/src/commands/commands.ts", (source) => {
       source = replace(source, '        Spec.make("switch", {\n', renameSpec + '        Spec.make("switch", {\n')
-      const method = 'method: Flag.string("method").pipe(Flag.withDescription("Authentication method ID"), Flag.optional),'
+      const method = 'method: Flag.String("method").pipe(Flag.withDescription("Authentication method ID"), Flag.optional),'
       return replace(source, method, method + labelFlag)
     })
     await api.patch("packages/cli/src/index.ts", (source) =>
@@ -97,11 +97,13 @@ export default {
 ) {
   if (method.type === "key") return yield* keyLogin(client, integration, method, answer)
   if (method.type === "command") return yield* commandLogin(client, integration, method)
+  if (method.type === "external") return yield* externalLogin(client, integration, method, answer)
   return yield* oauthLogin(client, integration, method, answer)`, `  answer?: FormAnswer,
   label?: string,
 ) {
   if (method.type === "key") return yield* keyLogin(client, integration, method, answer, label)
   if (method.type === "command") return yield* commandLogin(client, integration, method, label)
+  if (method.type === "external") return yield* externalLogin(client, integration, method, answer)
   return yield* oauthLogin(client, integration, method, answer, label)`, "login authenticate")
       source = replace(source, "  answer?: FormAnswer,\n) {\n  const key = yield* secret(", "  answer?: FormAnswer,\n  label?: string,\n) {\n  const key = yield* secret(")
       source = replace(source, "client.integration.connect.key({ integrationID: integration.id, key, answer, location }, { signal })",

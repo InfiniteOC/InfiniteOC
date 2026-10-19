@@ -91,7 +91,14 @@ export default {
     // (many repos only have CLAUDE.md), and the environment block names the OS release and shell.
     await api.patch("packages/core/src/config/plugin/instruction.ts", (source) => {
       source = replace(source, '              .map((directory) => join(directory, "AGENTS.md"))', '              .flatMap((directory) => [join(directory, "AGENTS.md"), join(directory, "CLAUDE.md")])')
-      return replace(source, '        const walked = yield* Effect.forEach(yield* fs.up({ targets: ["AGENTS.md"], start, stop }), fs.resolve)\n', `        const found = yield* Effect.forEach(yield* fs.up({ targets: ["AGENTS.md", "CLAUDE.md"], start, stop }), fs.resolve)
+      return replace(source, `        const walked = yield* Effect.forEach(
+          yield* fs.up({ targets: ["AGENTS.md"], start, stop, type: "file" }),
+          fs.resolve,
+        )
+`, `        const found = yield* Effect.forEach(
+          yield* fs.up({ targets: ["AGENTS.md", "CLAUDE.md"], start, stop, type: "file" }),
+          fs.resolve,
+        )
         // InfiniteOC: CLAUDE.md only where the same directory has no AGENTS.md.
         const walked = found.filter((file) => !file.endsWith("/CLAUDE.md") || !found.includes(join(dirname(file), "AGENTS.md")))
 `)

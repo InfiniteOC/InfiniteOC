@@ -113,7 +113,7 @@ function loadMatchers(source) {
 }
 
 function loadAssembly(block) {
-  return new Function("source", "matches", "newString", "input", `${strip(block)}; return replaced;`) // eslint-disable-line
+  return new Function("source", "matches", "newString", "input", "replace", `${strip(block)}; return replaced;`) // eslint-disable-line
 }
 
 test("old and new matcher + assembly agree on fuzzed cases", { skip: !hasUpstream ? "run `node bin/infiniteoc.mjs setup` first" : (!canStrip ? "needs Node type stripping" : false) }, async () => {
@@ -174,9 +174,10 @@ test("old and new matcher + assembly agree on fuzzed cases", { skip: !hasUpstrea
     for (const replaceAll of [false, true]) {
       const newString = pick(NEWSTRINGS)
       const input = { replaceAll }
+      const replace = () => newString
       assert.equal(
-        newAsm(content, b, newString, input),
-        oldAsm(content, a, newString, input),
+        newAsm(content, b, newString, input, replace),
+        oldAsm(content, a, newString, input, replace),
         `assembly diverged for ${JSON.stringify({ content, search, newString, replaceAll })}`,
       )
     }
