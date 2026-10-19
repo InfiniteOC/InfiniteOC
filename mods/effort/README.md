@@ -30,16 +30,34 @@ stays `auto`.
 A provider that hand-rolls its own variant list instead of calling `Variant.resolve` (the GitHub
 Copilot, ChatGPT and Modal plugins) gets no `auto`; its models keep their native efforts.
 
-`chooseEffort` maps the prompt to a tier:
+`autoDecision` scores the whole turn, not just its wording. Everything it reads is fixed when the
+turn starts (`SessionHistory.latestTurn`: the newest user message, the one before it and the
+assistant messages between), so every step of a turn runs at the same effort:
 
-- `low` — greeting, lookup, or a short one-line edit (`fix`, `rename`, `show`, ...);
-- `medium` — the default;
-- `high` — a long prompt, a code fence, a stack trace, ≥6 lines, ≥3 questions, or a hard signal
-  (`debug`, `why is`, `root cause`, `design`, `refactor`, `review`, `migrate`, `security`, ...).
+- explicit cues win: "ultrathink" / "think harder" / "max effort" → `max`; "quickly", "briefly",
+  "tl;dr" lower the score; "carefully", "thoroughly", "edge cases", "make sure" raise it;
+- greetings and thanks → `low`; a go-ahead ("yes", "continue", "do it", "try again") keeps the
+  previous turn's effort instead of dropping to low (one step more after a turn with ≥2 failures);
+- a complaint about the last attempt ("still not working", "same error") gets at least one step more
+  than that attempt ran at;
+- otherwise points add up: hard-work words (`debug`, `why does`, `root cause`, `design`, `refactor`,
+  `migrate`, `security`, `race condition`, ...), a stack trace or error, a code block, a long prompt,
+  three or more list items (several tasks), several questions or file paths, an image, three or more
+  attachments, failed tool calls in the previous turn, the plan agent; a short lookup or one-line edit
+  subtracts. ≤0 is `low`, 1-2 `medium`, 3-9 `high`, ≥10 `max`;
+- sticky downward: a turn one point under the previous turn's tier keeps it (each switch can cost the
+  prompt cache; upgrades are never held back);
+- a subagent session (its prompt is the parent's detailed brief) is capped at `high`.
 
-The tier then picks the id named after it when the model offers one, else the closest rank (ties
-toward the cheaper variant), an on/off model is off for low and on otherwise, and custom ids without
-a rank fall back to position. A model with no effort controls is left alone (no `auto` variant).
+On the stored sessions this picks low for 18% of prompts, medium 69%, high 14% and never max without
+being asked. The tier then picks the id named after it when the model offers one (`max` without a `max` id → `xhigh`),
+else the closest rank (ties toward the cheaper variant); an on/off model is off for low and on
+otherwise, and custom ids without a rank fall back to position. A model with no effort controls is left
+alone (no `auto` variant).
+
+A low effort that auto picked gets the lean contract as a trailing note ("[Low effort for this turn]",
+with auto's reasons) instead of the system rewrite in section 1: auto can change tier every turn, and a
+changed system prompt makes the provider re-read the whole conversation uncached.
 
 ## Checking
 

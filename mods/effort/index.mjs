@@ -12,27 +12,57 @@ export function replace(source, before, after, label = before) {
 const file = (name) => readFile(new URL(`./${name}`, import.meta.url), "utf8")
 const CORE = "packages/core/src"
 
-/** The session's newest user message, the input to the automatic effort. */
+/** The newest turn as the automatic effort sees it: that user message, the one before, the assistant messages between. */
 export function historySource(source) {
   return replace(
     source,
     '\nexport * as SessionHistory from "./history.js"\n',
     `
-/** Returns the session's newest user message (the current ask, after any compaction). */
-export const latestUserMessage = Effect.fn("SessionHistory.latestUserMessage")(function* (
+/**
+ * The newest user message (the current ask, after any compaction), the user message before it, and
+ * up to the last 50 assistant messages between the two: everything the automatic effort reads.
+ */
+export const latestTurn = Effect.fn("SessionHistory.latestTurn")(function* (
   db: DatabaseService,
   sessionID: SessionSchema.ID,
 ) {
-  const row = yield* db
+  const users = yield* db
     .select()
     .from(SessionMessageTable)
     .where(and(eq(SessionMessageTable.session_id, sessionID), eq(SessionMessageTable.type, "user")))
     .orderBy(desc(SessionMessageTable.seq))
-    .get()
+    .limit(2)
+    .all()
     .pipe(Effect.orDie)
-  if (!row) return undefined
-  const message = yield* decodeMessageRow(row).pipe(Effect.orElseSucceed(() => undefined))
-  return message?.type === "user" ? message : undefined
+  const [newest, before] = users
+  if (!newest) return undefined
+  const user = (row: typeof newest | undefined) =>
+    row
+      ? decodeMessageRow(row).pipe(
+          Effect.map((message) => (message.type === "user" ? message : undefined)),
+          Effect.orElseSucceed(() => undefined),
+        )
+      : Effect.succeed(undefined)
+  const latest = yield* user(newest)
+  if (!latest) return undefined
+  const previous = yield* user(before)
+  const rows = yield* db
+    .select()
+    .from(SessionMessageTable)
+    .where(
+      and(
+        eq(SessionMessageTable.session_id, sessionID),
+        eq(SessionMessageTable.type, "assistant"),
+        gte(SessionMessageTable.seq, (before?.seq ?? -1) + 1),
+        sql\`\${SessionMessageTable.seq} < \${newest.seq}\`,
+      ),
+    )
+    .orderBy(desc(SessionMessageTable.seq))
+    .limit(50)
+    .all()
+    .pipe(Effect.orDie)
+  const between = yield* Effect.forEach(rows.toReversed(), (row) => decodeMessageRow(row).pipe(Effect.orElseSucceed(() => undefined)))
+  return { latest, previous, between: between.filter((message) => message?.type === "assistant") }
 })
 
 export * as SessionHistory from "./history.js"
