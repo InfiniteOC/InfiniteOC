@@ -65,6 +65,29 @@ export function changeSetting(key: string, value: string, buildDefault?: boolean
   return { settings: normalize(result.next, buildDefault) }
 }
 
+/** Learned step times per model (pool.ts), so a new server starts knowing which models are fast. */
+const speedsFile = () => path.join(dataDir(), "..", "model-speeds.json")
+const SPEED_MAX_AGE_MS = 24 * 3600 * 1000
+
+/** Speeds measured in the last day: model → average step milliseconds. */
+export function loadSpeeds(now = Date.now()): Record<string, number> {
+  const raw = readJson(speedsFile())
+  if (!record(raw)) return {}
+  const out: Record<string, number> = {}
+  for (const [model, value] of Object.entries(raw))
+    if (record(value) && typeof value.ms === "number" && typeof value.at === "number" && now - value.at < SPEED_MAX_AGE_MS) out[model] = value.ms
+  return out
+}
+
+/** Merges these speeds into the file, stamped now; other models' entries stay. */
+export function saveSpeeds(speeds: Record<string, number>, now = Date.now()) {
+  if (Object.keys(speeds).length === 0) return
+  const raw = readJson(speedsFile())
+  const next: Record<string, unknown> = record(raw) ? { ...raw } : {}
+  for (const [model, ms] of Object.entries(speeds)) next[model] = { ms, at: now }
+  atomicWrite(speedsFile(), JSON.stringify(next) + "\n")
+}
+
 export function saveWorkflow(workflow: Workflow) {
   atomicWrite(workflowFile(workflow.parentSessionID, workflow.id), JSON.stringify(workflow) + "\n")
 }

@@ -30,10 +30,23 @@ export type StepInput = { title: string; prompt: string; agent: string; kind?: s
 export type Choice = {
   /** Undefined means the session default (no model could be determined). */
   ref?: Ref
+  /** A tier or request naming several models ("a/x, b/y"): the usable ones, in order; the scheduler spreads steps over them. */
+  pool?: string[]
   tier: Tier
   kind: string
   reason: string
 }
+
+// Claude Code workers (claude.ts) are a pseudo-provider: available when the claude CLI is installed.
+// In readonly mode (workflows.claudeMode) they only take steps that do not edit.
+export const CLAUDE_CODE = "claude-code"
+export const CLAUDE_MODELS = ["haiku", "sonnet", "opus"]
+const READONLY_AGENTS = ["explore", "researcher", "reviewer"]
+const READONLY_KINDS = ["search", "summarize", "plan", "review", "reason"]
+/** Whether a step may edit, so a read-only Claude Code worker cannot do it. */
+export const editing = (agent: string, kind: string) => !READONLY_AGENTS.includes(agent) && !READONLY_KINDS.includes(kind)
+const READONLY_ERROR =
+  "Claude Code workers are read-only (search, read, web). Use them for steps with agent explore, researcher or reviewer, or kind search, summarize, plan, review or reason."
 
 const TIER_WORDS: Record<string, Tier> = { fast: "fast", cheap: "fast", strong: "strong", best: "strong", default: "default", inherit: "default" }
 
@@ -80,7 +93,13 @@ const find = (available: readonly Candidate[], ref: Ref) =>
   available.find((model) => model.providerID === ref.providerID && model.id === ref.id)
 
 /** An explicit model must be available, with the variant it names. */
-export function checkAvailable(ref: Ref, available: readonly Candidate[]): string | undefined {
+export function checkAvailable(ref: Ref, available: readonly Candidate[], claudeCode = false): string | undefined {
+  if (ref.providerID === CLAUDE_CODE) {
+    if (!claudeCode) return "Claude Code workers need the claude CLI on PATH, logged in."
+    if (!CLAUDE_MODELS.includes(ref.id)) return `Claude Code model must be one of ${CLAUDE_MODELS.map((id) => `${CLAUDE_CODE}/${id}`).join(", ")}.`
+    if (ref.variant !== undefined) return "Claude Code models have no variants. Omit the variant."
+    return
+  }
   const model = find(available, ref)
   if (!model) return `Model "${formatRef({ ...ref, variant: undefined })}" is not available. Use the models tool to see what is available.`
   if (ref.variant !== undefined && !model.variants.includes(ref.variant))
@@ -124,19 +143,44 @@ export function strongest(available: readonly Candidate[], parent: Ref, ratio: n
   return { ref: { providerID: top.providerID, id: top.id }, why: `strongest available ${top.providerID} model` }
 }
 
-/** Resolves a tier setting ("auto", "inherit" or a model) to a model. */
+/** The members of a "a/x, b/y" model list a step can use: available, and not a read-only worker for an editing step. */
+function usablePool(list: string, input: { available: readonly Candidate[]; claudeCode?: boolean; editing?: boolean }) {
+  const out: string[] = []
+  for (const part of list.split(",").map((item) => item.trim()).filter(Boolean)) {
+    try {
+      const ref = parseRef(part)
+      if (ref.providerID === CLAUDE_CODE && input.editing) continue
+      if (!checkAvailable(ref, input.available, input.claudeCode)) out.push(formatRef(ref))
+    } catch {}
+  }
+  return out
+}
+
+/** Resolves a tier setting ("auto", "inherit", a model or a list of models) to a model. */
 function resolveTier(
   tier: Tier,
-  input: { policy: Policy; parent?: Ref; available: readonly Candidate[]; small?: Candidate },
-): { ref?: Ref; why: string } {
+  input: { policy: Policy; parent?: Ref; available: readonly Candidate[]; small?: Candidate; claudeCode?: boolean; editing?: boolean },
+): { ref?: Ref; pool?: string[]; why: string } {
   const setting = input.policy.models[tier]
   const parent = input.parent
   const inherit = (why: string) => (parent ? { ref: parent, why } : { why: `${why}; no caller model, using the session default` })
+  if (setting.includes(",")) {
+    const pool = usablePool(setting, input)
+    if (pool.length) return { ref: parseRef(pool[0]), pool, why: `configured ${tier} pool (${pool.length} of ${setting.split(",").length} models usable)` }
+    const gone = `no model of the configured ${tier} pool is usable`
+    if (tier === "default") return inherit(gone)
+    const auto = resolveTier(tier, { ...input, policy: { ...input.policy, models: { ...input.policy.models, [tier]: "auto" } } })
+    return { ref: auto.ref, why: `${gone}; ${auto.why}` }
+  }
   if (setting !== "auto" && setting !== "inherit") {
     try {
       const ref = parseRef(setting)
-      if (!checkAvailable(ref, input.available)) return { ref, why: `configured ${tier} model` }
-      if (tier === "default") return inherit(`configured default ${setting} is not available`)
+      const readonly = ref.providerID === CLAUDE_CODE && input.editing
+      if (!readonly && !checkAvailable(ref, input.available, input.claudeCode)) return { ref, why: `configured ${tier} model` }
+      const gone = readonly ? `${setting} is read-only and this step edits` : `configured ${tier} ${setting} is not available`
+      if (tier === "default") return inherit(gone)
+      const auto = resolveTier(tier, { ...input, policy: { ...input.policy, models: { ...input.policy.models, [tier]: "auto" } } })
+      return { ref: auto.ref, why: `${gone}; ${auto.why}` }
     } catch {}
     // A configured model that is gone falls back to the automatic choice below.
   }
@@ -161,14 +205,35 @@ export function chooseModel(input: {
   agentModel?: Ref
   available: readonly Candidate[]
   small?: Candidate
+  /** The claude CLI is installed, so claude-code/* models are available. */
+  claudeCode?: boolean
+  /** Claude Code workers may edit (claudeMode auto or bypass), so editing steps can use them too. */
+  claudeEdits?: boolean
 }): Choice | { error: string } {
   const classified = classify(input.step, input.policy)
+  const edits = editing(input.step.agent, classified.kind) && !input.claudeEdits
   const requested = input.step.model?.trim()
   if (requested) {
     const word = TIER_WORDS[requested.toLowerCase()]
     if (word) {
-      const resolved = resolveTier(word, input)
-      return { ref: resolved.ref, tier: word, kind: classified.kind, reason: `requested ${word}: ${resolved.why}` }
+      const resolved = resolveTier(word, { ...input, editing: edits })
+      return { ref: resolved.ref, pool: resolved.pool, tier: word, kind: classified.kind, reason: `requested ${word}: ${resolved.why}` }
+    }
+    if (requested.includes(",")) {
+      const parts = requested.split(",").map((item) => item.trim()).filter(Boolean)
+      for (const part of parts) {
+        let ref: Ref
+        try {
+          ref = parseRef(part)
+        } catch (error) {
+          return { error: `Step model: ${(error as Error).message}` }
+        }
+        const missing = checkAvailable(ref, input.available, input.claudeCode)
+        if (missing) return { error: missing }
+        if (ref.providerID === CLAUDE_CODE && edits) return { error: READONLY_ERROR }
+      }
+      const pool = parts.map((part) => formatRef(parseRef(part)))
+      return { ref: parseRef(pool[0]), pool, tier: classified.tier, kind: classified.kind, reason: `requested pool of ${pool.length} models` }
     }
     let ref: Ref
     try {
@@ -176,12 +241,13 @@ export function chooseModel(input: {
     } catch (error) {
       return { error: `Step model: ${(error as Error).message} Or use a tier: fast, strong, default.` }
     }
-    const missing = checkAvailable(ref, input.available)
+    const missing = checkAvailable(ref, input.available, input.claudeCode)
     if (missing) return { error: missing }
+    if (ref.providerID === CLAUDE_CODE && edits) return { error: READONLY_ERROR }
     return { ref, tier: classified.tier, kind: classified.kind, reason: "requested model" }
   }
   if (input.agentModel)
     return { ref: input.agentModel, tier: classified.tier, kind: classified.kind, reason: `the ${input.step.agent} agent's configured model` }
-  const resolved = resolveTier(classified.tier, input)
-  return { ref: resolved.ref, tier: classified.tier, kind: classified.kind, reason: `${classified.tier} (${classified.source}): ${resolved.why}` }
+  const resolved = resolveTier(classified.tier, { ...input, editing: edits })
+  return { ref: resolved.ref, pool: resolved.pool, tier: classified.tier, kind: classified.kind, reason: `${classified.tier} (${classified.source}): ${resolved.why}` }
 }

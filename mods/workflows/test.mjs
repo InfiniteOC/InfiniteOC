@@ -6,6 +6,7 @@ import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import mod, { buildDefault, relink, replace, settingsSource } from "./index.mjs"
+import * as C from "./claude.ts"
 import * as D from "./dag.ts"
 import * as M from "./mailbox.ts"
 import * as Models from "./models.ts"
@@ -571,6 +572,226 @@ test("chooseModel: configured tier models are used when available and fall back 
   assert.match(none.reason, /session default/)
 })
 
+test("each: one template fans out to hundreds of steps with bounded prompts, digests and status", () => {
+  const files = Array.from({ length: 500 }, (_, i) => `src/file${i}.ts`)
+  const { steps } = D.validatePlan(
+    { name: "big", steps: [
+      { id: "scan", agent: "explore", prompt: "Summarize {{item}} in one line.", each: files },
+      { id: "sum", agent: "reviewer", needs: ["scan"], prompt: "Rank the riskiest files:\n{{steps.scan}}" },
+    ] },
+    { maxSteps: 501 },
+  )
+  assert.equal(steps.length, 501)
+  assert.deepEqual([steps[0].id, steps[0].group, steps[0].item, steps[499].id], ["scan-1", "scan", "src/file0.ts", "scan-500"])
+  assert.equal(steps[500].needs.length, 500)
+  // Fan-out items are best effort unless the step says optional: false; plain steps stay required.
+  assert.equal(steps[0].optional, true)
+  assert.equal(steps[500].optional, false)
+  assert.equal(D.validatePlan({ steps: [{ id: "a", prompt: "{{item}}", each: ["x"], optional: false }] }, { maxSteps: 5 }).steps[0].optional, false)
+  assert.throws(() => D.validatePlan({ steps: [{ id: "a", prompt: "x {{item}}", each: files }] }, { maxSteps: 100 }), /after expanding each \(500\)/)
+  assert.throws(() => D.validatePlan({ steps: [{ id: "a", prompt: "no slot", each: ["x"] }] }, { maxSteps: 10 }), /\{\{item\}\}/)
+  assert.throws(() => D.validatePlan({ steps: [{ id: "a", prompt: "{{item}}", each: [] }] }, { maxSteps: 10 }), /non-empty/)
+
+  const wf = { id: "wf_big", name: "big", parentSessionID: "ses", status: "running", createdAt: 0, steps, state: D.initialState(steps), messages: [] }
+  // A child's prompt gets its item and a one-line team entry for the group, not 499 teammates.
+  const child = D.stepPrompt({ workflow: wf, step: steps[7], inbox: [], messaging: true, maxOutputChars: 12000 })
+  assert.match(child, /Summarize src\/file7\.ts in one line\./)
+  assert.ok(child.length < 1500, `child prompt is ${child.length} chars`)
+  for (const step of steps.slice(0, 500)) Object.assign(wf.state[step.id], { status: "completed", output: `${step.item} is fine. `.repeat(40) })
+  wf.state["scan-3"] = { id: "scan-3", status: "failed", error: "boom" }
+  // The reducer's digest of 500 results stays within its budget (4 × maxOutputChars).
+  const reducer = D.stepPrompt({ workflow: wf, step: steps[500], inbox: [], messaging: false, maxOutputChars: 12000 })
+  assert.ok(reducer.length < 12000 * 4 + 2000, `reducer prompt is ${reducer.length} chars`)
+  assert.match(reducer, /\[src\/file0\.ts\] src\/file0\.ts is fine/)
+  assert.match(reducer, /more results; workflow action "result"/)
+  const status = D.statusText(wf)
+  assert.equal(status.split("\n").length, 3)
+  assert.match(status, /scan ×500 \(explore · default\): 499 completed, 1 failed; scan-3 \[src\/file2\.ts\]: boom/)
+  const final = D.finalText(wf, 24000, [])
+  assert.ok(final.length < 30000, `final notice is ${final.length} chars`)
+  // A fan-out's notice grows with it (700 a step, at most 80k), and every item's line fits in it.
+  assert.equal(D.finalBudget(wf, 12000), 80000)
+  const few = { ...wf, steps: steps.slice(0, 34), state: Object.fromEntries(steps.slice(0, 34).map((step) => [step.id, { id: step.id, status: "completed", output: "x".repeat(900) }])) }
+  const digest = D.finalText(few, D.finalBudget(few, 12000), [])
+  assert.equal(D.finalBudget(few, 12000), 24000)
+  assert.doesNotMatch(digest, /more results/)
+  assert.equal((digest.match(/^- \[src\/file\d+\.ts\]/gm) ?? []).length, 34)
+  assert.match(final, /<group id="scan" title="scan" agent="explore" steps="500"/)
+})
+
+test("ready: an admission check holds steps back without blocking the ones behind them", () => {
+  const { steps } = D.validatePlan({ steps: [{ id: "c", prompt: "{{item}}", each: ["1", "2", "3"] }, { id: "o", prompt: "{{item}}", each: ["1", "2"] }] }, { maxSteps: 10 })
+  const wf = { steps, state: D.initialState(steps) }
+  // One scarce slot for the "c" steps (Claude Code), reserved by the check itself.
+  let scarce = 1
+  const admit = (id) => !id.startsWith("c-") || scarce-- > 0
+  assert.deepEqual(D.ready(wf, 4, admit), ["c-1", "o-1", "o-2"])
+  assert.deepEqual(D.ready(wf, 2, () => true), ["c-1", "c-2"])
+  assert.deepEqual(D.ready(wf, 9, (id) => id.startsWith("o-")), ["o-1", "o-2"])
+})
+
+test("pool: learned limits and speeds, soonest-finish pick, one cut per burst", async () => {
+  const P = await import("./pool.ts")
+  const limits = new Map()
+  const running = { a: 0, b: 0, c: 0 }
+  const count = (m) => running[m]
+  // Nothing known: the least-loaded member, pool order on ties.
+  assert.equal(P.pick(["a", "b"], count, limits, 0), "a")
+  running.a = 16
+  assert.equal(P.pick(["a", "b"], count, limits, 0), "b")
+  // A throttling error with 16 running halves to 8 and pauses the model; more errors in the burst do not cut again.
+  P.limited(limits, "a", 16, 1000)
+  P.limited(limits, "a", 15, 1500)
+  assert.equal(limits.get("a").cap, 8)
+  assert.equal(P.room(limits, "a", 0, 2000), 0)
+  assert.equal(P.room(limits, "a", 4, 1000 + P.PAUSE_MS), 4)
+  P.limited(limits, "a", 8, 1000 + P.PAUSE_MS + 1)
+  assert.equal(limits.get("a").cap, 4)
+  // Additive increase: cap successes raise the cap by one, up to max; speeds average.
+  for (let i = 0; i < 4; i++) P.succeeded(limits, "a", 1000, 5)
+  assert.equal(limits.get("a").cap, 5)
+  assert.equal(limits.get("a").ms, 1000)
+  P.succeeded(limits, "a", 2000, 5)
+  assert.equal(limits.get("a").ms, 1300)
+  // Soonest finish: b (unthrottled) measured at 10 s, c at 1 s: with 2 running on c and none on b, c still wins.
+  running.a = 5
+  P.succeeded(limits, "b", 10000, 16)
+  P.succeeded(limits, "c", 1000, 16)
+  running.b = 0
+  running.c = 2
+  assert.equal(P.pick(["b", "c"], count, limits, 99999), "c")
+  running.c = 12
+  assert.equal(P.pick(["b", "c"], count, limits, 99999), "b")
+  // A member never measured is assumed as fast as the best one, so it gets tried.
+  running.c = 0
+  assert.equal(P.pick(["c", "d"], (m) => (m === "c" ? 1 : 0), limits, 99999), "d")
+  // A full model is skipped; when nothing has room, no pick.
+  assert.equal(P.pick(["a"], count, limits, 99999), undefined)
+  // Queue-aware: "cc" works 8 at a time in 3 s, "slow" takes 15 s. With cc full (8 running), waiting for a
+  // cc slot (2 batches = 6 s) beats starting on slow (15 s): the step waits. With 24 queued on cc it does not.
+  const speeds = new Map()
+  P.succeeded(speeds, "cc", 3000, 16)
+  P.succeeded(speeds, "slow", 15000, 16)
+  const width = (m) => (m === "cc" ? 8 : Infinity)
+  assert.deepEqual(P.choose(["cc", "slow"], (m) => (m === "cc" ? 8 : 0), speeds, 0, width), { model: "cc", ready: false })
+  assert.deepEqual(P.choose(["cc", "slow"], (m) => (m === "cc" ? 4 : 0), speeds, 0, width), { model: "cc", ready: true })
+  assert.deepEqual(P.choose(["cc", "slow"], (m) => (m === "cc" ? 40 : 0), speeds, 0, width), { model: "slow", ready: true })
+  // blocked: no room for other reasons (the Claude Code process cap shared by every Claude Code model).
+  assert.deepEqual(P.choose(["cc"], () => 0, speeds, 0, width, () => true), { model: "cc", ready: false })
+  assert.ok(P.throttled({ status: 429 }) && P.throttled({ status: 503 }) && P.throttled({ type: "provider.internal", message: "Endpoint is unavailable." }))
+  assert.ok(!P.throttled({ status: 400, type: "invalid_request" }))
+  // An exhausted quota (agentrouter: 403 "pre-consume quota failed") parks the model for minutes, even inside a short pause.
+  const quota = { status: 403, message: "pre-consume quota failed, user quota: $0.19, need quota: $1.03" }
+  assert.ok(P.throttled(quota) && P.exhausted(quota) && !P.exhausted({ status: 503 }))
+  // A request-rate limit (per account: pauses the provider's other members) versus a capacity error (per model).
+  assert.ok(P.rateLimit({ message: "Rate limit exceeded. Please try again later." }) && P.rateLimit({ status: 429 }))
+  assert.ok(!P.rateLimit({ status: 503, message: "Upstream request failed: Endpoint is unavailable." }))
+  P.limited(limits, "q", 4, 0)
+  P.limited(limits, "q", 4, 100, P.QUOTA_PAUSE_MS)
+  assert.equal(P.room(limits, "q", 0, 60_000), 0)
+  assert.equal(P.room(limits, "q", 0, 100 + P.QUOTA_PAUSE_MS) > 0, true)
+})
+
+test("store: learned model speeds persist for a day, merged per model", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "wf-speeds-"))
+  const before = process.env.XDG_DATA_HOME
+  process.env.XDG_DATA_HOME = dir
+  try {
+    assert.deepEqual(Store.loadSpeeds(), {})
+    Store.saveSpeeds({ "a/x": 3000 }, 1000)
+    Store.saveSpeeds({ "b/y": 9000 }, 2000)
+    assert.deepEqual(Store.loadSpeeds(3000), { "a/x": 3000, "b/y": 9000 })
+    assert.deepEqual(Store.loadSpeeds(1000 + 24 * 3600 * 1000 + 1), { "b/y": 9000 })
+  } finally {
+    process.env.XDG_DATA_HOME = before
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test("pools and {{file}}: tier lists, explicit lists, validation", () => {
+  const pooled = S.normalize({ models: { fast: "openai/gpt-5, anthropic/claude-haiku-4-5, anthropic/gone" } })
+  assert.equal(pooled.models.fast, "openai/gpt-5, anthropic/claude-haiku-4-5, anthropic/gone")
+  const choice = Models.chooseModel({ step: { title: "", prompt: "", agent: "explore" }, policy: pooled, parent, available, small })
+  assert.deepEqual(choice.pool, ["openai/gpt-5", "anthropic/claude-haiku-4-5"])
+  assert.deepEqual(choice.ref, { providerID: "openai", id: "gpt-5" })
+  assert.match(choice.reason, /pool \(2 of 3 models usable\)/)
+  // Nothing usable: like a missing single model, the automatic choice.
+  const dead = Models.chooseModel({ step: { title: "", prompt: "", agent: "explore" }, policy: S.normalize({ models: { fast: "x/a, y/b" } }), parent, available, small })
+  assert.equal(dead.pool, undefined)
+  assert.equal(dead.ref.id, "claude-haiku-4-5")
+  assert.deepEqual(choose({ id: "x", model: "openai/gpt-5,anthropic/claude-opus-4-5" }).pool, ["openai/gpt-5", "anthropic/claude-opus-4-5"])
+  assert.match(choose({ id: "x", model: "openai/gpt-5, anthropic/nope" }).error, /not available/)
+  assert.equal(S.validModelSetting("a/b, c/d"), true)
+  assert.equal(S.validModelSetting("a/b, auto"), false)
+  // {{file}} goes with each; without it the plan is refused.
+  assert.throws(() => D.validatePlan({ steps: [{ id: "a", prompt: "Summarize {{file}}" }] }, { maxSteps: 5 }), /needs each/)
+  const { steps } = D.validatePlan({ steps: [{ id: "f", prompt: "Summarize:\n{{file}}", each: ["a.ts"] }] }, { maxSteps: 5 })
+  const wf = { id: "w", name: "w", parentSessionID: "s", status: "running", createdAt: 0, steps, state: D.initialState(steps), messages: [] }
+  const prompt = D.stepPrompt({ workflow: wf, step: steps[0], inbox: [], messaging: false, maxOutputChars: 1000, file: "export const x = 1" })
+  assert.match(prompt, /<file path="a\.ts">\nexport const x = 1\n<\/file>/)
+  assert.match(D.stepPrompt({ workflow: wf, step: steps[0], inbox: [], messaging: false, maxOutputChars: 1000 }), /could not be inlined/)
+})
+
+test("Claude Code workers: available with the CLI, read-only steps only, editing steps fall back", () => {
+  const cc = S.normalize({ models: S.PRESETS["free-cc"] })
+  const run = (step, claudeCode = true) =>
+    Models.chooseModel({ step: { title: "", prompt: "", agent: "general", ...step }, policy: cc, parent, available, small, claudeCode })
+  assert.deepEqual(run({ kind: "review" }).ref, { providerID: "claude-code", id: "opus" })
+  assert.deepEqual(run({ agent: "explore", kind: "plan" }).ref, { providerID: "claude-code", id: "opus" })
+  // The default tier is claude-code/sonnet, but an implement step edits: the caller's model.
+  const edit = run({ kind: "implement" })
+  assert.deepEqual(edit.ref, parent)
+  assert.match(edit.reason, /read-only and this step edits/)
+  // Without the CLI the strong tier falls back to the automatic choice.
+  assert.equal(run({ kind: "review" }, false).ref.id, "claude-opus-4-5")
+  // Explicit requests.
+  assert.deepEqual(choose({ id: "x", agent: "reviewer", model: "claude-code/sonnet" }, { claudeCode: true }).ref, { providerID: "claude-code", id: "sonnet" })
+  assert.match(choose({ id: "x", model: "claude-code/sonnet", prompt: "implement it" }, { claudeCode: true }).error, /read-only/)
+  assert.match(choose({ id: "x", agent: "explore", model: "claude-code/sonnet" }).error, /claude CLI/)
+  assert.match(choose({ id: "x", agent: "explore", model: "claude-code/gpt" }, { claudeCode: true }).error, /one of/)
+  // Presets write the three tiers and keep the rest.
+  const next = S.applyChange({ enabled: true, models: { strongMaxCostRatio: 2 } }, "preset", "cc").next
+  assert.deepEqual(next, { enabled: true, models: { strongMaxCostRatio: 2, fast: "claude-code/haiku", strong: "claude-code/opus", default: "claude-code/sonnet" } })
+  assert.match(S.applyChange({}, "preset", "nope").error, /Unknown preset/)
+  // claudeMode auto/bypass: editing steps may use Claude Code too.
+  assert.deepEqual(run({ kind: "implement" }, true).ref, parent)
+  const editsOK = Models.chooseModel({ step: { title: "", prompt: "", agent: "general", kind: "implement" }, policy: cc, parent, available, small, claudeCode: true, claudeEdits: true })
+  assert.deepEqual(editsOK.ref, { providerID: "claude-code", id: "sonnet" })
+  assert.deepEqual(choose({ id: "x", model: "claude-code/sonnet", prompt: "implement it" }, { claudeCode: true, claudeEdits: true }).ref, { providerID: "claude-code", id: "sonnet" })
+  assert.equal(S.normalize({}).claudeMode, "readonly")
+  assert.equal(S.normalize({ claudeMode: "bypass" }).claudeMode, "bypass")
+  assert.equal(S.normalize({ claudeMode: "yolo" }).claudeMode, "readonly")
+  assert.deepEqual(S.applyChange({}, "claudeMode", "auto").next, { claudeMode: "auto" })
+  assert.deepEqual(S.applyChange({}, "claudeParallel", "8").next, { claudeParallel: 8 })
+  assert.match(S.applyChange({}, "claudeParallel", "40").error, /1–16/)
+  assert.match(S.applyChange({}, "claudeMode", "yolo").error, /readonly, auto, bypass/)
+})
+
+test("Claude Code workers: lean read-only argv, own login, stream-json activity and result", () => {
+  const argv = C.args("sonnet")
+  assert.deepEqual(argv.slice(argv.indexOf("--tools") + 1), ["Read", "Grep", "Glob", "WebSearch", "WebFetch"])
+  for (const flag of ["-p", "--strict-mcp-config", "--no-session-persistence"]) assert.ok(argv.includes(flag))
+  assert.equal(argv[argv.indexOf("--model") + 1], "sonnet")
+  assert.deepEqual(C.env({ PATH: "/bin", ANTHROPIC_API_KEY: "k", CLAUDECODE: "1" }), { PATH: "/bin" })
+  const activity = { tools: 0 }
+  assert.equal(C.parse("not json", activity), undefined)
+  C.parse(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Grep", input: { pattern: "auth\n middleware" } }] } }), activity)
+  C.parse(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Found  it" }] } }), activity)
+  assert.deepEqual(activity, { tools: 1, tool: "Grep", detail: "auth middleware", text: "Found it" })
+  assert.deepEqual(C.parse(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "5" }), activity), { result: "5" })
+  assert.deepEqual(C.parse(JSON.stringify({ type: "result", subtype: "error_max_turns", is_error: true }), activity), { error: "error_max_turns" })
+  assert.equal(C.describe({ file_path: "a/b.ts", pattern: "x" }), "a/b.ts")
+  // Editing modes: every tool, no prompts, no nested Claude Code subagents.
+  const auto = C.args("sonnet", "auto")
+  assert.ok(!auto.includes("--tools"))
+  assert.equal(auto[auto.indexOf("--permission-mode") + 1], "auto")
+  assert.deepEqual(auto.slice(auto.indexOf("--disallowedTools") + 1), ["Task", "Agent"])
+  const bypass = C.args("sonnet", "bypass")
+  assert.equal(bypass[bypass.indexOf("--permission-mode") + 1], "bypassPermissions")
+  assert.match(C.preamble("auto"), /change only the files your task owns/)
+  assert.match(C.preamble(), /read-only/)
+})
+
 test("parseRef and formatRef round-trip and reject malformed references", () => {
   assert.deepEqual(Models.parseRef("p/m#v"), { providerID: "p", id: "m", variant: "v" })
   assert.equal(Models.formatRef(Models.parseRef("p/a/b")), "p/a/b")
@@ -592,7 +813,7 @@ test("settings: defaults, field-by-field fallback, build default, explicit file 
   assert.equal(odd.agents.explore, "fast")
   assert.equal(odd.kinds.review, "fast")
   assert.equal(odd.kinds.search, "fast")
-  assert.match(S.summary(S.normalize({ enabled: true })), /^on · fast auto · strong auto · 5 parallel$/)
+  assert.match(S.summary(S.normalize({ enabled: true })), /^on · fast auto · strong auto · 16 parallel$/)
 })
 
 test("settings changes keep other keys and validate input", () => {
@@ -600,7 +821,7 @@ test("settings changes keep other keys and validate input", () => {
   assert.deepEqual(S.applyChange(undefined, "models.fast", "openai/gpt-5-mini"), { next: { models: { fast: "openai/gpt-5-mini" } } })
   assert.deepEqual(S.applyChange({ models: { fast: "auto" } }, "models.strong", "inherit"), { next: { models: { fast: "auto", strong: "inherit" } } })
   assert.match(S.applyChange({}, "models.default", "auto").error, /inherit or provider\/model/)
-  assert.match(S.applyChange({}, "maxParallel", "0").error, /1–8/)
+  assert.match(S.applyChange({}, "maxParallel", "0").error, /1–64/)
   assert.match(S.applyChange({}, "enabled", "maybe").error, /on or off/)
   assert.match(S.applyChange({}, "nope", "1").error, /Unknown/)
 })
@@ -618,7 +839,7 @@ test("store: workflow files, cancel markers, settings file and the startup sweep
     const file = JSON.parse(await readFile(process.env.INFINITEOC_SETTINGS_FILE, "utf8"))
     assert.deepEqual(file, { traffic: { mode: "tor" }, providers: { p: {} }, workflows: { maxParallel: 2, enabled: true } })
     assert.equal(Store.readSettings().maxParallel, 2)
-    assert.match(Store.changeSetting("maxParallel", "x").error, /1–8/)
+    assert.match(Store.changeSetting("maxParallel", "x").error, /1–64/)
     await writeFile(process.env.INFINITEOC_SETTINGS_FILE, "{ // jsonc\n}")
     assert.match(Store.changeSetting("enabled", "off").error, /not strict JSON/)
     assert.equal(await readFile(process.env.INFINITEOC_SETTINGS_FILE, "utf8"), "{ // jsonc\n}")
@@ -674,8 +895,8 @@ test("plugin keeps upstream's permission model: same check and visibility as sub
   assert.match(source, /metadata: \{ source: "workflow" \}, resume: false \}/)
   // Interruptions stop the steps (they run as process-wide jobs) instead of orphaning them.
   assert.match(source, /Effect\.onInterrupt\(\(\) => cancel\(run, "the starting agent was interrupted"\)\)/)
-  assert.match(source, /const running = D\.cancelAll\(run\.wf, Date\.now\(\), "interrupted"\)\n\s+run\.wf\.status = "interrupted"\n\s+for \(const other of running\) yield\* stopSession/)
-  assert.match(source, /if \(state\.status !== "pending"\) continue/)
+  assert.match(source, /const running = D\.cancelAll\(run\.wf, Date\.now\(\), "interrupted"\)\n\s+run\.wf\.status = "interrupted"\n\s+for \(const other of running\) yield\* stopStep/)
+  assert.match(source, /if \(state\.status !== "pending"\) return false/)
   // Compaction and side generations get the same guidance, so their prompt prefix (and cache) matches.
   assert.doesNotMatch(source, /kind === "context"/)
   for (const kind of ["context", "compaction", "generate"]) assert.match(source, new RegExp(`ctx\\.session\\.hook\\("${kind}", hook\\)`))

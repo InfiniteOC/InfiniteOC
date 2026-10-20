@@ -32,7 +32,7 @@ export function settingsSource(source, enabled) {
 
 const CORE = "packages/core/src/plugin"
 const FEATURES = "packages/tui/src/infiniteoc-features"
-const coreNames = { dag: "infiniteoc-wf-dag.js", mailbox: "infiniteoc-wf-mailbox.js", models: "infiniteoc-wf-models.js", settings: "infiniteoc-wf-settings.js", store: "infiniteoc-wf-store.js" }
+const coreNames = { claude: "infiniteoc-wf-claude.js", pool: "infiniteoc-wf-pool.js", dag: "infiniteoc-wf-dag.js", mailbox: "infiniteoc-wf-mailbox.js", models: "infiniteoc-wf-models.js", settings: "infiniteoc-wf-settings.js", store: "infiniteoc-wf-store.js" }
 const tuiNames = { dag: "workflows-dag", settings: "workflows-settings", store: "workflows-store" }
 
 // safe-guard's /readonly refuses editing subagents; a workflow step with an editing agent is one too.
@@ -45,6 +45,11 @@ const READONLY_WORKFLOW = `        // mods/workflows: every workflow step is a s
         }
 `
 
+const NO_SNAPSHOT = `// Written by mods/workflows. Sessions whose model steps skip git snapshots: read-only workflow steps
+// (the plugin adds them when they start and removes them when they end).
+export const sessions = new Set<string>()
+`
+
 export default {
   id: "workflows",
   version: "1.0.0",
@@ -55,11 +60,24 @@ export default {
     // Server: pure modules plus the plugin, registered right after upstream's subagent tool. The plugin
     // imports mods/infiniteoc's background registry (core/src/infiniteoc/background.ts) so /goal waits for runs.
     await api.write(`${CORE}/infiniteoc-wf-settings.ts`, settings)
-    for (const name of ["dag", "mailbox", "models", "store"]) await api.write(`${CORE}/infiniteoc-wf-${name}.ts`, relink(await file(`${name}.ts`), coreNames))
+    for (const name of ["claude", "dag", "mailbox", "models", "pool", "store"]) await api.write(`${CORE}/infiniteoc-wf-${name}.ts`, relink(await file(`${name}.ts`), coreNames))
     await api.write(`${CORE}/infiniteoc-workflows.ts`, relink(await file("plugin.ts"), coreNames))
     await api.patch(`${CORE}/internal.ts`, (source) => {
       source = replace(source, 'import { SubagentTool } from "../tool/plugin/subagent.js"\n', 'import { SubagentTool } from "../tool/plugin/subagent.js"\nimport * as InfiniteocWorkflows from "./infiniteoc-workflows.js"\n')
       return replace(source, "  SubagentTool.Plugin,\n", "  SubagentTool.Plugin,\n  InfiniteocWorkflows.Plugin,\n")
+    })
+
+    // Read-only workflow steps skip the per-step git snapshots: their start and end trees are always the
+    // same, and the 8 git processes per model step were ~80% of a step's server time (measured).
+    await api.write(`packages/core/src/infiniteoc/no-snapshot.ts`, NO_SNAPSHOT)
+    await api.patch("packages/core/src/session/runner/step.ts", (source) => {
+      source = replace(source, 'import { Snapshot } from "../../snapshot.js"\n', 'import { Snapshot } from "../../snapshot.js"\nimport * as NoSnapshot from "../../infiniteoc/no-snapshot.js"\n')
+      source = replace(
+        source,
+        "    const pendingStartSnapshot = yield* snapshots.capture().pipe(Effect.forkScoped)\n",
+        "    const skipSnapshot = NoSnapshot.sessions.has(input.sessionID)\n    const pendingStartSnapshot = yield* (skipSnapshot ? Effect.succeed(undefined) : snapshots.capture()).pipe(Effect.forkScoped)\n",
+      )
+      return replace(source, "          const snapshot = yield* snapshots.capture()\n", "          const snapshot = skipSnapshot ? undefined : yield* snapshots.capture()\n")
     })
 
     // safe-guard (when enabled before this mod): /readonly also covers workflow steps.
