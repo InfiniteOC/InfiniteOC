@@ -29,6 +29,15 @@ export default {
     })
     await api.patch("packages/core/src/infiniteoc/guidance.ts", (source) =>
       replace(source, marker, `infiniteocGuidance.build.push(${JSON.stringify(guidance)})\n${marker}`))
+    // Every tool's object schema lists `required`, even when empty: strict OpenAI-compatible proxies
+    // (agentrouter) reject the whole request otherwise ("Invalid schema for function 'free_port': null
+    // is not of type array"), which made such providers unusable for any agent with an all-optional tool.
+    await api.patch("packages/core/src/tool/runtime.ts", (source) =>
+      replace(
+        source,
+        "const inputJsonSchema = (schema: Tool.ValueSchema<any>): JsonSchema.JsonSchema => {\n  if (schema === undefined || schema === null) return {}\n",
+        "const inputJsonSchema = (schema: Tool.ValueSchema<any>): JsonSchema.JsonSchema => {\n  const json = inputJsonSchemaOf(schema) as Record<string, unknown>\n  return (json.type === \"object\" && !Array.isArray(json.required) ? { ...json, required: [] } : json) as JsonSchema.JsonSchema\n}\n\nconst inputJsonSchemaOf = (schema: Tool.ValueSchema<any>): JsonSchema.JsonSchema => {\n  if (schema === undefined || schema === null) return {}\n",
+      ))
     // Battery saver: the launcher sets INFINITEOC_BATTERY=1 on battery; animations then default to off
     // unless the user's own config says otherwise.
     await api.patch("packages/tui/src/config/index.tsx", (source) =>
