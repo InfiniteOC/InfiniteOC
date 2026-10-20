@@ -79,7 +79,7 @@ jobs:
             echo "- URL: $url (sign in with your HOST_PASSWORD secret)"
             echo "- Up for about $minutes minutes, until $(date -u -d "+$minutes min" '+%H:%M UTC'). Cancel the run to stop it sooner."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "Host is up for $minutes minutes; the URL is in this run's summary."
+          echo "Host is up for $minutes minutes at $url"
       # Background processes outlive their step; this one holds the job open while the host runs.
       - name: Keep alive
         run: |
