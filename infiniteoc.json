@@ -33,6 +33,7 @@
     "./mods/infiniteoctx/index.mjs",
     "./mods/infinitokensave/index.mjs",
     "./mods/infinitui/index.mjs",
+    "./mods/fastlane/index.mjs",
     "./mods/webui/index.mjs"
   ],
   "options": {
