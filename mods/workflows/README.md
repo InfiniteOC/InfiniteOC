@@ -98,6 +98,22 @@ Delegation goes through workflows by default rather than by exception:
 - When one assistant message still starts a second plain `subagent` call, that call's result gets a one-paragraph
   note pointing at the workflow tool (`D.subagentNudge`, at most twice per session, only while workflows are on).
 - `infiniteoc.json` turns workflows on for the build (`options.workflows.enabled`); `settings.json` still wins.
+- **Fleet mode** (`fleet: true`; `/fleet on|off` in InfiniTUI, or `/workflows` → Settings) makes delegation the rule
+  instead of the preference. Primary agents get a `[Fleet mode]` system part (`FLEET_GUIDANCE`): they are the
+  orchestrator, even one task goes to a one-step workflow, and they do not read, grep, edit or run commands themselves
+  beyond a look-up or two to plan. Their own direct work calls (`read grep glob edit write patch shell`) are counted
+  since their last `workflow` or `subagent` call; the third and every fourth after it get a `[Fleet]` note in the
+  result telling them to hand the rest to a workflow (`D.fleetNudge`). Workflow steps and subagents never see either.
+  The guidance asks for many narrow steps at once (10 to 50), the fast tier on every read-only step and a shallow
+  dependency chain, and every step's prompt gets `D.FAST_WORKER`: fewest tool calls, batched, stop at the answer,
+  reply in a few lines. Claude Code is never used: `claude-code/*` drops out of every tier and pool (a configured
+  `claude-code/opus` strong tier falls back to `auto`) and a step that names one is refused, so the user's Claude
+  limits stay untouched. Turning it on also sets `enabled` and `maxParallel: 64`.
+- **Rate limits wait instead of failing.** Upstream retries a request 10 times 2-10 s apart (about 84 s), less than
+  a free provider's rate limit lasts. On a 429 a workflow step first moves to a pool member on another provider;
+  with nowhere to go (and for a fleet orchestrator) the retry waits `Pool.rateLimitDelay`: 5 s doubling to 60 s,
+  ±20%, never under the provider's retry-after, about 7 minutes over the 10 retries. The model and its same-provider
+  pool members pause that long, so new steps do not start into the limit.
 
 For speed: up to 8 steps run at once by default (`maxParallel`, up to 64), search/summarize steps run on the fast model, and the
 guidance tells the agent to start with `wait: true` when the result is the only thing it needs next, which returns
@@ -204,6 +220,7 @@ Invalid values fall back field by field.
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `enabled` | `false` | The contract flag below |
+| `fleet` | `false` | Fleet mode: the primary agent delegates nearly all its work through workflows, never on Claude Code (see above); on also sets `enabled` and `maxParallel: 64` |
 | `maxParallel` | `16` | Steps of one workflow running at once (1–64); learned per-model limits keep throttled providers lower |
 | `claudeParallel` | `4` | Claude Code worker processes at once, across all workflows (1–16) |
 | `claudeMode` | `"readonly"` | What Claude Code workers may do: `readonly`, `auto` or `bypass` (see above) |

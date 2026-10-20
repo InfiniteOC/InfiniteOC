@@ -90,6 +90,19 @@ export function succeeded(limits: Limits, model: string, ms: number, max: number
   found.wins = 0
 }
 
+/** Waits before retrying a rate-limited request: 5 s, doubling to RATE_MAX_MS; with 10 retries about 7 minutes. */
+export const RATE_BASE_MS = 5000
+export const RATE_MAX_MS = 60_000
+
+/**
+ * The wait before retry `attempt` (2 is the first retry) after a rate limit: never shorter than the
+ * `proposed` delay (it carries the provider's retry-after), spread ±20% so parallel steps do not retry in step.
+ */
+export function rateLimitDelay(attempt: number, proposed = 0, jitter = Math.random()) {
+  const backoff = Math.min(RATE_MAX_MS, RATE_BASE_MS * 2 ** Math.max(0, attempt - 2))
+  return Math.round(Math.max(proposed, backoff * (0.8 + 0.4 * jitter)))
+}
+
 /** Errors that mean the provider is out of capacity: they cut the model's limit and move pooled steps. */
 export const throttled = (error: { status?: number; type?: string; message?: string }) =>
   error.status === 429 ||

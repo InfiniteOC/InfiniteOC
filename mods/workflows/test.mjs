@@ -10,6 +10,7 @@ import * as C from "./claude.ts"
 import * as D from "./dag.ts"
 import * as M from "./mailbox.ts"
 import * as Models from "./models.ts"
+import * as Pool from "./pool.ts"
 import * as S from "./settings.ts"
 import * as Store from "./store.ts"
 
@@ -333,6 +334,8 @@ test("step prompts fill templates, pass other dependency results, queued message
   assert.match(text, /- from main: keep the API/)
   assert.match(text, /Your team: main \(the agent that started this workflow\), find \(general: Find handlers\), spec/)
   assert.doesNotMatch(D.stepPrompt({ workflow: wf, step: steps[2], inbox: [], messaging: false, maxOutputChars: 20 }), /send_message/)
+  assert.doesNotMatch(text, /Speed matters most/)
+  assert.match(D.stepPrompt({ workflow: wf, step: steps[2], inbox: [], messaging: false, maxOutputChars: 20, fast: true }), /Speed matters most/)
 })
 
 test("status and final texts show each step's model and tier; unread messages reach the starter", () => {
@@ -925,6 +928,45 @@ test("flag.mjs: other mods read and flip workflows.enabled without touching othe
     previous === undefined ? delete process.env.INFINITEOC_SETTINGS_FILE : (process.env.INFINITEOC_SETTINGS_FILE = previous)
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+test("fleet mode nudges the primary agent after its own direct work calls, until it delegates", () => {
+  const counts = new Map()
+  // A look-up or two to plan is free; non-work tools never count.
+  assert.equal(D.fleetNudge(counts, "s1", "glob"), undefined)
+  assert.equal(D.fleetNudge(counts, "s1", "question"), undefined)
+  assert.equal(D.fleetNudge(counts, "s1", "read"), undefined)
+  assert.match(D.fleetNudge(counts, "s1", "edit"), /Fleet mode is on and you made 3 direct tool calls yourself \(edit last\).*workflow/)
+  // Then one note every FLEET_EVERY calls.
+  for (let i = 0; i < D.FLEET_EVERY - 1; i++) assert.equal(D.fleetNudge(counts, "s1", "shell"), undefined)
+  assert.match(D.fleetNudge(counts, "s1", "shell"), /7 direct tool calls/)
+  // Delegating starts the count over.
+  assert.equal(D.fleetNudge(counts, "s1", "workflow"), undefined)
+  assert.equal(D.fleetNudge(counts, "s1", "read"), undefined)
+  assert.equal(D.fleetNudge(counts, "s1", "read"), undefined)
+  assert.match(D.fleetNudge(counts, "s1", "read"), /3 direct/)
+})
+
+test("a rate limit waits 5 s doubling to a minute, never under the provider's retry-after", () => {
+  assert.equal(Pool.rateLimitDelay(2, 0, 0.5), 5000)
+  assert.equal(Pool.rateLimitDelay(3, 0, 0.5), 10000)
+  assert.equal(Pool.rateLimitDelay(9, 0, 0.5), 60000)
+  assert.equal(Pool.rateLimitDelay(2, 0, 0), 4000)
+  assert.equal(Pool.rateLimitDelay(2, 0, 1), 6000)
+  assert.equal(Pool.rateLimitDelay(2, 30000, 0.5), 30000)
+  // Ten retries wait about seven minutes in all.
+  let total = 0
+  for (let attempt = 2; attempt <= 11; attempt++) total += Pool.rateLimitDelay(attempt, 0, 0.5)
+  assert.equal(total, 435000)
+})
+
+test("fleet mode is a setting that also turns workflows on", () => {
+  assert.equal(S.normalize({}).fleet, false)
+  assert.equal(S.normalize({ fleet: "yes" }).fleet, false)
+  assert.deepEqual(S.applyChange({ x: 1 }, "fleet", "on"), { next: { x: 1, fleet: true, enabled: true, maxParallel: 64 } })
+  assert.deepEqual(S.applyChange({ enabled: true, fleet: true }, "fleet", "off"), { next: { enabled: true, fleet: false } })
+  assert.match(S.applyChange({}, "fleet", "maybe").error, /on or off/)
+  assert.match(S.summary(S.normalize({ enabled: true, fleet: true })), /^fleet · /)
 })
 
 test("a second subagent call in one message gets a workflow nudge, at most twice per session", () => {

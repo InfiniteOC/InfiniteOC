@@ -94,9 +94,10 @@ async function settingsMenu(ctx: FeatureContext) {
   for (;;) {
     const s = readSettings()
     const key = await ctx.ui.select({
-      title: `Workflows settings · ${s.enabled ? "on" : "off"}`,
+      title: `Workflows settings · ${s.enabled ? (s.fleet ? "fleet" : "on") : "off"}`,
       options: [
         { title: s.enabled ? "Turn off" : "Turn on", value: "enabled", description: "The workflow tool and its guidance; read on every request, no restart" },
+        { title: s.fleet ? "Turn fleet mode off" : "Turn fleet mode on", value: "fleet", description: "The agent hands nearly all its work to workflows instead of doing it itself" },
         { title: "Fast model", value: "models.fast", description: `search, grep, summaries · ${s.models.fast}` },
         { title: "Strong model", value: "models.strong", description: `planning, review, hard reasoning · ${s.models.strong}` },
         { title: "Default model", value: "models.default", description: `implementation, other steps · ${s.models.default}` },
@@ -107,6 +108,7 @@ async function settingsMenu(ctx: FeatureContext) {
     if (!key) return
     let value: string | undefined
     if (key === "enabled") value = s.enabled ? "off" : "on"
+    else if (key === "fleet") value = s.fleet ? "off" : "on"
     else if (key === "notify") value = s.notify === "end" ? "each" : "end"
     else {
       const tier = key.startsWith("models.") ? (key.slice(7) as "fast" | "strong" | "default") : undefined

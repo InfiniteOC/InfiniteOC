@@ -66,15 +66,18 @@ func (a *App) openFleet() tea.Cmd {
 	return a.toggleFleet()
 }
 
-// fleetCommand runs /fleet [preset <name> | claude <mode> | parallel <n> | fast|strong|default <models>].
+// fleetCommand runs /fleet [on | off | preset <name> | claude <mode> | parallel <n> | fast|strong|default <models>].
 func (a *App) fleetCommand(args string) tea.Cmd {
 	f := strings.Fields(args)
 	if len(f) == 0 {
 		return a.toggleFleet()
 	}
-	key := map[string]string{"preset": "preset", "claude": "claudeMode", "parallel": "maxParallel", "workers": "claudeParallel", "fast": "models.fast", "strong": "models.strong", "default": "models.default"}[f[0]]
+	if f[0] == "on" || f[0] == "off" {
+		f = []string{"fleet", f[0]}
+	}
+	key := map[string]string{"fleet": "fleet", "preset": "preset", "claude": "claudeMode", "parallel": "maxParallel", "workers": "claudeParallel", "fast": "models.fast", "strong": "models.strong", "default": "models.default"}[f[0]]
 	if key == "" || len(f) < 2 {
-		return a.showToast("info", "Fleet", "/fleet toggles the panel · preset turbo|free-cc|free|cc|auto · claude readonly|auto|bypass · parallel 1-64 · workers 1-16 · fast|strong|default <model>[, <model>…]", 8*time.Second)
+		return a.showToast("info", "Fleet", "/fleet toggles the panel · on|off: the agent delegates its work to workflows · preset turbo|free-cc|free|cc|auto · claude readonly|auto|bypass · parallel 1-64 · workers 1-16 · fast|strong|default <model>[, <model>…]", 8*time.Second)
 	}
 	// A pool is several models separated by commas: "a/x, b/y".
 	value := strings.Join(f[1:], " ")
@@ -221,6 +224,7 @@ func (a *App) renderFleet(w, h, y0 int) []string {
 		out = append(out, "  "+title, "",
 			"  "+s.Muted.Render("No workflows in this session in the last 15 minutes."),
 			"  "+s.Subtle.Render("Ask for parallel work (\"research X and Y in parallel, then review\") and the steps appear here."),
+			"  "+s.Subtle.Render("/fleet on: the agent hands its work to workflows instead of doing it itself"),
 			"  "+s.Subtle.Render("Models per step: /fleet preset turbo · free-cc · free · cc · auto      esc or ctrl+f closes"))
 		return out
 	}

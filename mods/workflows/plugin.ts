@@ -57,6 +57,15 @@ The workflow tool is your default way to delegate more than one task. Use it whe
 - Steps can talk: send_message(to, text) to a step id, "main" (you) or "all", and read_messages.
 - Results are the steps' reports: answer from them. Do not re-read files or re-run checks to confirm them unless the user asked for verification or reports contradict each other; never redo a step's work.`
 
+/** Added for primary agents while fleet mode is on; it overrides the "one quick task: subagent" rule above. */
+export const FLEET_GUIDANCE = `[Fleet mode]
+The user turned on fleet mode: you are the orchestrator, not the worker. Do the work through the workflow tool, almost always, even for one task (a one-step workflow, wait: true when you need its result next).
+- Reading code, searching, editing, running commands, tests and research all go to workflow steps. Do not read, grep, edit, write or run shell commands yourself; a look-up or two to plan the steps is the most you do directly.
+- Plan first, then delegate wide: split the task into many narrow steps that run at once (10 to 50 is normal; one question, one file area or one change each) rather than a few broad ones. Per-file work is one step with glob or each and {{file}}. Explore steps on separate questions, implement steps on disjoint files, a reviewer step after them.
+- Speed: set kind search or summarize on every step that only reads (the fast model), keep the dependency chain at most two or three levels deep, keep step prompts short, ask each step for a short answer, and start with wait: true when you need the results next.
+- Your own turns are for planning, talking to the user and answering from the steps' results. When a result shows more work, start the next workflow; never finish or redo a step's work by hand.
+- Work yourself only for a pure chat answer that needs no tools, or when the user explicitly asks you to do it yourself.`
+
 const Step = Schema.Struct({
   id: Schema.String.annotate({ description: 'Short unique id (letters, digits, "-", "_"); used in needs, {{steps.<id>}} and messages.' }),
   title: Schema.optionalKey(Schema.String).annotate({ description: "A 3-6 word label shown to the user." }),
@@ -418,7 +427,7 @@ export const Plugin = define({
         if (!bin) return resume(Effect.fail(new Error("the claude CLI is not on PATH")))
         const activity: C.Activity = (state.activity = { tools: 0 })
         const inbox = M.take(run.wf, step.id, run.members)
-        const prompt = `${C.preamble(run.settings.claudeMode)}\n\n${D.stepPrompt({ workflow: run.wf, step, inbox, messaging: false, maxOutputChars: run.settings.maxOutputChars, file: fileFor(step) })}`
+        const prompt = `${C.preamble(run.settings.claudeMode)}\n\n${D.stepPrompt({ workflow: run.wf, step, inbox, messaging: false, maxOutputChars: run.settings.maxOutputChars, file: fileFor(step), fast: run.settings.fleet })}`
         const child = spawn(bin, C.args(Models.parseRef(state.model!).id, run.settings.claudeMode), { cwd: location.directory, env: C.env(process.env), stdio: ["pipe", "pipe", "pipe"] })
         const key = `${run.wf.id}/${step.id}`
         kills.set(key, () => child.kill("SIGTERM"))
@@ -523,7 +532,7 @@ export const Plugin = define({
       const body = Effect.gen(function* () {
         if (C.isClaude(state.model)) return { status: "completed" as const, output: yield* runClaude(run, step), error: undefined as string | undefined }
         const inbox = M.take(run.wf, id, run.members)
-        const text = D.stepPrompt({ workflow: run.wf, step, inbox, messaging: run.messaging.has(step.agent), maxOutputChars: run.settings.maxOutputChars, file: fileFor(step) })
+        const text = D.stepPrompt({ workflow: run.wf, step, inbox, messaging: run.messaging.has(step.agent), maxOutputChars: run.settings.maxOutputChars, file: fileFor(step), fast: run.settings.fleet })
         const primary = state.model
         // Only read-only fan-out items get a backup run: running them twice cannot corrupt anything.
         if (!step.group || !run.readOnly.has(step.agent)) return yield* attempt(run, step, primary, text)
@@ -737,7 +746,8 @@ export const Plugin = define({
           : undefined
         const small = smallInfo ? available.find((model) => model.providerID === smallInfo.providerID && model.id === smallInfo.id) : undefined
 
-        const claudeCode = C.findBinary() !== undefined
+        // Fleet mode keeps the user's Claude Code limits free: claude-code/* drops out of every tier and pool.
+        const claudeCode = !current.fleet && C.findBinary() !== undefined
         const workflow: D.Workflow = {
           id: `wf_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
           name: plan.name,
@@ -750,6 +760,8 @@ export const Plugin = define({
           messages: [],
         }
         for (const step of plan.steps) {
+          if (current.fleet && step.model?.includes(`${C.PROVIDER}/`))
+            return yield* failure(`Step "${step.id}": fleet mode does not use Claude Code. Leave model unset.`)
           const choice = Models.chooseModel({
             step,
             policy: current,
@@ -1058,6 +1070,9 @@ export const Plugin = define({
       })
       .pipe(Effect.orDie)
 
+    // Fleet mode: the primary agents that got FLEET_GUIDANCE, and their direct work calls since they last delegated.
+    const fleetSessions = new Set<string>()
+    const fleetCounts = new Map<string, number>()
     const hook = (event: SessionHooks["context"]) =>
       Effect.gen(function* () {
         const current = settings()
@@ -1089,7 +1104,7 @@ export const Plugin = define({
           ...available.map((agent) => `- ${agent.id}: ${agent.description ?? "Use only when explicitly requested."}`),
           "",
           `Model tiers now: fast = ${current.models.fast}, strong = ${current.models.strong}, default = ${current.models.default}. At most ${current.maxParallel} steps run at once (Claude Code: ${current.claudeParallel}), ${current.maxSteps} steps per workflow after expanding each.`,
-          ...(C.findBinary()
+          ...(!current.fleet && C.findBinary()
             ? [
                 `${C.MODELS.map((id) => `${C.PROVIDER}/${id}`).join(", ")} run a step on the user's Claude Code` +
                   (current.claudeMode === "readonly"
@@ -1101,7 +1116,19 @@ export const Plugin = define({
         // Compaction and side generations get the same tools and guidance as the session's requests, so
         // their prompt prefix matches and they reuse its cache instead of re-reading the conversation.
         event.system.push(SystemPart.make(GUIDANCE))
+        if (current.fleet && selected?.mode !== "subagent" && !membership.has(sessionID)) {
+          event.system.push(SystemPart.make(FLEET_GUIDANCE))
+          fleetSessions.add(sessionID)
+        } else fleetSessions.delete(sessionID)
       })
+    yield* ctx.tool.hook("execute.after", (event) => {
+      if (event.status !== "completed" || !fleetSessions.has(event.sessionID) || !settings().fleet) return Effect.void
+      const note = D.fleetNudge(fleetCounts, event.sessionID, event.tool)
+      if (!note) return Effect.void
+      const content = event.result.content
+      event.result = { ...event.result, content: [...(typeof content === "string" ? [{ type: "text" as const, text: content }] : (content ?? [])), { type: "text" as const, text: note }] }
+      return Effect.void
+    })
     // Several subagent calls from one message are a workflow done by hand: say so in the second result.
     const nudges = new Map<string, D.NudgeState>()
     yield* ctx.tool.hook("execute.after", (event) => {
@@ -1113,27 +1140,35 @@ export const Plugin = define({
       return Effect.void
     })
 
-    // A throttled step (429, 503, overload): its model's learned limit drops (pool.ts), and a step with a pool
-    // moves to the member expected to finish first, instead of waiting out the exponential backoff.
+    // A throttled step (429, 503, overload): its model's learned limit drops (pool.ts), a step with a pool
+    // moves to another member, and a rate-limited one with nowhere to go (or a fleet orchestrator) waits longer.
     yield* ctx.session.hook("retry", (event) =>
       Effect.gen(function* () {
         const entry = membership.get(event.sessionID)
-        if (!entry || !Pool.throttled(event.error)) return
+        if ((!entry && !fleetSessions.has(event.sessionID)) || !Pool.throttled(event.error)) return
+        // A rate limit lasts longer than the default 2-10 s backoff: wait it out, growing up to a minute.
+        const rated = Pool.rateLimit(event.error)
+        const wait = rated ? Pool.rateLimitDelay(event.attempt, event.decision.retry ? event.decision.delay : 0) : 0
+        const backOff = () => {
+          if (rated && event.decision.retry) event.decision = { retry: true, delay: wait }
+        }
+        if (!entry) return backOff()
         const state = entry.run.wf.state[entry.member]
         const from = state.model
         if (!from || state.status !== "running") return
         const counts = runningByModel()
-        Pool.limited(limits, from, counts.get(from) ?? 1, Date.now(), Pool.exhausted(event.error) ? Pool.QUOTA_PAUSE_MS : Pool.PAUSE_MS)
+        const now = Date.now()
+        Pool.limited(limits, from, counts.get(from) ?? 1, now, Pool.exhausted(event.error) ? Pool.QUOTA_PAUSE_MS : rated ? wait : Pool.PAUSE_MS)
         // A rate limit is usually per account: the provider's other pool members (the free OpenCode models
-        // share one) pause too. Capacity errors (503, overload) stay per model.
-        if (Pool.rateLimit(event.error))
+        // share one) pause too, so new steps do not start into it. Capacity errors (503, overload) stay per model.
+        if (rated)
           for (const sibling of state.pool ?? [])
-            if (sibling !== from && sibling.split("/")[0] === from.split("/")[0]) Pool.limited(limits, sibling, counts.get(sibling) ?? 1, Date.now())
+            if (sibling !== from && sibling.split("/")[0] === from.split("/")[0]) Pool.limited(limits, sibling, counts.get(sibling) ?? 1, now, wait)
         // Not retried (a quota is final): the step runner moves a pooled step to another member itself.
         if (!event.decision.retry) return
         const others = state.pool?.filter((model) => model !== from && !C.isClaude(model)) ?? []
-        const to = others.length ? Pool.pick(others, (model) => counts.get(model) ?? 0, limits, Date.now()) : undefined
-        if (!to) return
+        const to = others.length ? Pool.pick(others, (model) => counts.get(model) ?? 0, limits, now) : undefined
+        if (!to) return backOff()
         yield* ctx.session.switchModel({ sessionID: event.sessionID, model: Model.Ref.parse(to) })
         state.model = to
         entry.run.dirty = true

@@ -92,7 +92,8 @@ What you get beyond the classic UI:
   when it ends. It opens by itself when a workflow starts; the prompt stays usable. Click an OpenCode step to
   open its session. A fan-out group (`each`) is one wide card: a grid with a cell per item (spinner, dot, cross;
   cells flash as they finish, and several items share a cell when the grid would not fit), throughput, time left
-  and the running members' tools. `/fleet preset free-cc|free|cc|auto` sets the workflow tier models,
+  and the running members' tools. `/fleet on|off` switches fleet mode (the agent hands nearly all its work to
+  workflows instead of doing it itself), `/fleet preset free-cc|free|cc|auto` sets the workflow tier models,
   `/fleet claude readonly|auto|bypass` what Claude Code workers may do, `/fleet workers N` how many run at once
   (each ~300 MB), `/fleet parallel N` the parallel steps,
   `/fleet fast|strong|default <model>[, <model>…]` a tier's model or pool. While steps run the panel refreshes

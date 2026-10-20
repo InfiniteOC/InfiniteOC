@@ -362,6 +362,10 @@ function teamList(workflow: Workflow, self: StepSpec) {
   return team
 }
 
+/** Fleet mode's speed rules for every step's worker. */
+export const FAST_WORKER =
+  "Speed matters most: you are one of many workers running in parallel. Use the fewest tool calls that do the task, make independent calls together in one message, read only what the task needs, stop as soon as you have the answer, do not re-check or explore beyond the task, and reply in a few lines."
+
 /**
  * The first prompt of a step's child session: the role, the task with {{steps.X}} templates
  * filled in, results of dependencies not referenced by a template, messages that arrived
@@ -375,6 +379,8 @@ export function stepPrompt(input: {
   maxOutputChars: number
   /** The content of the step's item file, for {{file}}: the step answers without a tool round trip. */
   file?: string
+  /** Fleet mode: tell the worker to finish as fast as it can. */
+  fast?: boolean
 }) {
   const { workflow, step } = input
   const used = new Set(templateRefs(step.prompt))
@@ -403,6 +409,7 @@ export function stepPrompt(input: {
   return [
     `You are a subagent spawned by another session, working as step "${step.id}" (${step.title}${step.item ? `: ${step.item}` : ""}) of the workflow "${workflow.name}" (${workflow.id}).`,
     "Your final reply is your result: it is passed to the steps that depend on you and to the agent that started the workflow, so make it complete and self-contained.",
+    ...(input.fast ? [FAST_WORKER] : []),
     "",
     task,
     ...(deps.length
@@ -555,4 +562,29 @@ export function subagentNudge(sessions: Map<string, NudgeState>, sessionID: stri
   if (state.count !== 2 || state.nudged >= NUDGE_LIMIT) return undefined
   state.nudged++
   return "[Workflows] This message started several subagents one by one. Next time delegate them with one workflow call: it runs independent steps in parallel and dependent ones in order (for example a reviewer step after the implementing steps), picks a fast or strong model per step, and notifies you once when everything is done."
+}
+
+/** Tools that are the work itself: in fleet mode the primary agent hands them to workflow steps. */
+export const DIRECT_TOOLS = new Set(["read", "grep", "glob", "edit", "write", "patch", "shell"])
+/** Direct calls allowed before the first fleet nudge (a look-up or two to plan steps), then one every FLEET_EVERY. */
+export const FLEET_FREE = 2
+export const FLEET_EVERY = 4
+
+/**
+ * Fleet mode: counts the primary agent's direct work calls since its last delegation. Returns a note for
+ * the call's result once it does more than FLEET_FREE of them itself, and every FLEET_EVERY calls after.
+ * A workflow or subagent call starts the count over.
+ */
+export function fleetNudge(counts: Map<string, number>, sessionID: string, tool: string): string | undefined {
+  if (tool === "workflow" || tool === "subagent") {
+    counts.delete(sessionID)
+    return undefined
+  }
+  if (!DIRECT_TOOLS.has(tool)) return undefined
+  const count = (counts.get(sessionID) ?? 0) + 1
+  counts.delete(sessionID)
+  counts.set(sessionID, count)
+  if (counts.size > 500) counts.delete(counts.keys().next().value!)
+  if (count <= FLEET_FREE || (count - FLEET_FREE - 1) % FLEET_EVERY !== 0) return undefined
+  return `[Fleet] Fleet mode is on and you made ${count} direct tool calls yourself (${tool} last). You are the orchestrator: stop here and hand the remaining reading, editing and checking to a workflow (one step with wait: true is fine), then answer from its results.`
 }
