@@ -50,9 +50,10 @@ Nothing ever leaves you without a UI:
 | `ctrl+p` | command palette |
 | `ctrl+l` / `ctrl+n` | sessions / new session |
 | `ctrl+y` | copy the last response |
+| `ctrl+f` / `/fleet` | fleet panel: the session's workflow steps as live cards (see below); `esc` closes |
 | `alt+↑` `alt+↓` | previous / next turn |
 | drag in the transcript | select and copy (mouse capture hides the terminal's own selection) |
-| `ctrl+x` then `n l m a v u r c y e t g s b x q →` `←` | leader keys (help: `f1`) |
+| `ctrl+x` then `n l m a v u r c y e t g s b f x q →` `←` | leader keys (help: `f1`) |
 
 What you get beyond the classic UI:
 
@@ -85,6 +86,17 @@ What you get beyond the classic UI:
   command preview, **allow for this session**, and **reject with a message** to tell the agent what to do instead.
   Requests from subagents surface in the parent view.
 - Subagent tasks show live progress (current tool, tool count, tokens); click one to open the child session.
+- The fleet panel (`ctrl+f`, `/fleet`) replaces the transcript with one card per step of the session's workflows
+  (mods/workflows, `/api/rpc/workflows/list`, polled once a second while open): status, model, elapsed time, the
+  tool it is running, its tool count and a sweeping progress strip; borders breathe while a step runs and flash
+  when it ends. It opens by itself when a workflow starts; the prompt stays usable. Click an OpenCode step to
+  open its session. A fan-out group (`each`) is one wide card: a grid with a cell per item (spinner, dot, cross;
+  cells flash as they finish, and several items share a cell when the grid would not fit), throughput, time left
+  and the running members' tools. `/fleet preset free-cc|free|cc|auto` sets the workflow tier models,
+  `/fleet claude readonly|auto|bypass` what Claude Code workers may do, `/fleet workers N` how many run at once
+  (each ~300 MB), `/fleet parallel N` the parallel steps,
+  `/fleet fast|strong|default <model>[, <model>…]` a tier's model or pool. While steps run the panel refreshes
+  four times a second.
 - A HUD sidebar on wide terminals (`ctrl+x b`): context meter, tokens and cache rate, cost, net file changes of the
   session, running subagents, MCP status, and the `/goal` state.
 - The `/context`, `/octx`, `/memory`, `/pins`, `/workflows` and `/usage` views come from the server

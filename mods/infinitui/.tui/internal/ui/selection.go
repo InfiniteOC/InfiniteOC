@@ -50,6 +50,10 @@ func (a *App) mouseDown(m tea.Mouse) {
 		}
 		return
 	}
+	if cmd, in := a.fleetClick(m.X, m.Y); in {
+		a.pendingCmds = append(a.pendingCmds, cmd)
+		return
+	}
 	p, inside := a.transcriptPoint(m)
 	a.sel = selection{}
 	if !inside {

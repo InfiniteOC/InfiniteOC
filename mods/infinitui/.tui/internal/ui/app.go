@@ -91,6 +91,7 @@ type App struct {
 	titleSession string
 	lastWarm     time.Time
 	previewing   map[string]bool
+	fleet        fleet
 	// pendingCmds are commands queued while rendering (fetches a view discovered it needs)
 	pendingCmds []tea.Cmd
 }
@@ -223,6 +224,9 @@ func (a *App) animating() bool {
 		return true
 	}
 	if a.toast != nil || len(a.store.models) == 0 {
+		return true
+	}
+	if a.fleet.open && a.fleetRunning() {
 		return true
 	}
 	for id, d := range a.store.sessions {
@@ -410,6 +414,10 @@ func (a *App) effect(e Effect) tea.Cmd {
 		}
 		var cmds []tea.Cmd
 		cmds = append(cmds, a.showToast(e.Variant, e.Title, e.Text, d))
+		// mods/workflows announces a start with this toast: show the fleet.
+		if e.Title == "Workflow" && strings.HasPrefix(e.Text, "Started") {
+			cmds = append(cmds, a.openFleet())
+		}
 		if e.Title == "Goal" && !a.focused {
 			cmds = append(cmds, notify("Goal", e.Text))
 		}
@@ -536,6 +544,8 @@ func (a *App) handleKey(k tea.KeyPressMsg) tea.Cmd {
 		}
 	case "ctrl+p":
 		return a.openPalette()
+	case "ctrl+f":
+		return a.toggleFleet()
 	case "ctrl+o":
 		a.ropts.expandAll = !a.ropts.expandAll
 		a.tr.cache = map[string]cachedLines{}
@@ -581,6 +591,10 @@ func (a *App) handleKey(k tea.KeyPressMsg) tea.Cmd {
 	case "esc":
 		if a.comp != nil {
 			a.comp = nil
+			return nil
+		}
+		if a.fleet.open {
+			a.fleet.open = false
 			return nil
 		}
 		if len(a.trail) > 0 {
@@ -684,6 +698,8 @@ func (a *App) leaderKey(ks string) tea.Cmd {
 		a.quitting = true
 	case "b":
 		return a.toggleSidebar()
+	case "f":
+		return a.toggleFleet()
 	case "right":
 		return a.openLatestChild()
 	case "left":

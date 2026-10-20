@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -446,10 +447,14 @@ func (c *Client) formLoc(f Form) url.Values {
 // --- InfiniteOC RPC (mods/webui) ---
 
 func (c *Client) rpc(ctx context.Context, method string, input string, out any) error {
+	return c.rpcAt(ctx, "infiniteoc", method, input, out)
+}
+
+func (c *Client) rpcAt(ctx context.Context, domain, method string, input string, out any) error {
 	var res struct {
 		Output json.RawMessage `json:"output"`
 	}
-	if err := c.do(ctx, http.MethodPost, "/api/rpc/infiniteoc/"+method, c.loc(nil, ""), map[string]any{"input": input}, &res); err != nil {
+	if err := c.do(ctx, http.MethodPost, "/api/rpc/"+domain+"/"+method, c.loc(nil, ""), map[string]any{"input": input}, &res); err != nil {
 		return err
 	}
 	// The output is a JSON string holding JSON.
@@ -473,6 +478,27 @@ func (c *Client) RunFeature(ctx context.Context, feature, action, value, session
 	var out RPCView
 	err := c.rpc(ctx, "run", string(in), &out)
 	return out, err
+}
+
+// Workflows lists a session's running and recently ended workflows with live step activity (mods/workflows).
+func (c *Client) Workflows(ctx context.Context, sessionID string) ([]Workflow, error) {
+	in, _ := json.Marshal(map[string]string{"sessionID": sessionID})
+	var out []Workflow
+	err := c.rpcAt(ctx, "workflows", "list", string(in), &out)
+	return out, err
+}
+
+// WorkflowSet changes one workflows setting (preset, claudeMode, maxParallel, …) on the server.
+func (c *Client) WorkflowSet(ctx context.Context, key, value string) error {
+	in, _ := json.Marshal(map[string]string{"key": key, "value": value})
+	var out struct{ Error string }
+	if err := c.rpcAt(ctx, "workflows", "set", string(in), &out); err != nil {
+		return err
+	}
+	if out.Error != "" {
+		return errors.New(out.Error)
+	}
+	return nil
 }
 
 // Warm asks the server (mods/fastlane) to open connections to recently used providers.

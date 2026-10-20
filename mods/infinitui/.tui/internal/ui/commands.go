@@ -70,6 +70,7 @@ func init() {
 			a.tr.cache = map[string]cachedLines{}
 			return nil
 		}},
+		{name: "fleet", title: "Parallel agents panel (workflow steps live)", key: "ctrl+f", category: "View", run: func(a *App, args string) tea.Cmd { return a.fleetCommand(args) }},
 		{name: "themes", aliases: []string{"theme"}, title: "Change theme", key: "ctrl+x t", category: "View", run: func(a *App, _ string) tea.Cmd { return a.openThemes() }},
 		{name: "status", title: "Connection, model and MCP status", key: "ctrl+x s", category: "View", run: func(a *App, _ string) tea.Cmd { return a.openStatus() }},
 		{name: "mcps", aliases: []string{"mcp"}, title: "MCP servers", category: "View", run: func(a *App, _ string) tea.Cmd { return a.openStatus() }},

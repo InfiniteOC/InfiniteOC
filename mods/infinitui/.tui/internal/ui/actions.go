@@ -234,6 +234,13 @@ func (a *App) handleResult(msg tea.Msg) tea.Cmd {
 		return a.showToast("error", m.op+" failed", m.err.Error(), 6*time.Second)
 	case toastMsg:
 		return a.showToast(m.variant, m.title, m.text, m.d)
+	case fleetMsg:
+		return a.fleetResult(m)
+	case fleetPollMsg:
+		if a.fleet.open || a.fleetRunning() {
+			return a.pollFleet()
+		}
+		return nil
 	case bootMsg:
 		resync := m.cont == "\x00resync"
 		for id, d := range a.store.sessions {

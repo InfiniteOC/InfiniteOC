@@ -80,7 +80,13 @@ func (a *App) View() tea.View {
 
 	rows := make([]string, a.height)
 	rows[0] = a.renderHeader()
-	if a.home() {
+	if a.fleet.open {
+		for i, line := range a.renderFleet(a.mainWidth(), l.transcriptH, l.transcriptTop) {
+			if i < l.transcriptH {
+				rows[l.transcriptTop+i] = line
+			}
+		}
+	} else if a.home() {
 		home := strings.Split(a.renderHome(l.transcriptH), "\n")
 		for i, line := range home {
 			if l.transcriptTop+i < l.activityY {

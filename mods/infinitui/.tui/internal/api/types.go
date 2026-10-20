@@ -496,3 +496,30 @@ type RPCView struct {
 		Variant string `json:"variant"`
 	} `json:"toast,omitempty"`
 }
+
+// Workflow is one mods/workflows run as its fleet RPC reports it (JSON keys match case-insensitively).
+type Workflow struct {
+	ID, Name, Status   string
+	CreatedAt, EndedAt int64
+	Steps              []WorkflowStep
+}
+
+// WorkflowStep is one step of a workflow; SessionID is empty for Claude Code steps.
+type WorkflowStep struct {
+	ID, Title, Agent, Status, Model, Tier, Kind, Error, SessionID string
+	Result                                                        string // the start of its output, once completed
+	Item                                                          string // a fan-out step's item
+	// A fan-out group as one entry: a status letter per item (p r c f s x) and its running members.
+	Group   bool
+	Cells   string
+	Members []WorkflowStep
+	Needs                                                         []string
+	StartedAt, EndedAt                                            int64
+	Activity                                                      *StepActivity
+}
+
+// StepActivity is what a running step is doing: its latest tool call and last text.
+type StepActivity struct {
+	Tool, Detail, Text string
+	Tools              int
+}
