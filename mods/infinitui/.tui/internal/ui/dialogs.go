@@ -407,38 +407,6 @@ func (a *App) openAgents() tea.Cmd {
 	return nil
 }
 
-func (a *App) openVariants() tea.Cmd {
-	mm, ok := a.store.Model(a.model)
-	if !ok {
-		return nil
-	}
-	items := []PickItem{{ID: "", Title: "default", Detail: "the model's own default"}}
-	for _, v := range mm.Variants {
-		if v.ID == "default" {
-			continue
-		}
-		detail := ""
-		switch v.ID {
-		case "infinicode":
-			detail = "strongest effort · red theme"
-		case "auto":
-			detail = "picks effort per request"
-		}
-		items = append(items, PickItem{ID: v.ID, Title: v.ID, Detail: detail})
-	}
-	for i := range items {
-		if items[i].ID == a.model.Variant {
-			items[i].Mark = "●"
-		}
-	}
-	p := NewPicker("Effort · "+mm.Name, items)
-	p.Grouped = false
-	p.SelectID(a.model.Variant)
-	p.OnPick = func(it PickItem) tea.Cmd { return a.setVariant(it.ID) }
-	a.dialog = &pickerDialog{p: p, width: 60}
-	return nil
-}
-
 // --- timeline: jump to, rewind to, or fork from a user message ---
 
 func (a *App) openTimeline() tea.Cmd {
@@ -506,7 +474,7 @@ func (a *App) openHelp() tea.Cmd {
 		keys  [][2]string
 	}{
 		{"Prompt", [][2]string{{"enter", "send (while busy: steer the running agent)"}, {"shift+enter · alt+enter · ctrl+j", "newline (or end a line with \\)"}, {"↑ ↓", "prompt history"}, {"ctrl+r", "search history"}, {"/", "commands"}, {"@ · #", "mention agents, skills, files · files only"}, {"!", "run a shell command"}, {"ctrl+x e", "edit in $EDITOR"}}},
-		{"Agent", [][2]string{{"esc", "interrupt"}, {"esc esc", "timeline: jump, rewind, fork"}, {"shift+tab", "next agent"}, {"ctrl+t", "next effort level"}, {"f2", "models"}, {"ctrl+b", "background the running tool"}}},
+		{"Agent", [][2]string{{"esc", "interrupt"}, {"esc esc", "timeline: jump, rewind, fork"}, {"shift+tab", "next agent"}, {"ctrl+t", "next effort level"}, {"ctrl+x v", "effort slider (/effort)"}, {"f2", "models"}, {"ctrl+b", "background the running tool"}}},
 		{"View", [][2]string{{"ctrl+o", "expand all tool output"}, {"click", "expand one block · open a subagent"}, {"pgup pgdn · shift+↑↓ · wheel", "scroll"}, {"home end", "top / bottom (empty prompt)"}, {"ctrl+x →  ctrl+x ←", "into subagent · back"}}},
 		{"App", [][2]string{{"ctrl+p", "command palette"}, {"ctrl+l", "sessions"}, {"ctrl+n", "new session"}, {"ctrl+y", "copy last response"}, {"ctrl+x", "leader: n l m a v u r c y e t g s x q"}, {"ctrl+c ctrl+c · ctrl+d", "exit"}}},
 	}

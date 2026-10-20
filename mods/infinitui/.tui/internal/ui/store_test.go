@@ -299,3 +299,20 @@ func TestErrorCardAndPulse(t *testing.T) {
 		}
 	}
 }
+
+func TestEffortSlider(t *testing.T) {
+	a := &App{opt: Options{}}
+	d := &effortDialog{a: a, model: "M", stops: []string{"", "low", "medium", "high", "max", "auto", "infinicode"}}
+	d.move(3)
+	d.pos = 3
+	out := ansi.Strip(d.View(84, 20))
+	for _, want := range []string{"Effort · M", "high", "thinks longer", "faster", "smarter", "default", "infinicode", "◉"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("slider missing %q:\n%s", want, out)
+		}
+	}
+	d.move(99)
+	if d.sel != 6 {
+		t.Fatalf("clamped to the last stop, got %d", d.sel)
+	}
+}

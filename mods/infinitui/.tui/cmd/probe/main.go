@@ -17,16 +17,33 @@ func main() {
 	events := make(chan api.Event, 1024)
 	go c.Stream(ctx, events)
 	<-events
-	id := api.NewSessionID()
-	m := api.ModelRef{ProviderID: "opencode", ID: os.Getenv("MODEL")}
-	s, err := c.CreateSession(ctx, id, "build", &m)
-	fmt.Println("create", s.ID, err)
+	id := os.Getenv("SESSION")
+	reuse := id != ""
+	if !reuse {
+		id = api.NewSessionID()
+	}
+	prov := os.Getenv("PROVIDER")
+	if prov == "" {
+		prov = "opencode"
+	}
+	m := api.ModelRef{ProviderID: prov, ID: os.Getenv("MODEL")}
+	if !reuse {
+		s, err := c.CreateSession(ctx, id, "build", &m)
+		fmt.Println("create", s.ID, err)
+	}
 	if err := c.SetModel(ctx, id, m); err != nil {
 		fmt.Println("model", err)
 	}
-	err = c.Prompt(ctx, id, api.Prompt{ID: api.NewMessageID(), Text: os.Getenv("TEXT"), Delivery: "steer"})
+	fmt.Printf("SENT_AT %d\n", time.Now().UnixMilli())
+	err := c.Prompt(ctx, id, api.Prompt{ID: api.NewMessageID(), Text: os.Getenv("TEXT"), Delivery: "steer"})
 	fmt.Println("prompt", err)
+	sent := time.Now()
+	ttft := false
 	for ev := range events {
+		if !ttft && (ev.Type == "session.text.delta" || ev.Type == "session.reasoning.delta" || ev.Type == "session.text.started" || ev.Type == "session.reasoning.started") {
+			ttft = true
+			fmt.Printf("TTFT %d\n", time.Since(sent).Milliseconds())
+		}
 		d := string(ev.Data)
 		if len(d) > 400 {
 			d = d[:400] + "…"

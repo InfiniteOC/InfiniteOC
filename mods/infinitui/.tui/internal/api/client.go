@@ -475,6 +475,16 @@ func (c *Client) RunFeature(ctx context.Context, feature, action, value, session
 	return out, err
 }
 
+// Warm asks the server (mods/fastlane) to open connections to recently used providers.
+func (c *Client) Warm(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/api/rpc/fastlane/warm", c.loc(nil, ""), map[string]any{"input": ""}, nil)
+}
+
+// Reconnect tells the server the network changed: stuck requests are resent on fresh connections.
+func (c *Client) Reconnect(ctx context.Context) error {
+	return c.do(ctx, http.MethodPost, "/api/rpc/fastlane/reconnect", c.loc(nil, ""), map[string]any{"input": ""}, nil)
+}
+
 // --- IDs (schema/src/identifier.ts) ---
 
 var (

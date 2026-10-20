@@ -45,6 +45,7 @@ Nothing ever leaves you without a UI:
 | `esc esc` | timeline: jump to, rewind to (restores files) or fork from any prompt |
 | `ctrl+c` | clear the prompt → interrupt → (twice) exit |
 | `shift+tab` / `ctrl+t` / `f2` | next agent / next effort level / model picker |
+| `/effort` (`ctrl+x v`) | effort slider: ←→ between the model's levels, faster to smarter, enter applies |
 | `ctrl+o` | expand every tool output; click a block to expand just that one |
 | `ctrl+p` | command palette |
 | `ctrl+l` / `ctrl+n` | sessions / new session |
@@ -90,6 +91,8 @@ What you get beyond the classic UI:
   (`/api/rpc/infiniteoc`, mods/webui) and render generically, so they stay in sync with those mods.
 - The purple/pink theme, plus light and the red InfiniCode palette (used while the `infinicode` effort level is
   selected), with hand-picked fallbacks for 256-colour terminals.
+- With mods/fastlane: starting to type a prompt opens provider connections ahead of the request, and
+  `/reconnect` recovers at once after a network or VPN change that fastlane did not notice by itself.
 - `/yolo`, `/infinicode`, desktop notifications when a run ends or needs you while the terminal is unfocused,
   opendaemon notices, `INFINITEOC_NOTICE`, and `tui.toast.show` / `tui.session.select` / `tui.prompt.append` /
   `tui.command.execute` events from server plugins.

@@ -55,7 +55,7 @@ func init() {
 
 		{name: "models", aliases: []string{"model"}, title: "Switch model", key: "f2", category: "Model", run: func(a *App, _ string) tea.Cmd { return a.openModels() }},
 		{name: "agents", aliases: []string{"agent"}, title: "Switch agent", key: "shift+tab", category: "Model", run: func(a *App, _ string) tea.Cmd { return a.openAgents() }},
-		{name: "variants", aliases: []string{"effort", "thinking"}, title: "Effort level", key: "ctrl+t", category: "Model", run: func(a *App, _ string) tea.Cmd { return a.openVariants() }},
+		{name: "effort", aliases: []string{"variants", "thinking"}, title: "Effort level (slider)", key: "ctrl+x v", category: "Model", run: func(a *App, _ string) tea.Cmd { return a.openEffort() }},
 		{name: "infinicode", title: "Toggle InfiniCode (strongest effort, red theme)", category: "Model", run: func(a *App, _ string) tea.Cmd { return a.toggleInfiniCode() }},
 
 		{name: "expand", title: "Expand or collapse all tool output", key: "ctrl+o", category: "View", run: func(a *App, _ string) tea.Cmd {
@@ -77,6 +77,16 @@ func init() {
 		{name: "history", title: "Search prompt history", key: "ctrl+r", category: "View", run: func(a *App, _ string) tea.Cmd { return a.openHistory() }},
 
 		{name: "yolo", title: "Toggle YOLO (auto-approve permissions)", category: "System", run: func(a *App, _ string) tea.Cmd { return a.toggleYolo() }},
+		{name: "reconnect", title: "Reconnect after a network or VPN change", category: "System", run: func(a *App, _ string) tea.Cmd {
+			return tea.Batch(a.showToast("info", "", "Reconnecting: stuck requests resend on fresh connections", 2500*time.Millisecond), func() tea.Msg {
+				ctx, cancel := timeout(a.bg(), 5*time.Second)
+				defer cancel()
+				if err := a.client.Reconnect(ctx); err != nil {
+					return errMsg{"reconnect", err}
+				}
+				return nil
+			})
+		}},
 		{name: "editor", title: "Write the prompt in $EDITOR", key: "ctrl+x e", category: "System", run: func(a *App, _ string) tea.Cmd { return a.openEditor() }},
 		{name: "classic", title: "Switch to the classic OpenTUI interface", category: "System", run: func(a *App, _ string) tea.Cmd {
 			a.writeHandoff()

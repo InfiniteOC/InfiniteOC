@@ -89,6 +89,7 @@ type App struct {
 	titleTarget  string         // session title being typed into the header
 	titleShown   int
 	titleSession string
+	lastWarm     time.Time
 	previewing   map[string]bool
 	// pendingCmds are commands queued while rendering (fetches a view discovered it needs)
 	pendingCmds []tea.Cmd
@@ -198,6 +199,9 @@ func (a *App) advanceReveal() bool {
 
 // smoothing reports whether something is mid-animation and wants a high frame rate.
 func (a *App) smoothing() bool {
+	if ed, ok := a.dialog.(*effortDialog); ok && ed.moving() {
+		return true
+	}
 	if a.tr.gliding() || a.fadeTo != nil || (a.toast != nil && time.Since(a.toast.born) < 300*time.Millisecond) {
 		return true
 	}
@@ -286,6 +290,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.ropts.frame = a.frame
 		a.advanceReveal()
 		a.tr.glide()
+		if ed, ok := a.dialog.(*effortDialog); ok {
+			ed.gliding()
+		}
 		a.stepFade()
 		if a.toast != nil && time.Now().After(a.toast.until) {
 			a.toast = nil
@@ -636,8 +643,9 @@ func (a *App) handleKey(k tea.KeyPressMsg) tea.Cmd {
 			return nil
 		}
 	}
+	before := a.prompt.Value()
 	cmd := a.prompt.Update(k)
-	return tea.Batch(cmd, a.refreshCompletion())
+	return tea.Batch(cmd, a.refreshCompletion(), a.warmOnTyping(before))
 }
 
 func (a *App) leaderKey(ks string) tea.Cmd {
@@ -651,7 +659,7 @@ func (a *App) leaderKey(ks string) tea.Cmd {
 	case "a":
 		return a.openAgents()
 	case "v":
-		return a.openVariants()
+		return a.openEffort()
 	case "u":
 		return a.undo()
 	case "r":
@@ -758,4 +766,19 @@ func (a *App) dialogUpdate(msg tea.Msg) tea.Cmd {
 		a.dialog = nil
 	}
 	return cmd
+}
+
+// warmOnTyping opens provider connections as soon as a new prompt starts, so the request skips the
+// handshake (mods/fastlane; a server without it answers 404, which is ignored).
+func (a *App) warmOnTyping(before string) tea.Cmd {
+	if before != "" || a.prompt.Value() == "" || time.Since(a.lastWarm) < 15*time.Second {
+		return nil
+	}
+	a.lastWarm = time.Now()
+	return func() tea.Msg {
+		ctx, cancel := timeout(a.bg(), 5*time.Second)
+		defer cancel()
+		_ = a.client.Warm(ctx)
+		return nil
+	}
 }
