@@ -32,6 +32,7 @@
     "./mods/infinithink/index.mjs",
     "./mods/infiniteoctx/index.mjs",
     "./mods/infinitokensave/index.mjs",
+    "./mods/infinitui/index.mjs",
     "./mods/webui/index.mjs"
   ],
   "options": {

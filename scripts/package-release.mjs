@@ -38,6 +38,14 @@ const stage = await import("node:fs/promises").then((fs) => fs.mkdtemp(path.join
 try {
   await copyFile(binary, path.join(stage, exe ? "opencode.exe" : "opencode"))
   await copyFile(path.join(home, ".runtime/build.json"), path.join(stage, "build.json"))
+  // mods/infinitui: ship the Go TUI with the stamp of the sources it was built from.
+  const tui = exe ? "infinitui.exe" : "infinitui"
+  const files = [exe ? "opencode.exe" : "opencode", "build.json"]
+  if (await firstExisting([path.join(home, ".runtime/infinitui", tui)])) {
+    await copyFile(path.join(home, ".runtime/infinitui", tui), path.join(stage, tui))
+    await copyFile(path.join(home, ".runtime/infinitui/stamp"), path.join(stage, "infinitui.stamp"))
+    files.push(tui, "infinitui.stamp")
+  }
   await mkdir(outDir, { recursive: true })
   const asset = path.join(outDir, `infiniteoc-${target}.zip`)
   const run = (command, argv) => spawnSync(command, argv, { stdio: "inherit", encoding: "utf8" }).status === 0
@@ -49,12 +57,12 @@ try {
       `Compress-Archive -Force -Path '${path.join(stage, "*")}' -DestinationPath '${asset}'`,
     ])
   } else {
-    ok = run("zip", ["-j", "-q", asset, path.join(stage, exe ? "opencode.exe" : "opencode"), path.join(stage, "build.json")])
+    ok = run("zip", ["-j", "-q", asset, ...files.map((file) => path.join(stage, file))])
     if (!ok) {
       // zip is not preinstalled everywhere; python3 (with zipfile) usually is.
       ok = run("python3", [
         "-c",
-        `import zipfile; z = zipfile.ZipFile(${JSON.stringify(asset)}, "w", zipfile.ZIP_DEFLATED); z.write(${JSON.stringify(path.join(stage, exe ? "opencode.exe" : "opencode"))}, ${JSON.stringify(exe ? "opencode.exe" : "opencode")}); z.write(${JSON.stringify(path.join(stage, "build.json"))}, "build.json"); z.close()`,
+        `import zipfile; z = zipfile.ZipFile(${JSON.stringify(asset)}, "w", zipfile.ZIP_DEFLATED); ${files.map((file) => `z.write(${JSON.stringify(path.join(stage, file))}, ${JSON.stringify(file)}); `).join("")}z.close()`,
       ])
     }
   }

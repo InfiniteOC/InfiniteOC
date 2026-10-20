@@ -5,7 +5,7 @@
 // when no prebuilt binary is available (the installer then builds from source).
 // Never needs administrator: everything lands inside the checkout.
 import { spawnSync } from "node:child_process"
-import { mkdir, rm, readFile } from "node:fs/promises"
+import { mkdir, rm, readFile, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -101,6 +101,16 @@ try {
   await copyFile(binarySource, binaryDest)
   if (process.platform !== "win32") await import("node:fs/promises").then((fs) => fs.chmod(path.join(destDir, exe), 0o755))
   await copyFile(path.join(out, "build.json"), path.join(home, ".runtime/build.json"))
+  // mods/infinitui: the Go TUI and the source stamp it was built from, so no Go toolchain is needed.
+  const tui = target.startsWith("win32-") ? "infinitui.exe" : "infinitui"
+  if (await stat(path.join(out, tui)).then(() => true, () => false)) {
+    const tuiDir = path.join(home, ".runtime/infinitui")
+    await mkdir(tuiDir, { recursive: true })
+    await remove(path.join(tuiDir, tui), { force: true })
+    await copyFile(path.join(out, tui), path.join(tuiDir, tui))
+    if (process.platform !== "win32") await import("node:fs/promises").then((fs) => fs.chmod(path.join(tuiDir, tui), 0o755))
+    await copyFile(path.join(out, "infinitui.stamp"), path.join(tuiDir, "stamp"))
+  }
   console.error(`[InfiniteOC] fetch-prebuilt: installed ${target} build from ${manifest.builtAt ?? "release"}`)
 } finally {
   await rm(tmp, { recursive: true, force: true })

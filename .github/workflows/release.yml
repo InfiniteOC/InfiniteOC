@@ -36,7 +36,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: mods/infinitui/.tui/go.mod
+          cache-dependency-path: mods/infinitui/.tui/go.sum
       - run: node bin/infiniteoc.mjs setup
+      # mods/infinitui: build the Go TUI so release installs need no Go toolchain.
+      - run: node -e "import('./mods/infinitui/build.mjs').then((m) => m.ensureBuilt({ modDir: 'mods/infinitui', home: '.' }))"
       - run: node scripts/package-release.mjs --out dist
       - uses: actions/upload-artifact@v4
         with:

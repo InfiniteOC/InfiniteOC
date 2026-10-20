@@ -78,6 +78,7 @@ exists for your system it starts right away; otherwise the first run builds it (
 | `/account` | Switch between several logins per provider. |
 | `/ponytail auto` | Minimal-code mode: smallest change that solves it. |
 | `/yolo` | Auto-approve permission prompts for this session (asks first). |
+| `/classic` | Switch from InfiniTUI (the default Go interface, see [mods/infinitui](mods/infinitui/README.md)) to the classic OpenCode UI on the same session. `"tui": "classic"` in settings makes it permanent. |
 
 From a shell:
 
