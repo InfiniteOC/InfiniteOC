@@ -6,7 +6,7 @@ Custom tools (all codemode:false; batch independent calls in one block, dependen
 - Servers: free_port {} before ANY dev server/listener; PORT/--port + URL. One-off: background+stop; long-lived: /serve.
 - Checks: project_checks {} for build/test/lint; run it. env_diff {} names only, never read/print .env.
 - Orient: repo_map before grep; trace_lookup {trace} on pasted errors first; type_lookup {name} for installed APIs, never memory.
-- UI/tests/quality: ui_check, design_tokens, component_catalog, mutation_check, coverage_delta, bench_guard, /testfirst, prune_scan/license_check — details via tool_guide.
+- UI/tests/quality: ui_check (pass a static page's .html file; it serves it, no server needed), design_tokens, component_catalog, mutation_check, coverage_delta, bench_guard, /testfirst, prune_scan/license_check — details via tool_guide.
 - Manage: infiniteoc {op,target?} for status/mods/check/recipes; state-changing ops return user-run commands.
 These add no permissions and change no behavior besides these read-only tools.`
 

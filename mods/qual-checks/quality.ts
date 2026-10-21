@@ -304,7 +304,7 @@ export const Plugin = define({
 
         if (files.some((file) => UI_FILE.test(file)) && !reminded.has(event.sessionID)) {
           reminded.add(event.sessionID)
-          notes.push("UI file changed. Before reporting done, render it with the ui_check tool (a dev server URL or the HTML file) to see phone, tablet, desktop and dark mode plus an accessibility audit; design_tokens and component_catalog show what to reuse.")
+          notes.push("UI file changed. Before reporting done, render it with the ui_check tool (the HTML file of a static page, no server needed; or the URL of a framework's running dev server) to see phone, tablet, desktop and dark mode plus an accessibility audit; design_tokens and component_catalog show what to reuse.")
         }
 
         const manifests = files.filter((file) => MANIFEST.test(file)).map((file) => path.resolve(dir, file))
