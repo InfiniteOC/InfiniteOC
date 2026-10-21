@@ -137,7 +137,7 @@ Delegation goes through workflows by default rather than by exception:
   ±20%, never under the provider's retry-after, about 7 minutes over the 10 retries. The model and its same-provider
   pool members pause that long, so new steps do not start into the limit.
 
-For speed: up to 8 steps run at once by default (`maxParallel`, up to 64), search/summarize steps run on the fast model, and the
+For speed: up to 16 steps run at once by default (`maxParallel`, up to 64), search/summarize steps run on the fast model, and the
 guidance tells the agent to start with `wait: true` when the result is the only thing it needs next, which returns
 the results in that call and saves the extra wake-up turn a background run costs.
 
@@ -215,6 +215,30 @@ stream-json` in the project directory, with the step prompt on stdin. Available 
 - Its tool calls feed `state.activity` (latest tool, tool count, last text) for the fleet view; its final
   `result` event is the step result; cancelling a step or workflow kills the process. Workers do not get
   `send_message`/`read_messages`; messages sent before they start are in their prompt.
+
+## Claude Code in the model picker
+
+With `claude` on PATH, the model picker (`f2`) also lists **Claude Haiku, Sonnet and Opus (Claude Code)**
+(`claude-code/haiku|sonnet|opus`, `claude-code.ts`). Picking one makes each turn of the chat a turn of your own
+installed, logged-in Claude Code.
+
+- **Within Anthropic's terms.** A Pro/Max login may only be used by Claude Code and claude.ai, so InfiniteOC never
+  reads Claude Code's credentials and never calls the Anthropic API. It starts the official `claude` CLI, which runs
+  as itself: its own system prompt, its own tools, its own login. InfiniteOC passes neither its system prompt nor
+  its tools to it, and only shows what Claude Code replies and does.
+- So InfiniteOC's own tools (workflows, `/goal` tooling, its permission prompts) are not available in these chats:
+  it is Claude Code, shown in InfiniteOC. Its tool calls appear as tool rows (read, edit, bash, ...) and are never
+  run by InfiniteOC.
+- **What it may do** follows `claudeMode` (`/fleet claude readonly|auto|bypass`), as for workflow steps. Headless
+  Claude Code cannot ask: under `auto`, what its classifier would ask about is refused.
+- **Memory**: each InfiniteOC session keeps one Claude Code session (`--resume`; the map is
+  `$XDG_DATA_HOME/infiniteoc/claude-code-chats.json`, so it survives restarts). After a rewind, fork, compaction or
+  turns by another model, a new Claude Code session gets the conversation so far as text. These sessions also show
+  in `claude --resume` for the project.
+- **Effort**: the effort levels (`ctrl+t`, `/effort`, InfiniCode) pass `--effort low|medium|high|xhigh|max`.
+- Lean like the workers: no MCP servers, no user-level hooks or plugins. Session titles are made from the first
+  line of the prompt, without a Claude Code call (it treats every prompt as a coding task). Text only: pasted
+  images are not passed. Cost shows as 0: usage counts against your Claude plan.
 
 ## Presets
 
@@ -314,6 +338,7 @@ For other mods (the InfiniCode effort) that turn workflows on:
 | --- | --- |
 | `packages/core/src/plugin/infiniteoc-workflows.ts` | The plugin (from `plugin.ts`): tools, runner, context hook |
 | `packages/core/src/plugin/infiniteoc-wf-{claude,dag,mailbox,models,pool,settings,store}.ts` | Pure modules, unit-tested here |
+| `packages/core/src/plugin/infiniteoc-claude-code.ts` + `plugin/provider.ts` | The Claude Code model provider (from `claude-code.ts`), listed before `DynamicProviderPlugin` |
 | `packages/core/src/infiniteoc/no-snapshot.ts` + `packages/core/src/session/runner/step.ts` | Sessions in the set skip the start and end git snapshot of each model step (read-only workflow steps) |
 | `packages/core/src/plugin/internal.ts` | Import after `import { SubagentTool } …`; plugin listed after `SubagentTool.Plugin,` |
 | `packages/core/src/plugin/infiniteoc-safety.ts` | Only when safe-guard is enabled first: readonly rule after its `subagent` rule |

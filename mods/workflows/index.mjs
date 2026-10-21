@@ -67,6 +67,12 @@ export default {
       source = replace(source, 'import { SubagentTool } from "../tool/plugin/subagent.js"\n', 'import { SubagentTool } from "../tool/plugin/subagent.js"\nimport * as InfiniteocWorkflows from "./infiniteoc-workflows.js"\n')
       return replace(source, "  SubagentTool.Plugin,\n", "  SubagentTool.Plugin,\n  InfiniteocWorkflows.Plugin,\n")
     })
+    // Claude Code in the model picker: a provider plugin, before the dynamic one that would try to npm-install its package.
+    await api.write(`${CORE}/infiniteoc-claude-code.ts`, relink(await file("claude-code.ts"), coreNames))
+    await api.patch(`${CORE}/provider.ts`, (source) => {
+      source = replace(source, 'import { DynamicProviderPlugin } from "./provider/dynamic.js"\n', 'import { DynamicProviderPlugin } from "./provider/dynamic.js"\nimport { ClaudeCodePlugin } from "./infiniteoc-claude-code.js"\n')
+      return replace(source, "  DynamicProviderPlugin,\n]", "  ClaudeCodePlugin,\n  DynamicProviderPlugin,\n]")
+    })
 
     // Read-only workflow steps skip the per-step git snapshots: their start and end trees are always the
     // same, and the 8 git processes per model step were ~80% of a step's server time (measured).

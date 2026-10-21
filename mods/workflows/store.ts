@@ -79,6 +79,22 @@ export function loadSpeeds(now = Date.now()): Record<string, number> {
   return out
 }
 
+const chatsFile = () => path.join(dataDir(), "..", "claude-code-chats.json")
+
+/** InfiniteOC session → its Claude Code session (claude-code.ts), so chats resume after a restart. */
+export function loadChats(): Record<string, { claude: string; users: string }> {
+  const raw = readJson(chatsFile())
+  return record(raw) ? raw : {}
+}
+
+/** Records one chat; keeps the 500 most recent. */
+export function saveChat(sessionID: string, chat: { claude: string; users: string }) {
+  const chats = loadChats()
+  delete chats[sessionID]
+  chats[sessionID] = chat
+  atomicWrite(chatsFile(), JSON.stringify(Object.fromEntries(Object.entries(chats).slice(-500))) + "\n")
+}
+
 /** Merges these speeds into the file, stamped now; other models' entries stay. */
 export function saveSpeeds(speeds: Record<string, number>, now = Date.now()) {
   if (Object.keys(speeds).length === 0) return

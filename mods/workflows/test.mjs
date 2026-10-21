@@ -1059,3 +1059,41 @@ test("the plugin wires the nudge to completed subagent calls and the guidance ro
   const { guidance: main } = await import("../infiniteoc/workflow.mjs")
   assert.match(main.build.split("[Subagents]")[1], /Two or more tasks, or a task plus its review: one workflow call/)
 })
+
+test("claude code chat: resume only a session that saw the earlier messages; stream-json to stream parts", () => {
+  const u = (text) => ({ role: "user", content: [{ type: "text", text }] })
+  const a = (text) => ({ role: "assistant", content: [{ type: "text", text }] })
+  const first = C.chatInput([{ role: "system", content: "ignored" }, u("hi")])
+  assert.deepEqual([first.resume, first.text], [undefined, "hi"])
+  const next = C.chatInput([u("hi"), a("hello"), u("more")], { claude: "s1", users: first.users })
+  assert.deepEqual([next.resume, next.text], ["s1", "more"])
+  assert.deepEqual(C.chatInput([u("hi"), a("hello"), u("more")], { claude: "s1", users: next.users }).text, "Continue.")
+  const fork = C.chatInput([u("other"), a("x"), u("more")], { claude: "s1", users: first.users })
+  assert.equal(fork.resume, undefined)
+  assert.match(fork.text, /User: other\n\nAssistant: x\n\n\[The new message\]\nmore$/)
+  assert.equal(C.titleOf([{ role: "system", content: "You are a title generator" }, u("Fix the login bug\nmore detail")]), "Fix the login bug")
+
+  const s = C.stream()
+  const parts = [
+    { type: "system", subtype: "init", session_id: "abc" },
+    { type: "stream_event", event: { type: "message_start", message: { usage: { input_tokens: 5, cache_read_input_tokens: 100, cache_creation_input_tokens: 10 } } } },
+    { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text" } } },
+    { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } } },
+    { type: "stream_event", event: { type: "content_block_stop", index: 0 } },
+    { type: "assistant", message: { content: [{ type: "text", text: "Hi" }, { type: "tool_use", id: "t1", name: "Read", input: { file_path: "a.ts" } }] } },
+    { type: "stream_event", parent_tool_use_id: "t0", event: { type: "content_block_start", index: 0, content_block: { type: "text" } } },
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "body" }] }] } },
+    { type: "result", subtype: "success", result: "Hi", usage: { output_tokens: 7 } },
+  ].flatMap((e) => C.toParts(e, s))
+  assert.equal(s.session, "abc")
+  assert.deepEqual(parts.map((p) => p.type), ["text-start", "text-delta", "text-end", "tool-call", "tool-result", "finish"])
+  assert.deepEqual([parts[3].toolName, parts[3].providerExecuted, parts[4].result], ["read", true, "body"])
+  assert.deepEqual([parts[5].usage.inputTokens.total, parts[5].usage.outputTokens.total], [115, 7])
+  assert.equal(C.toParts({ type: "result", subtype: "success", is_error: true, result: "usage limit" }, C.stream())[0].type, "error")
+
+  const readonly = C.chatArgs("opus", "readonly", { resume: "abc", effort: "high" })
+  assert.deepEqual(readonly.slice(readonly.indexOf("--effort"), readonly.indexOf("--effort") + 4), ["--effort", "high", "--resume", "abc"])
+  assert.deepEqual(readonly.slice(-6), ["--tools", ...C.TOOLS])
+  assert.ok(!readonly.includes("--no-session-persistence"))
+  assert.deepEqual(C.chatArgs("haiku", "auto", {}).slice(-4), ["--permission-mode", "auto", "--permission-prompts", "none"])
+})
