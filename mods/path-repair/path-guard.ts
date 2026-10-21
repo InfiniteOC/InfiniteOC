@@ -1,8 +1,9 @@
 // InfiniteOC path-repair: some models (seen with opencode/beam-free) leak an XML-style `">` plus the
 // next argument's text into the `path` argument. Upstream then fails the write or, when the leaked text
 // contains slashes, creates junk directories; models fall back to shell heredocs that skip edit gates.
-// Observed: for edits the leak repeats oldString; for writes it is the intended file body, while
-// `content` sometimes holds unrelated text.
+// Observed: for edits the leak repeats oldString, or is the intended oldString while oldString repeats
+// newString (arguments shifted left); for writes it is the intended file body, while `content`
+// sometimes holds unrelated text.
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -19,6 +20,10 @@ export function repairLeakedPath(input: unknown): unknown {
   const raw = match[2].replace(/^[ \t]*\r?\n/, "")
   const tail = normalize(raw)
   if (!tail) return { ...input, path }
+  // An edit whose arguments shifted left: the leak is the intended oldString and oldString repeats newString
+  // (an edit that could never apply). A wrong guess only fails with "oldString not found".
+  if (typeof input.oldString === "string" && input.oldString === input.newString && normalize(input.oldString) !== tail)
+    return { ...input, path, oldString: raw }
   // The leak repeats another argument (either may be cut short): keep the arguments as sent.
   const echoed = Object.entries(input).some(([key, value]) => {
     if (key === "path" || typeof value !== "string") return false

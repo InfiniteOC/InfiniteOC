@@ -66,6 +66,13 @@ test("repairs a leaked body only when another argument echoes it", { skip: canSt
   assert.deepEqual(repairLeakedPath({ path: `logic.js">\n${body}`, content: "# Expense Tracker\n\nplaceholder" }), { path: "logic.js", content: body })
   // A cut-short leak that content completes keeps content ("hello" vs "hello world").
   assert.deepEqual(repairLeakedPath({ path: "test.txt\">\nhello", content: "hello world" }), { path: "test.txt", content: "hello world" })
+  // Isolated run iso-new-1: arguments shifted left, so oldString repeats newString and the leak is the real oldString.
+  const before = "  monthList,\n  parseExpenses,\n  formatAmount,\n} from './logic.js';"
+  const after = "  monthList,\n  parseExpenses,\n  formatAmount,\n  expensesToCsv,\n} from './logic.js';"
+  assert.deepEqual(repairLeakedPath({ path: `app.js">\n${before}`, oldString: after, newString: after }), { path: "app.js", oldString: before, newString: after })
+  // Same shift when the leak is a prefix of newString (the edit appends lines): still the real oldString.
+  const head = "  --accent: #2563eb;\n  --accent-hover: #1d4ed8;", grown = `${head}\n  --btn-bg: #2563eb;`
+  assert.deepEqual(repairLeakedPath({ path: `styles.css">\n${head}`, oldString: grown, newString: grown }), { path: "styles.css", oldString: head, newString: grown })
   // Edit-shaped input whose leak matches nothing: left untouched for the tool to refuse.
   const unmatched = { path: `a.ts">\n${body}`, oldString: "x", newString: "y" }
   assert.equal(repairLeakedPath(unmatched), unmatched)
