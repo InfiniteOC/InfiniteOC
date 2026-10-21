@@ -76,6 +76,7 @@ exists for your system it starts right away; otherwise the first run builds it (
 | `/settings` | Custom providers, proxy/Tor, updates, workflows. |
 | `/workflows` | See and cancel background subagent workflows. |
 | `/account` | Switch between several logins per provider. |
+| `/routing fallback opencode/beam-free` | When your model is rate limited or down (a free tier's 429 included), the run continues on this one. |
 | `/ponytail auto` | Minimal-code mode: smallest change that solves it. |
 | `/yolo` | Auto-approve permission prompts for this session (asks first). |
 | `/classic` | Switch from InfiniTUI (the default Go interface, see [mods/infinitui](mods/infinitui/README.md)) to the classic OpenCode UI on the same session. `"tui": "classic"` in settings makes it permanent. |
@@ -115,7 +116,8 @@ Your stock OpenCode, its sessions and settings are never touched.
 - [GUIDE.md](GUIDE.md): everything that is built in, connectors, graph, builds, configuration.
 - [LAUNCHER.md](LAUNCHER.md): install options, prebuilt binaries, serve/web, remote control, mod packs, bench.
 - [FEATURES.md](FEATURES.md) and [AGENTS.md](AGENTS.md): writing mods (for you and for AI agents).
-- Working on InfiniteOC itself: clone this repository, `node bin/infiniteoc.mjs setup`, `npm test`.
+- Working on InfiniteOC itself: clone this repository, `node bin/infiniteoc.mjs setup`, `npm test`. To check that a
+  change makes real runs better, compare two checkouts with [scripts/eval](scripts/eval/README.md).
 
 Independent community project, not affiliated with the OpenCode authors. No OpenCode source is vendored here:
 setup clones the pinned upstream tag (MIT) and builds from a copy. License: [MIT](LICENSE) ·
