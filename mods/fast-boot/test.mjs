@@ -39,6 +39,11 @@ test("anchors are unique in the pinned upstream and apply in order", { skip: has
   // The boot refresh waits for populate, and a populate failure does not stop the refresh loop.
   assert.match(source, /cachedGet\.pipe\(\s*Effect\.ignoreCause,\s*Effect\.andThen\(refresh\(\)/)
   assert.equal(source.split("let known").length, 2)
+  // Only Effect schemas are memoized; Standard Schema vendors are asked on every call, as upstream does.
+  const runtime = sources[files[1]]
+  assert.match(runtime, /if \(isStandardSchema\(schema\)\) return standardJsonSchema\(schema, "input"\)/)
+  assert.match(runtime, /if \(isStandardSchema\(schema\)\) return standardJsonSchema\(schema, "output"\)/)
+  assert.equal(runtime.split("converted(schema,").length - 1, 2)
 })
 
 test("the refresh still decodes the cache when this process has not read it", () => {
@@ -47,7 +52,7 @@ test("the refresh still decodes the cache when this process has not read it", ()
   assert.match(after, /known \?\? \(yield\* loadFromCache\(\)\)/)
 })
 
-test("tool schemas convert once per schema and direction, and every caller gets a copy", { skip: canStrip ? false : "needs module.stripTypeScriptTypes" }, async () => {
+test("Effect tool schemas convert once per schema and direction, and every caller gets a copy", { skip: canStrip ? false : "needs module.stripTypeScriptTypes" }, async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "fast-boot-"))
   try {
     const file = path.join(dir, "converted.mjs")
