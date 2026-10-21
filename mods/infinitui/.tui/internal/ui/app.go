@@ -50,6 +50,9 @@ type App struct {
 	tr        *Transcript
 	ropts     renderOpts
 	dirty     bool
+	// The last frame, reused while nothing on screen changed (plain mouse motion over the same block).
+	frameView tea.View
+	frameOK   bool
 
 	prompt *Prompt
 	comp   *completion
@@ -272,6 +275,7 @@ func (a *App) Init() tea.Cmd {
 // Update routes messages.
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	still := false
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = m.Width, m.Height
@@ -343,13 +347,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.mouseDown(m.Mouse())
 		a.dirty = true
 	case tea.MouseMotionMsg:
+		hover, down := a.hover, a.sel.down
 		cmds = append(cmds, a.mouseDrag(m.Mouse()))
+		// Every pointer move is a message (one console record each on Windows); one that stays over the
+		// same block changes nothing, so the last frame is reused instead of rebuilding the transcript.
+		still = !down && a.hover == hover
 		a.dirty = true
 	case tea.MouseReleaseMsg:
 		cmds = append(cmds, a.mouseUp(m.Mouse()))
 		a.dirty = true
 	default:
 		cmds = append(cmds, a.handleResult(msg))
+	}
+	if !still {
+		a.frameOK = false
 	}
 	if a.quitting {
 		a.cancel()
@@ -442,7 +453,6 @@ func (a *App) effect(e Effect) tea.Cmd {
 		return a.tick()
 	case effDone:
 		if e.SessionID == a.sessionID {
-			a.tr.cache = map[string]cachedLines{} // spinners settle
 			if strings.HasPrefix(e.Text, "failed") && !a.focused {
 				return notify("InfiniteOC", "Run failed")
 			}

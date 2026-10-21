@@ -173,12 +173,20 @@ func dimLines(lines []string, width int) []string {
 	return out
 }
 
+// splitLines splits tool output into lines. Windows tools end lines with \r\n, and a bare \r (progress
+// output) would send the renderer back to column 0 mid-row: only the text after a line's last \r stays.
 func splitLines(s string) []string {
-	s = strings.TrimRight(s, "\n")
+	s = strings.TrimRight(strings.ReplaceAll(s, "\r\n", "\n"), "\r\n")
 	if s == "" {
 		return nil
 	}
-	return strings.Split(s, "\n")
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		if j := strings.LastIndexByte(l, '\r'); j >= 0 {
+			lines[i] = l[j+1:]
+		}
+	}
+	return lines
 }
 
 func plural(n int, one, many string) string {

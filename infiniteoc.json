@@ -16,6 +16,7 @@
     "./mods/awareness/index.mjs",
     "./mods/hash-mentions/index.mjs",
     "./mods/tool-perf/index.mjs",
+    "./mods/win-utf8/index.mjs",
     "./mods/yolo/index.mjs",
     "./mods/accounts/index.mjs",
     "./mods/workflows/index.mjs",

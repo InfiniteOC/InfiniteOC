@@ -151,7 +151,8 @@ func pump(ctx context.Context, in <-chan api.Event, p *tea.Program) {
 		case ev := <-in:
 			batch = append(batch, ev)
 		}
-		timer := time.NewTimer(8 * time.Millisecond)
+		// Each batch rebuilds the whole frame: ~30 a second is smooth, more only costs (ConPTY on Windows).
+		timer := time.NewTimer(33 * time.Millisecond)
 	drain:
 		for len(batch) < 512 {
 			select {

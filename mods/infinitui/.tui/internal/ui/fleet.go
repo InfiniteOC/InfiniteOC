@@ -66,7 +66,7 @@ func (a *App) openFleet() tea.Cmd {
 	return a.toggleFleet()
 }
 
-// fleetCommand runs /fleet [on | off | preset <name> | claude <mode> | parallel <n> | fast|strong|default <models>].
+// fleetCommand runs /fleet [on | off | swarm <n> | preset <name> | claude <mode> | parallel <n> | fast|strong|default <models>].
 func (a *App) fleetCommand(args string) tea.Cmd {
 	f := strings.Fields(args)
 	if len(f) == 0 {
@@ -75,9 +75,9 @@ func (a *App) fleetCommand(args string) tea.Cmd {
 	if f[0] == "on" || f[0] == "off" {
 		f = []string{"fleet", f[0]}
 	}
-	key := map[string]string{"fleet": "fleet", "preset": "preset", "claude": "claudeMode", "parallel": "maxParallel", "workers": "claudeParallel", "fast": "models.fast", "strong": "models.strong", "default": "models.default"}[f[0]]
+	key := map[string]string{"fleet": "fleet", "preset": "preset", "claude": "claudeMode", "parallel": "maxParallel", "workers": "claudeParallel", "swarm": "swarmSize", "fast": "models.fast", "strong": "models.strong", "default": "models.default"}[f[0]]
 	if key == "" || len(f) < 2 {
-		return a.showToast("info", "Fleet", "/fleet toggles the panel · on|off: the agent delegates its work to workflows · preset turbo|free-cc|free|cc|auto · claude readonly|auto|bypass · parallel 1-64 · workers 1-16 · fast|strong|default <model>[, <model>…]", 8*time.Second)
+		return a.showToast("info", "Fleet", "/fleet toggles the panel · on|off: the agent delegates its work to workflows · preset turbo|free-cc|free|cc|auto · claude readonly|auto|bypass · parallel 1-64 · workers 1-16 · swarm 2-64 (agents per swarm) · fast|strong|default <model>[, <model>…]", 8*time.Second)
 	}
 	// A pool is several models separated by commas: "a/x, b/y".
 	value := strings.Join(f[1:], " ")

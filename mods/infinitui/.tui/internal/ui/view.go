@@ -58,6 +58,9 @@ func (a *App) rebuild() {
 
 // View draws the frame.
 func (a *App) View() tea.View {
+	if a.frameOK {
+		return a.frameView
+	}
 	var v tea.View
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeAllMotion
@@ -66,8 +69,8 @@ func (a *App) View() tea.View {
 	v.WindowTitle = a.windowTitle()
 	if a.running() {
 		// Tabs and taskbars that understand OSC 9;4 show the agent working.
+		// No spinner in the title: a new title every tick makes the terminal redraw its tab bar each time.
 		v.ProgressBar = tea.NewProgressBar(tea.ProgressBarIndeterminate, 0)
-		v.WindowTitle = spinnerFrames[a.frame%len(spinnerFrames)] + " " + v.WindowTitle
 	}
 	if a.width == 0 || a.height == 0 {
 		v.SetContent("")
@@ -106,7 +109,7 @@ func (a *App) View() tea.View {
 		if bar != nil {
 			mw := a.mainWidth()
 			for i := 0; i < l.transcriptH; i++ {
-				r := rows[l.transcriptTop+i]
+				r := cleanRow(rows[l.transcriptTop+i])
 				if w := ansi.StringWidth(r); w < mw-1 {
 					r += strings.Repeat(" ", mw-1-w)
 				} else if w > mw-1 {
@@ -129,14 +132,17 @@ func (a *App) View() tea.View {
 		mw := a.mainWidth()
 		side := a.renderSidebar(l.statusY)
 		for i := 0; i < l.statusY; i++ {
-			r := rows[i]
+			r := cleanRow(rows[i])
 			if w := ansi.StringWidth(r); w < mw {
 				r += strings.Repeat(" ", mw-w)
 			} else if w > mw {
 				r = ansi.Truncate(r, mw, "")
 			}
-			rows[i] = r + side[i]
+			rows[i] = r + cleanRow(side[i])
 		}
+	}
+	for i := range rows {
+		rows[i] = cleanRow(rows[i])
 	}
 	base := strings.Join(rows, "\n")
 
@@ -186,6 +192,7 @@ func (a *App) View() tea.View {
 		}
 	}
 	a.dirty = false
+	a.frameView, a.frameOK = v, true
 	return v
 }
 
@@ -867,4 +874,17 @@ func (a *App) recentSessions() []api.Session {
 		}
 	}
 	return out
+}
+
+// rowCleaner removes what makes the renderer and the terminal disagree about a row: a \r moves the
+// renderer to column 0, and U+FE0F / U+200D make emoji 2 (or 4) columns by grapheme but 1 by wcwidth, the
+// renderer's measure when the terminal does not answer mode 2027 (Windows Terminal). Either leaves stray
+// cells behind and shifts what follows on the row (the scrollbar, the sidebar).
+var rowCleaner = strings.NewReplacer("\r", "", "\ufe0f", "", "\u200d", "")
+
+func cleanRow(s string) string {
+	if !strings.ContainsAny(s, "\r\ufe0f\u200d") {
+		return s
+	}
+	return rowCleaner.Replace(s)
 }

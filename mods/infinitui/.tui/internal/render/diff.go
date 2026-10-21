@@ -41,6 +41,8 @@ func ParseUnified(text string) ([]DiffLine, DiffStat) {
 	oldNo, newNo := 0, 0
 	seenHunk := false
 	for _, l := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+		// A CRLF file's lines keep their \r, which would send the renderer back to column 0.
+		l = strings.TrimSuffix(l, "\r")
 		switch {
 		case strings.HasPrefix(l, "@@"):
 			o, n := parseHunkHeader(l)
