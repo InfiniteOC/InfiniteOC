@@ -7,50 +7,52 @@ const tui = "packages/tui/src"
 // realignPromptMentions is text-based and prefix-agnostic, so "#file"
 // mentions realign like "@file" ones. "@https://" URL attaches are untouched.
 export const patches = [
-  [`${tui}/prompt/display.ts`, `export function mentionTriggerIndex(value: string, offset = promptOffsetWidth(value)) {
-  const text = displaySlice(value, 0, offset)
+  [`${tui}/prompt/display.ts`, `export function mentionTriggerIndex(text: string, widthMethod: WidthMethod) {
   const index = text.lastIndexOf("@")
   if (index === -1) return
 
   const before = index === 0 ? undefined : text[index - 1]
   const query = text.slice(index)
   if ((before === undefined || /\\s/.test(before)) && !/\\s/.test(query)) {
-    return promptOffsetWidth(text.slice(0, index))
+    return measureEditText(text.slice(0, index), { widthMethod })
   }
-}`, `export function mentionTriggerIndex(value: string, offset = promptOffsetWidth(value)) {
-  const text = displaySlice(value, 0, offset)
+}`, `export function mentionTriggerIndex(text: string, widthMethod: WidthMethod) {
   const index = text.lastIndexOf("@")
   if (index === -1) return
 
   const before = index === 0 ? undefined : text[index - 1]
   const query = text.slice(index)
   if ((before === undefined || /\\s/.test(before)) && !/\\s/.test(query)) {
-    return promptOffsetWidth(text.slice(0, index))
+    return measureEditText(text.slice(0, index), { widthMethod })
   }
 }
 
-export function hashTriggerIndex(value: string, offset = promptOffsetWidth(value)) {
-  const text = displaySlice(value, 0, offset)
+export function hashTriggerIndex(text: string, widthMethod: WidthMethod) {
   const index = text.lastIndexOf("#")
   if (index === -1) return
 
   const before = index === 0 ? undefined : text[index - 1]
   const query = text.slice(index)
   if ((before === undefined || /\\s/.test(before)) && !/\\s/.test(query)) {
-    return promptOffsetWidth(text.slice(0, index))
+    return measureEditText(text.slice(0, index), { widthMethod })
   }
 }`],
-  [`${tui}/component/prompt/autocomplete.tsx`, `import { displayCharAt, mentionTriggerIndex, slashTriggerIndex } from "../../prompt/display"`, `import { displayCharAt, hashTriggerIndex, mentionTriggerIndex, slashTriggerIndex } from "../../prompt/display"`],
+  [`${tui}/component/prompt/autocomplete.tsx`, `import { mentionTriggerIndex, slashTriggerIndex } from "../../prompt/display"`, `import { hashTriggerIndex, mentionTriggerIndex, slashTriggerIndex } from "../../prompt/display"`],
+  // The trigger character at the popup's stored editor offset, read from the input itself.
+  [`${tui}/component/prompt/autocomplete.tsx`, `  const renderer = useRenderer()
+`, `  const renderer = useRenderer()
+  const triggerAt = () => props.input().getTextRange(store.index, store.index + 1)
+`],
   [`${tui}/component/prompt/autocomplete.tsx`, `  const referenceMatch = createMemo(() => {
     if (store.visible !== "reference") return`, `  const referenceMatch = createMemo(() => {
-    if (store.visible !== "reference" || displayCharAt(props.value, store.index) !== "@") return`],
+    if (store.visible !== "reference" || triggerAt() !== "@") return`],
   [`${tui}/component/prompt/autocomplete.tsx`, `    const fileOptions: AutocompleteOption[] = store.visible === "reference" ? fileSearch.options : []
     const nonFileOptions: AutocompleteOption[] =
       store.visible === "reference"
         ? [...skillOptions(), ...referenceAliasesValue, ...agentsValue]
         : store.index === 0
           ? [...commandsValue]
-          : []`, `    const triggerChar = displayCharAt(props.value, store.index)
+          : []`, `    const triggerChar = store.visible === "reference" ? triggerAt() : undefined
     const filesOnly = store.visible === "reference" && triggerChar === "#"
     const skillsOnly = store.visible === "reference" && triggerChar !== "#"
     const fileOptions: AutocompleteOption[] = filesOnly ? fileSearch.options : []
@@ -62,29 +64,27 @@ export function hashTriggerIndex(value: string, offset = promptOffsetWidth(value
           : store.index === 0
             ? [...commandsValue]
             : []`],
-  [`${tui}/component/prompt/autocomplete.tsx`, `    const charAfterCursor = displayCharAt(props.value, currentCursorOffset)
-    const needsSpace = charAfterCursor !== " "
-    const prefix = "@"`, `    const charAfterCursor = displayCharAt(props.value, currentCursorOffset)
-    const needsSpace = charAfterCursor !== " "
-    const prefix = displayCharAt(props.value, store.index) === "#" ? "#" : "@"`],
+  [`${tui}/component/prompt/autocomplete.tsx`, `    const needsSpace = input.getTextRange(currentCursorOffset, currentCursorOffset + 1) !== " "
+    const prefix = "@"`, `    const needsSpace = input.getTextRange(currentCursorOffset, currentCursorOffset + 1) !== " "
+    const prefix = triggerAt() === "#" ? "#" : "@"`],
   [`${tui}/component/prompt/autocomplete.tsx`, `    input.deleteRange(startCursor.row, startCursor.col, endCursor.row, endCursor.col)
-    input.insertText("@" + selectedPath + "/")`, `    input.deleteRange(startCursor.row, startCursor.col, endCursor.row, endCursor.col)
-    const expandPrefix = displayCharAt(props.value, store.index) === "#" ? "#" : "@"
+    input.insertText("@" + selectedPath + "/")`, `    const expandPrefix = triggerAt() === "#" ? "#" : "@"
+    input.deleteRange(startCursor.row, startCursor.col, endCursor.row, endCursor.col)
     input.insertText(expandPrefix + selectedPath + "/")`],
   [`${tui}/component/prompt/autocomplete.tsx`, `        // Check for "@" trigger - find the nearest "@" before cursor with no whitespace between
-        const idx = mentionTriggerIndex(value, offset)
+        const idx = mentionTriggerIndex(beforeCursor, renderer.widthMethod)
         if (idx !== undefined) {
           show("reference")
           setStore("index", idx)
         }`, `        // "@" completes skills and agents, "#" completes files - the nearest trigger wins
-        const at = mentionTriggerIndex(value, offset)
-        const hash = hashTriggerIndex(value, offset)
+        const at = mentionTriggerIndex(beforeCursor, renderer.widthMethod)
+        const hash = hashTriggerIndex(beforeCursor, renderer.widthMethod)
         const idx = at !== undefined && hash !== undefined ? Math.max(at, hash) : (at ?? hash)
         if (idx !== undefined) {
           show("reference")
           setStore("index", idx)
         }`],
-  [`${tui}/component/prompt/autocomplete.tsx`, `    return "No matching files, agents, or references"`, `    return displayCharAt(props.value, store.index) === "#"
+  [`${tui}/component/prompt/autocomplete.tsx`, `    return "No matching files, agents, or references"`, `    return triggerAt() === "#"
       ? "No matching files"
       : "No matching skills, agents, or references"`],
   [`${tui}/component/prompt/autocomplete.tsx`, `  const [search, setSearch] = createSignal("")
@@ -120,7 +120,7 @@ export function hashTriggerIndex(value: string, offset = promptOffsetWidth(value
 
 export default {
   id: "hash-mentions",
-  version: "1.1.0",
+  version: "1.2.0",
   async setup(api) {
     for (const [path, before, after] of patches) await api.patchExact(path, before, after)
   },
