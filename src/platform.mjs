@@ -46,7 +46,7 @@ export function binaryPath(home, target = buildTarget()) {
 /** All candidate binary paths (exe first on Windows, bare first elsewhere). */
 export function binaryCandidates(home, target = buildTarget()) {
   const dir = path.join(home, ".runtime/opencode/packages/cli/dist", upstreamDistName(target), "bin")
-  return isWindows || target.startsWith("win32-")
+  return target.startsWith("win32-")
     ? [path.join(dir, "opencode.exe"), path.join(dir, "opencode")]
     : [path.join(dir, "opencode"), path.join(dir, "opencode.exe")]
 }

@@ -7,13 +7,14 @@ import { Tool } from "@opencode/schema/tool"
 import { TuiEvent } from "@opencode/schema/tui-event"
 import { Effect, Schema, Stream } from "effect"
 import { spawnSync } from "node:child_process"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { Bus } from "../bus.js"
 import { FileAccess } from "../file-access.js"
 import { Location } from "../location.js"
 import { Permission } from "../permission.js"
-import { formatReport, findAxe, findChrome, runCheck, toUrl, viewportSpecs, type Scheme } from "../infiniteoc/quality/browser.js"
+import { formatReport, findAxe, findChrome, runCheck, serveLocal, toUrl, viewportSpecs, type Scheme } from "../infiniteoc/quality/browser.js"
 import { catalog, formatCatalog } from "../infiniteoc/quality/catalog.js"
 import { detectCommand, fmtDelta, parseCoverage, readReport, type Totals } from "../infiniteoc/quality/coverage.js"
 import { addedDeps, describeAdded } from "../infiniteoc/quality/deps.js"
@@ -21,6 +22,7 @@ import { run, tail } from "../infiniteoc/quality/exec.js"
 import { formatLicense, scanLicense } from "../infiniteoc/quality/license.js"
 import { formatPrune, prune } from "../infiniteoc/quality/prune.js"
 import { load } from "../infiniteoc/quality/scan.js"
+import { checkable, syntaxProblem } from "../infiniteoc/quality/syntax.js"
 import { networkAllowed, projectDir, readBaseline, readConfig, readJson, writeBaseline } from "../infiniteoc/quality/store.js"
 import { compareBench, eventsFromMessages, flakyVerdict, isSourceFile, isTestCommand, MARK, mutate, reminderCount, targets, testFirstEnd, testFirstPhase, testFirstRefusal } from "../infiniteoc/quality/tests.js"
 import { extractTokens, formatTokens } from "../infiniteoc/quality/tokens.js"
@@ -68,7 +70,7 @@ export const Plugin = define({
           name: "ui_check",
           options: { codemode: false },
           description:
-            "Render a page in headless Chrome and look at it. Returns screenshots at phone (375), tablet (768) and desktop (1280) widths in light mode plus desktop in dark mode, a horizontal-overflow check, console errors, an axe-core accessibility audit (when axe-core is installed in the project), and a pixel diff against the previous capture of the same page. Use it after every UI change. Capture once BEFORE editing so the after-capture shows a diff. Optionally pass a mockup image to see how far the render is from it. Target: a dev server URL (http://localhost:...) or an HTML file path.",
+            "Render a page in headless Chrome and look at it. Returns screenshots at phone (375), tablet (768) and desktop (1280) widths in light mode plus desktop in dark mode, a horizontal-overflow check, console errors, an axe-core accessibility audit (when axe-core is installed in the project), and a pixel diff against the previous capture of the same page. Use it after every UI change. Capture once BEFORE editing so the after-capture shows a diff. Optionally pass a mockup image to see how far the render is from it. Target: a dev server URL (http://localhost:...) or an HTML file path; a file is served from its folder over a temporary local http server, so ES modules, fetch and localStorage work without starting one yourself. Lists and tables: also check them filled, with storage (localStorage the app loads) or setup (a script that adds items).",
           input: Schema.Struct({
             target: Schema.String.annotate({ description: "http://localhost URL of a running dev server, or the path of an HTML file" }),
             viewports: Schema.optionalKey(Viewports).annotate({ description: 'Subset of "phone", "tablet", "desktop" or pixel widths. Default: all three.' }),
@@ -77,13 +79,17 @@ export const Plugin = define({
             a11y: Schema.optionalKey(Schema.Boolean).annotate({ description: "Run the axe-core audit when available. Default true." }),
             save_baseline: Schema.optionalKey(Schema.Boolean).annotate({ description: "Store these captures as the new baseline for later diffs (a baseline is also created when none is fresh)." }),
             mockup: Schema.optionalKey(Schema.String).annotate({ description: "Path of a mockup image (png, jpg, webp); the page is rendered at its width and compared pixel by pixel." }),
+            storage: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)).annotate({ description: "localStorage entries (key to string value) set before the page's scripts run, to render a filled state." }),
+            setup: Schema.optionalKey(Schema.String).annotate({ description: "JavaScript run in the page after it loads and before it is measured (may await), e.g. to fill and submit the form a few times." }),
           }),
           execute: (input, context) =>
             Effect.gen(function* () {
               const dir = cwd()
               const chrome = findChrome()
               if (!chrome) return text("ui_check cannot render here: no Chrome, Chromium or Edge was found (set INFINITEOC_CHROME to a browser binary). Nothing was installed. Tell the user the UI was not rendered and list what they should check by hand.")
-              const url = toUrl(input.target, networkAllowed(dir))
+              // A relative path means the session directory, not the server process's working directory.
+              const target = /^[a-z][a-z0-9+.-]*:\/\//i.test(input.target) || path.isAbsolute(input.target) ? input.target : path.join(dir, input.target)
+              const url = toUrl(target, networkAllowed(dir))
               const viewports = viewportSpecs(input.viewports)
               const wide = viewports.reduce((a, b) => (b.width > a.width ? b : a))
               const plan = input.schemes?.length
@@ -92,19 +98,26 @@ export const Plugin = define({
               const mockup = input.mockup
                 ? yield* access.authorizeRead(input.mockup, context).pipe(Effect.flatMap((target) => attempt(() => ({ file: target.absolute, base64: readFileSync(target.absolute).toString("base64") }))))
                 : undefined
-              const key = createHash("sha1").update(url).digest("hex").slice(0, 10)
+              // A filled state gets its own baselines instead of diffing against the empty page.
+              const state = input.storage || input.setup ? JSON.stringify([input.storage ?? null, input.setup ?? null]) : ""
+              const key = createHash("sha1").update(url + state).digest("hex").slice(0, 10)
               const file = (label: string) => path.join(projectDir(dir), "shots", `${key}-${label}.png`)
               const axePath = input.a11y === false ? undefined : findAxe(dir)
+              // Baselines stay keyed to the file URL; the page itself is rendered from a local http origin.
+              const local = url.startsWith("file:") ? yield* attempt(() => serveLocal(fileURLToPath(url))) : undefined
               const result = yield* attempt(() =>
-                runCheck({ chrome, url, plan, fullPage: input.full_page !== false, axeSource: axePath, mockup, baseline: (label) => readBaseline(file(label))?.toString("base64") }),
-              )
+                runCheck({ chrome, url: local?.url ?? url, plan, fullPage: input.full_page !== false, axeSource: axePath, basicAudit: input.a11y !== false && !axePath, mockup, storage: input.storage, setup: input.setup, baseline: (label) => readBaseline(file(label))?.toString("base64") }),
+              ).pipe(Effect.ensuring(local ? Effect.promise(() => local.close()) : Effect.void))
               const saved: string[] = []
               for (const shot of result.shots)
                 if (input.save_baseline || !shot.baseline) {
                   writeBaseline(file(shot.label), Buffer.from(shot.png, "base64"))
                   saved.push(shot.label)
                 }
-              const report = formatReport(result, input.a11y === false || axePath ? "ran" : "missing", input.target)
+              const formatted = formatReport(result, input.a11y === false ? "off" : axePath ? "ran" : "basic", input.target)
+              // Console errors name the temporary origin; show the files they mean instead.
+              const mapped = local ? formatted.split(`${local.origin}/`).join(`${local.root}${path.sep}`) : formatted
+              const report = local?.missing.length ? `${mapped}\nMissing files: the page requests ${local.missing.join(", ")}, which do not exist. Create them or fix the links.` : mapped
               const parts: Tool.Content[] = [{ type: "text", text: report + (saved.length ? `\nSaved as the baseline for later diffs: ${saved.join(", ")}.` : "") }]
               for (const shot of result.shots) {
                 parts.push(image(`${shot.label}.png`, shot.png))
@@ -297,7 +310,16 @@ export const Plugin = define({
 
         if (files.some((file) => UI_FILE.test(file)) && !reminded.has(event.sessionID)) {
           reminded.add(event.sessionID)
-          notes.push("UI file changed. Before reporting done, render it with the ui_check tool (a dev server URL or the HTML file) to see phone, tablet, desktop and dark mode plus an accessibility audit; design_tokens and component_catalog show what to reuse.")
+          notes.push("UI file changed. Before reporting done, render it with the ui_check tool (the HTML file of a static page, no server needed; or the URL of a framework's running dev server) to see phone, tablet, desktop and dark mode plus an accessibility audit; design_tokens and component_catalog show what to reuse.")
+        }
+
+        // A file the call left unparseable is reported now, not steps later when something imports it.
+        for (const file of files.filter(checkable)) {
+          const absolute = path.resolve(dir, file)
+          try {
+            const problem = statSync(absolute).size <= 2_000_000 ? syntaxProblem(path.relative(dir, absolute) || file, readFileSync(absolute, "utf8")) : undefined
+            if (problem) notes.push(problem)
+          } catch {}
         }
 
         const manifests = files.filter((file) => MANIFEST.test(file)).map((file) => path.resolve(dir, file))

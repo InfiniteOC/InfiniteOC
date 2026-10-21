@@ -204,7 +204,10 @@ export const Plugin = define({
     yield* ctx.session.hook("retry", (event) =>
       Effect.gen(function* () {
         const backup = lib.configuredModel(lib.readSettings(), "fallback")
-        if (!backup || !event.decision.retry || !lib.failsOver(event.error)) return
+        // Not gated on event.decision.retry: a free tier's 429 arrives as a non-retryable quota error,
+        // which is exactly when the backup model should take over. failsOver still excludes auth and
+        // request errors, and a backup that fails the same way is not switched to again.
+        if (!backup || !lib.failsOver(event.error)) return
         // The run reloads the session's model before each retry, so the switch applies to the next attempt.
         if (yield* switchTo(event.sessionID, event.model, backup)) {
           event.decision = { retry: true, delay: 500 }

@@ -23,12 +23,37 @@ const safeChmod = async (file, mode) => { if (!isWindows) await chmod(file, mode
 // different directories share a fingerprint (portable installs, prebuilt
 // binaries). Note: this changes every fingerprint once; the next launch
 // rebuilds, then later launches reuse the build again.
-export async function digestTree(directory, hash, base = directory) {
+export async function digestTree(directory, hash, base = directory, cache = fileDigests) {
   for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
     if (/^(?:node_modules$|\.)|~$|^#.*#$|\.(?:log|tmp)$/.test(entry.name)) continue
     const file = path.join(directory, entry.name)
-    if (entry.isDirectory()) await digestTree(file, hash, base)
-    else if (entry.isFile()) hash.update(path.relative(base, file)).update(await readFile(file))
+    if (entry.isDirectory()) await digestTree(file, hash, base, cache)
+    else if (entry.isFile()) hash.update(path.relative(base, file)).update("\0").update(await fileDigest(file, cache)).update("\n")
+  }
+}
+// Per-file content digests reused while size, mtime, ctime and inode are unchanged, so a check stats the
+// tree instead of reading every byte (the daemon checks every second). Files changed in the last two
+// seconds are always re-read: coarse filesystem clocks could hide a same-size edit inside one tick.
+const fileDigests = new Map()
+const RACY_MS = 2000
+export async function fileDigest(file, cache = fileDigests, now = Date.now()) {
+  const info = await stat(file)
+  const key = `${info.size}:${info.mtimeMs}:${info.ctimeMs}:${info.ino}`
+  const hit = cache.get(file)
+  if (hit?.key === key) { cache.set(file, hit); return hit.digest }
+  const digest = createHash("sha256").update(await readFile(file)).digest("hex")
+  if (now - Math.max(info.mtimeMs, info.ctimeMs) > RACY_MS) cache.set(file, { key, digest })
+  return digest
+}
+/** A digest cache that keeps only the files used since it was created, for persisting between launches. */
+export function digestCache(entries = {}) {
+  const previous = new Map(Object.entries(entries)), used = new Map()
+  let changed = false
+  return {
+    get: file => used.get(file) ?? previous.get(file),
+    set(file, value) { if (previous.get(file)?.key !== value.key) changed = true; used.set(file, value) },
+    get changed() { return changed || used.size !== previous.size },
+    toJSON: () => Object.fromEntries(used),
   }
 }
 export async function modsDigest(base) {

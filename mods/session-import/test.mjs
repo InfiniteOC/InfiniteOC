@@ -5,6 +5,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import module from "node:module"
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises"
+import { rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { spawnSync, spawn } from "node:child_process"
@@ -26,6 +27,8 @@ import {
 const hasStrip = Boolean(module.stripTypeScriptTypes)
 // Import records go to $XDG_DATA_HOME/infiniteoc; keep them out of the real one (children inherit it).
 process.env.XDG_DATA_HOME = await mkdtemp(path.join(tmpdir(), "session-import-data-"))
+const importData = process.env.XDG_DATA_HOME
+process.on("exit", () => rmSync(importData, { recursive: true, force: true }))
 const here = new URL(".", import.meta.url).pathname
 
 const CLAUDE_FIXTURE = [

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
 
-const LIB = ["scan", "tokens", "catalog", "prune", "deps", "license", "coverage", "tests", "exec", "store", "browser"]
+const LIB = ["scan", "tokens", "catalog", "prune", "deps", "license", "coverage", "tests", "exec", "store", "browser", "syntax"]
 const marker = "// infiniteoc:guidance-extensions"
 
 export const guidance = `[Quality tools]

@@ -185,6 +185,12 @@ export function changedLines(tool: string, input: unknown): number {
   return 0
 }
 
+/** Pure: lines an edit adds to the diff budget. Creating a new file is not widening a change to existing code, so it counts as a file only. */
+export function budgetLines(tool: string, input: unknown, result: unknown): number {
+  const created = tool === "write" && (result as { output?: { existed?: unknown } } | undefined)?.output?.existed === false
+  return created ? 0 : changedLines(tool, input)
+}
+
 // --- readonly -------------------------------------------------------------------------------
 
 const READ_COMMANDS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "egrep", "rg", "pwd", "echo", "printf", "which", "stat", "file", "du", "df", "date", "whoami", "uname", "sort", "uniq", "diff", "cmp", "tree", "realpath", "dirname", "basename", "cut", "tr", "nl", "id", "hostname", "fd", "bat", "cd", "true", "false", "test", "[", "env", "printenv", "sed", "find", "git", "gh"])
@@ -373,14 +379,14 @@ export const Plugin = define({
       const turn = turnOf(event.sessionID as string)
       const files = targets(event.tool, event.input)
       files.forEach((file) => turn.files.add(file))
-      turn.lines += changedLines(event.tool, event.input)
+      turn.lines += budgetLines(event.tool, event.input, event.result)
       const hooks = config.hooks["after-edit"] ?? []
       const ran = hooks.length > 0 ? Effect.promise(() => runHooks(hooks, { event: "after-edit", sessionID: event.sessionID, tool: event.tool, files }, dir)).pipe(Effect.asVoid) : Effect.void
       const { files: maxFiles, lines: maxLines } = config.diffBudget
       const over = !turn.warned && ((maxFiles > 0 && turn.files.size > maxFiles) || (maxLines > 0 && turn.lines > maxLines))
       if (!over) return ran
       turn.warned = true
-      const note = `[InfiniteOC diff budget] This turn has touched ${turn.files.size} files and about ${turn.lines} changed lines (budget ${maxFiles} files, ${maxLines} lines). Stop widening the change: finish the current step, summarize what you changed, and ask the user before continuing with more.`
+      const note = `[InfiniteOC diff budget] This turn has touched ${turn.files.size} files and about ${turn.lines} changed lines in existing files (budget ${maxFiles} files, ${maxLines} lines). If that is more than the request needs, stop widening the change: finish the current step, summarize what you changed, and ask the user before continuing. If the user asked for this much (a whole feature or a new project), carry on.`
       const content = event.result.content
       event.result = { ...event.result, content: typeof content === "string" ? `${content}\n\n${note}` : [...(content ?? []), { type: "text" as const, text: note }] }
       return ran.pipe(Effect.andThen(toast(`This turn touched ${turn.files.size} files and about ${turn.lines} lines (budget ${maxFiles} files / ${maxLines} lines).`, "warning", "Diff budget")))
