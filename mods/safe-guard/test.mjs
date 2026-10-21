@@ -2,14 +2,19 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { readFile, writeFile, mkdtemp, mkdir } from "node:fs/promises"
 import { execFileSync } from "node:child_process"
+import { rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import mod, { guidance } from "./index.mjs"
 
+const temps = []
+const temp = async (prefix) => { const dir = await mkdtemp(path.join(tmpdir(), prefix)); temps.push(dir); return dir }
+process.on("exit", () => { for (const dir of temps) rmSync(dir, { recursive: true, force: true }) })
+
 // The pure part of a generated plugin: upstream imports and the Plugin definition stripped, node imports kept.
 async function load(name) {
   const source = await readFile(new URL(`./${name}.ts`, import.meta.url), "utf8")
-  const dir = await mkdtemp(path.join(tmpdir(), "safe-guard-"))
+  const dir = await temp("safe-guard-")
   await writeFile(path.join(dir, `${name}.ts`), source.split("export const Plugin")[0].replace(/^import .*(@opencode|effect|\.\.\/|\.\/).*$/gm, "").replace(/^import type .*$/gm, ""))
   return import(path.join(dir, `${name}.ts`))
 }
@@ -126,7 +131,7 @@ test("commit convention check learns from the log", () => {
 })
 
 test("user hooks get the event on stdin; non-zero exit fails with its output", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "safe-hooks-"))
+  const dir = await temp("safe-hooks-")
   const ok = await safety.runHooks([`cat > ${dir}/event.json`], { event: "before-edit", files: ["a.ts"] }, dir)
   assert.equal(ok.ok, true)
   assert.deepEqual(JSON.parse(await readFile(path.join(dir, "event.json"), "utf8")), { event: "before-edit", files: ["a.ts"] })
@@ -137,7 +142,7 @@ test("user hooks get the event on stdin; non-zero exit fails with its output", a
 })
 
 function repo() {
-  return mkdtemp(path.join(tmpdir(), "safe-git-")).then((dir) => {
+  return temp("safe-git-").then((dir) => {
     const run = (...args) => execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim()
     run("init", "-q", "-b", "main")
     run("config", "user.email", "t@example.com")
