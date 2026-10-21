@@ -207,9 +207,11 @@ func (c *Client) FindFiles(ctx context.Context, query string, limit int) ([]FSEn
 
 // --- sessions ---
 
-// SessionList returns sessions, newest first. roots limits to sessions without a parent.
+// SessionList returns sessions that are not archived, newest first. roots limits to sessions without a parent.
+// Archiving a session also bumps its update time, so the server must leave archived ones out: filtering them
+// here instead would let them crowd live sessions out of the page and let --continue resume one.
 func (c *Client) SessionList(ctx context.Context, limit int, search string, roots bool, directory string) ([]Session, error) {
-	q := url.Values{"limit": {fmt.Sprint(limit)}, "order": {"desc"}}
+	q := url.Values{"limit": {fmt.Sprint(limit)}, "order": {"desc"}, "archived": {"false"}}
 	if search != "" {
 		q.Set("search", search)
 	}

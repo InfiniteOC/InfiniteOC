@@ -227,8 +227,8 @@ export default {
       replace(source, "            {Locale.titlecase(props.message.agent)}\n",
         "            {local.agent.list().find((agent) => agent.id === props.message.agent)?.name ?? Locale.titlecase(props.message.agent)}\n"))
     await api.patch("packages/tui/src/app.tsx", (source) => {
-      source = replace(source, '    if (route.data.type === "home") {\n      renderer.setTerminalTitle("OpenCode")', '    if (route.data.type === "home") {\n      renderer.setTerminalTitle("InfiniteOC")')
-      return replace(source, '      if (!title || isFallbackTitle(title)) {\n        renderer.setTerminalTitle("OpenCode")', '      if (!title || isFallbackTitle(title)) {\n        renderer.setTerminalTitle("InfiniteOC")')
+      source = replace(source, '    if (route.data.type === "home") {\n      setTerminalTitle(renderer, "OpenCode")', '    if (route.data.type === "home") {\n      setTerminalTitle(renderer, "InfiniteOC")')
+      return replace(source, '      if (!title || isFallbackTitle(title)) {\n        setTerminalTitle(renderer, "OpenCode")', '      if (!title || isFallbackTitle(title)) {\n        setTerminalTitle(renderer, "InfiniteOC")')
     })
     // Dialogs dim the page in over 120ms instead of a hard cut; content and focus are instant, and
     // wizard steps (dialog.replace) keep the mounted backdrop, so the fade plays once per open.

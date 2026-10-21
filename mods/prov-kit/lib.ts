@@ -113,9 +113,11 @@ export const stopGoalNote = (limit: number, spent: number) =>
 
 // ---- fallback ----
 
-/** Rate limits and server errors; other errors (auth, bad request) would fail on the backup too. */
+/** Rate limits, a free tier's usage limit and server errors; other errors (auth, bad request) would fail on the backup too. */
 export const failsOver = (error: { status?: number; type?: string }) =>
-  error.status === 429 || (error.status !== undefined && error.status >= 500) || /rate.?limit|overload|unavailable|internal/i.test(error.type ?? "")
+  error.status === 429 ||
+  (error.status !== undefined && error.status >= 500) ||
+  /rate.?limit|free.?limit|overload|unavailable|internal/i.test(error.type ?? "")
 
 // ---- network and power ----
 
