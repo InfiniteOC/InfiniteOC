@@ -32,6 +32,14 @@ test("goalActive follows the last goal control note", { skip }, () => {
   assert.equal(lib.goalActive([note("[InfiniteOC goal: finished]\nx")]), false)
 })
 
+test("fallback also takes over quota 429s that the runner would not retry", async () => {
+  const source = await readFile(new URL("./plugin.ts", import.meta.url), "utf8")
+  const hook = source.slice(source.indexOf('ctx.session.hook("retry"'), source.indexOf("// Offline with a local model configured"))
+  assert.match(hook, /if \(!backup \|\| !lib\.failsOver\(event\.error\)\) return/)
+  assert.doesNotMatch(hook, /event\.decision\.retry \|\|/)
+  assert.match(hook, /event\.decision = \{ retry: true, delay: 500 \}/)
+})
+
 test("fallback only for rate limits and server errors", { skip }, () => {
   for (const error of [{ status: 429 }, { status: 500 }, { status: 503 }, { type: "rate_limit_exceeded" }, { type: "overloaded_error" }]) assert.ok(lib.failsOver(error), JSON.stringify(error))
   for (const error of [{ status: 401 }, { status: 400 }, { status: 404 }, { type: "invalid_request" }, {}]) assert.ok(!lib.failsOver(error), JSON.stringify(error))

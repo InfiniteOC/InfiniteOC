@@ -7,7 +7,7 @@ Runs after `mods/infiniteoc` (it patches that mod's `/goal` registration, guidan
 | Session budget | server plugin | `/budget 5` sets a limit in dollars, `/budget` shows it, `/budget off` removes it. At the limit tool calls are refused (the agent stops and reports) and an active `/goal` is paused. The limit is a note in the transcript, so it survives restarts. |
 | Spend report | TUI | `/usage`: spend by day, project and provider, read from stored sessions (assistant and compaction message costs, subagents included). |
 | Model routing | server plugin, `settings.json` | `/routing cheap provider/model` for explore, title and summary; `/routing strong provider/model` for the general and reviewer subagents. The main agent keeps the model you picked. `/routing` shows, `/routing off cheap` clears. |
-| Provider fallback | server plugin | `/routing fallback provider/model`. On a 429 or 5xx the run retries on that model, then returns to the original at the end of the run. |
+| Provider fallback | server plugin | `/routing fallback provider/model`. On a 429 or 5xx (including a free tier's quota 429, which the runner itself never retries) the run retries on that model, then returns to the original at the end of the run. |
 | Local models | TUI | `/local` probes Ollama (11434) and LM Studio (1234) on loopback and, after a confirmation, adds the provider with the existing safe writer (never overwrites an existing provider, keeps a backup). |
 | Dev servers | TUI | `/serve`: start (PORT set to a free port), list, logs, stop. They keep running when tabs close and are stopped when InfiniteOC exits. |
 | Free port | tool `free_port` | Guidance tells the agent to use it before starting any listener. |
