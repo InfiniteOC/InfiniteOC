@@ -1,13 +1,16 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { mkdtemp, readFile, writeFile, stat, readdir } from "node:fs/promises"
+import { rmSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { loadSettings, saveSettings, settingsFile, validateTraffic, validateProvider, buildProvider, saveProvider, discoverModels } from "../mods/infiniteoc/settings/settings-store.mjs"
 import { installSettings } from "../mods/infiniteoc/settings/index.mjs"
 import { applyTraffic } from "../src/traffic.mjs"
 
-const lab = () => mkdtemp(path.join(os.tmpdir(), "infiniteoc-settings-"))
+const labs = []
+const lab = async () => { const dir = await mkdtemp(path.join(os.tmpdir(), "infiniteoc-settings-")); labs.push(dir); return dir }
+process.on("exit", () => { for (const dir of labs) rmSync(dir, { recursive: true, force: true }) })
 const input = { id: "custom", protocol: "anthropic", baseURL: "https://example.com/v1", models: "model-a,model-b" }
 test("settings defaults, env override, atomic mode-600 roundtrip", async () => {
   const dir = await lab(), file = path.join(dir, "settings.json")

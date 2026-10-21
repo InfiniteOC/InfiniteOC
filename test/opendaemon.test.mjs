@@ -11,6 +11,8 @@ import { safeError } from "../src/tui-features.mjs"
 import { daemonRequest } from "../src/daemon-client.mjs"
 // Personal mods (src/user-mods.mjs) must never touch the real ~/.config/infiniteoc/mods from a test.
 process.env.INFINITEOC_MODS_DIR = (await import("node:fs")).mkdtempSync((await import("node:path")).join((await import("node:os")).tmpdir(), "ioc-personal-mods-"))
+const personalModsDir = process.env.INFINITEOC_MODS_DIR, { rmSync: removeTree } = await import("node:fs")
+process.on("exit", () => removeTree(personalModsDir, { recursive: true, force: true }))
 
 async function makeBase(base) {
   base ??= await mkdtemp(path.join(tmpdir(), "iod-"))
