@@ -39,7 +39,12 @@ function trial(name, home) {
   return new Promise((resolve) => {
     const child = spawn(command, args, { cwd: project, env, stdio: ["ignore", fs.openSync(path.join(dir, "run.jsonl"), "w"), fs.openSync(path.join(dir, "run.err"), "w")] })
     const timer = setTimeout(() => child.kill("SIGKILL"), 25 * 60_000)
-    child.on("close", (code) => { clearTimeout(timer); resolve({ name, code, ms: Date.now() - started, dir, project }) })
+    child.on("close", (code) => {
+      clearTimeout(timer)
+      // Dev servers the agent left running would answer the next trial on the same port with the wrong project.
+      if (user) try { execFileSync("pkill", ["-KILL", "-u", user]) } catch {}
+      resolve({ name, code, ms: Date.now() - started, dir, project })
+    })
   })
 }
 

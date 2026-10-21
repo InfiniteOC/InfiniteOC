@@ -29,6 +29,9 @@ Needs Node 22+ and Playwright with Chromium for scoring (`npm i -g playwright &&
 - **Isolate the agent** (`--user NAME`, Linux, run as root). An agent running as root once ran
   `find / -name "*.test.mjs"`, found the grader and earlier trials, ran the grader against its own app and
   scored 22/22. Without isolation, discard any trial whose log reads files outside its project.
+- **Stop what a trial left running.** Agents start dev servers and often leave them up; the next trial then gets
+  the old project on the same port. With `--user` the runner kills that user's processes after each trial;
+  without it, stop stray servers yourself between trials.
 - **Run several trials per side and alternate them** (the runner does). Free models vary a lot from run to
   run, and some failure modes are intermittent. For example, beam-free's leaked-path writes showed up in
   some runs and not in others.
