@@ -551,7 +551,7 @@ func (a *App) openStatus() tea.Cmd {
 	}
 	section("MCP servers", s.Text.Render(fmt.Sprintf("%d/%d", ok, len(a.store.mcp))))
 	if len(a.store.mcp) == 0 {
-		lines = append(lines, s.Subtle.Render("none configured · /classic → /apps adds some"))
+		lines = append(lines, s.Subtle.Render("none configured · /apps adds some"))
 	}
 	for _, m := range a.store.mcp {
 		c := s.Muted

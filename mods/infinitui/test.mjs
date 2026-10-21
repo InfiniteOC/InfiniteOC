@@ -7,7 +7,7 @@ import { tmpdir } from "node:os"
 import module from "node:module"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import mod, { patches } from "./index.mjs"
+import mod, { patches, CLASSIC_COMMAND } from "./index.mjs"
 import { ensureBuilt, wantsInfinitui } from "./build.mjs"
 
 const upstream = path.resolve(import.meta.dirname, "../../.upstream")
@@ -26,14 +26,16 @@ async function tempDir(t, prefix) {
   return dir
 }
 
-test("setup writes the launcher helper and only patches the CLI default command", async () => {
+test("setup writes the launcher helper, patches the CLI default command and the classic UI's command hand-over", async () => {
   const writes = [], patched = []
   await mod.setup({
     async write(file, content) { writes.push([file, content]) },
     async patchExact(file, before, after) { patched.push([file, before, after]) },
   })
   assert.deepEqual(writes.map(([file]) => file), ["packages/cli/src/infiniteoc/infinitui.ts"])
-  assert.ok(patched.length === 3 && patched.every(([file]) => file === "packages/cli/src/commands/handlers/default.ts"))
+  assert.equal(patched.length, 4)
+  assert.ok(patched.slice(0, 3).every(([file]) => file === "packages/cli/src/commands/handlers/default.ts"))
+  assert.deepEqual(patched[3], CLASSIC_COMMAND)
   const body = patched[2][2]
   // Falls back to the classic run() on the reserved exit code, never skips the server lease.
   assert.match(body, /code !== INFINITUI_FALLBACK/)
@@ -42,7 +44,7 @@ test("setup writes the launcher helper and only patches the CLI default command"
 
 test("anchors are unique in the pinned upstream", { skip: !existsSync(upstream) && "no .upstream checkout" }, async () => {
   const sources = new Map()
-  for (const [file, before, after] of patches) {
+  for (const [file, before, after] of [...patches, CLASSIC_COMMAND]) {
     const source = sources.get(file) ?? (await readFile(path.join(upstream, file), "utf8"))
     assert.equal(source.split(before).length, 2, `${file}: ${before}`)
     sources.set(file, source.replace(before, () => after))
@@ -51,6 +53,11 @@ test("anchors are unique in the pinned upstream", { skip: !existsSync(upstream) 
   // The hand-off sits after the server is resolved and before the OpenTUI run().
   assert.ok(result.indexOf("infinituiRun(") > result.indexOf("ServerConnection.resolve"))
   assert.ok(result.indexOf("infinituiRun(") < result.indexOf("yield* run({"))
+  // The classic UI uses Keymap and createEffect, which app.tsx already imports, and clears the variable at once.
+  const app = sources.get("packages/tui/src/app.tsx")
+  assert.match(app, /import \{[^}]*\bKeymap\b[^}]*\} from "\.\/context\/keymap"/)
+  assert.match(app, /\bcreateEffect,/)
+  assert.match(app, /delete process\.env\.INFINITEOC_CLASSIC_COMMAND/)
 })
 
 test("wantsInfinitui: interactive launches only, with a classic opt-out", async (t) => {
@@ -116,6 +123,13 @@ test("infinituiRun passes the server and args, returns the exit code, and falls 
   await chmod(classic, 0o755)
   assert.equal(await launch.infinituiRun(classic, { url: "u", version: "x" }), launch.INFINITUI_FALLBACK)
   assert.equal(launch.infinituiHandoff(), "ses_handed")
+  assert.equal(process.env.INFINITEOC_CLASSIC_COMMAND, undefined)
+  // /connect and the other classic-only dialogs: the command rides on the second line.
+  await writeFile(classic, `#!/bin/sh\nprintf 'ses_handed\\nconnect' > "$INFINITUI_HANDOFF"\nexit 75\n`)
+  t.after(() => delete process.env.INFINITEOC_CLASSIC_COMMAND)
+  assert.equal(await launch.infinituiRun(classic, { url: "u", version: "x" }), launch.INFINITUI_FALLBACK)
+  assert.equal(launch.infinituiHandoff(), "ses_handed")
+  assert.equal(process.env.INFINITEOC_CLASSIC_COMMAND, "connect")
 })
 
 test("Go unit tests pass", { skip: !hasGo && "go not installed", timeout: 600_000 }, () => {

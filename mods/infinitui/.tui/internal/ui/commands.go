@@ -90,11 +90,13 @@ func init() {
 		}},
 		{name: "editor", title: "Write the prompt in $EDITOR", key: "ctrl+x e", category: "System", run: func(a *App, _ string) tea.Cmd { return a.openEditor() }},
 		{name: "classic", title: "Switch to the classic OpenTUI interface", category: "System", run: func(a *App, _ string) tea.Cmd {
-			a.writeHandoff()
-			a.exitCode = ExitClassic
-			a.quitting = true
-			return nil
+			return a.toClassic("")
 		}},
+		// Dialogs only the classic UI has: it opens on this session and runs the command there.
+		{name: "connect", title: "Sign in to an AI provider (opens in the classic interface)", category: "System", run: func(a *App, _ string) tea.Cmd { return a.toClassic("connect") }},
+		{name: "apps", title: "Connect apps: GitHub, Google, Notion, … (opens in the classic interface)", category: "System", run: func(a *App, _ string) tea.Cmd { return a.toClassic("apps") }},
+		{name: "settings", title: "InfiniteOC settings (opens in the classic interface)", category: "System", run: func(a *App, _ string) tea.Cmd { return a.toClassic("settings") }},
+		{name: "account", title: "Switch provider accounts (opens in the classic interface)", category: "System", run: func(a *App, _ string) tea.Cmd { return a.toClassic("account") }},
 		{name: "exit", aliases: []string{"quit", "q"}, title: "Exit", key: "ctrl+d", category: "System", run: func(a *App, _ string) tea.Cmd {
 			a.quitting = true
 			return nil

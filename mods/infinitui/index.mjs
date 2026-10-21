@@ -38,6 +38,28 @@ export const patches = [
 `],
 ]
 
+// The classic UI runs a slash command InfiniTUI handed over (/connect, /apps, /settings, /account) once it is
+// registered; plugin commands appear after the plugins load.
+export const CLASSIC_COMMAND = ["packages/tui/src/app.tsx", `  const paths = useTuiPaths()
+  let highlighted = false
+`, `  const paths = useTuiPaths()
+  let highlighted = false
+  // InfiniteOC infinitui: a command InfiniTUI handed over runs here once, when it is reachable.
+  const handedCommand = process.env.INFINITEOC_CLASSIC_COMMAND
+  delete process.env.INFINITEOC_CLASSIC_COMMAND
+  const reachableCommands = Keymap.useCommands()
+  let handedRan = !handedCommand
+  createEffect(() => {
+    if (handedRan || !plugins.ready() || client.connection.status() !== "connected") return
+    const command = reachableCommands().find(
+      (item) => item.slash?.name === handedCommand || item.slash?.aliases?.includes(handedCommand!) === true,
+    )
+    if (!command) return
+    handedRan = true
+    command.run()
+  })
+`]
+
 const modDir = path.dirname(fileURLToPath(import.meta.url))
 
 export default {
@@ -45,7 +67,7 @@ export default {
   version: "0.1.0",
   async setup(api) {
     await api.write("packages/cli/src/infiniteoc/infinitui.ts", await readFile(new URL("./launch.ts", import.meta.url), "utf8"))
-    for (const [file, before, after] of patches) await api.patchExact(file, before, after)
+    for (const [file, before, after] of [...patches, CLASSIC_COMMAND]) await api.patchExact(file, before, after)
   },
   async beforeLaunch(context) {
     if (!(await wantsInfinitui(context))) return
