@@ -17,7 +17,14 @@ export function repairLeakedPath(input: unknown): unknown {
   const match = /^([^\r\n"<>]+)"\s*>([\s\S]*)$/.exec(input.path)
   const path = match?.[1].trimEnd()
   if (!match || !path) return input
-  const raw = match[2].replace(/^[ \t]*\r?\n/, "")
+  // Some leaks start with the next argument's own name (`oldString">`); several such markers mean the
+  // model packed more than one value into the call, which cannot be split back safely.
+  const names = Object.keys(input).filter((key) => key !== "path").map((key) => key.replace(/[^\w-]/g, "\\$&")).join("|")
+  let raw = match[2].replace(/^[ \t]*\r?\n/, "")
+  if (names) {
+    raw = raw.replace(new RegExp(`^\\s*(?:${names})"\\s*>[ \\t]*\\r?\\n?`), "")
+    if (new RegExp(`\\n\\s*(?:${names})"\\s*>`).test(raw)) return input
+  }
   const tail = normalize(raw)
   if (!tail) return { ...input, path }
   // An edit whose arguments shifted left: the leak is the intended oldString and oldString repeats newString

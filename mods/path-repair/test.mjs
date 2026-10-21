@@ -73,6 +73,12 @@ test("repairs a leaked body only when another argument echoes it", { skip: canSt
   // Same shift when the leak is a prefix of newString (the edit appends lines): still the real oldString.
   const head = "  --accent: #2563eb;\n  --accent-hover: #1d4ed8;", grown = `${head}\n  --btn-bg: #2563eb;`
   assert.deepEqual(repairLeakedPath({ path: `styles.css">\n${head}`, oldString: grown, newString: grown }), { path: "styles.css", oldString: head, newString: grown })
+  // Eval run a-2: the leak starts with the argument's own name; stripped before use.
+  const css = "button { cursor: pointer; background: var(--primary); }", fixed = "button { cursor: pointer; background: var(--btn); }"
+  assert.deepEqual(repairLeakedPath({ path: `styles.css">\noldString">\n${css}`, oldString: fixed, newString: fixed }), { path: "styles.css", oldString: css, newString: fixed })
+  // Several values packed into one call (oldString"> ... newString"> ...): cannot be split back, left for the tool to refuse.
+  const packed = { path: `styles.css">\noldString">\n${css}"""\nnewString">\n${fixed}`, oldString: "x y z", newString: "a b c" }
+  assert.equal(repairLeakedPath(packed), packed)
   // Edit-shaped input whose leak matches nothing: left untouched for the tool to refuse.
   const unmatched = { path: `a.ts">\n${body}`, oldString: "x", newString: "y" }
   assert.equal(repairLeakedPath(unmatched), unmatched)
