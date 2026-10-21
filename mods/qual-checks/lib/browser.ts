@@ -208,6 +208,110 @@ async function launch(chrome: string) {
 }
 
 // Runs in the page: pixel-compare two images (any format Chrome decodes), return the summary and a diff PNG.
+// Built-in checks for when axe-core is not installed: labels, accessible names, repeated row-action names,
+// text contrast against the nearest opaque background, image alt and html lang. Returns JSON violations.
+export const BASIC_AUDIT = `(() => {
+  const found = new Map()
+  const short = (el, depth = 0) => {
+    if (el.id) return \`#\${CSS.escape(el.id)}\`
+    let part = el.tagName.toLowerCase()
+    if (el.classList.length) part += \`.\${[...el.classList].slice(0, 2).map((c) => CSS.escape(c)).join(".")}\`
+    const parent = el.parentElement
+    if (!parent || parent === document.body || depth >= 2) return part
+    const same = [...parent.children].filter((c) => c.tagName === el.tagName)
+    if (same.length > 1) part += \`:nth-of-type(\${same.indexOf(el) + 1})\`
+    return \`\${short(parent, depth + 1)} > \${part}\`
+  }
+  const add = (id, impact, help, el) => {
+    const item = found.get(id) ?? { id, impact, help, nodes: [] }
+    if (item.nodes.length < 12) item.nodes.push(short(el))
+    found.set(id, item)
+  }
+  const visible = (el) => {
+    const style = getComputedStyle(el)
+    if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false
+    const rect = el.getBoundingClientRect()
+    return rect.width > 0 && rect.height > 0
+  }
+  const text = (el) => (el.textContent || "").replace(/\\s+/g, " ").trim()
+  const name = (el) => {
+    const by = el.getAttribute("aria-labelledby")
+    if (by) { const t = by.split(/\\s+/).map((id) => document.getElementById(id)).filter(Boolean).map(text).join(" ").trim(); if (t) return t }
+    const aria = (el.getAttribute("aria-label") || "").trim()
+    if (aria) return aria
+    if (el.labels && el.labels.length) { const t = [...el.labels].map(text).join(" ").trim(); if (t) return t }
+    if (/^(BUTTON|A|SUMMARY)$/.test(el.tagName) || el.getAttribute("role") === "button") {
+      const t = text(el) || [...el.querySelectorAll("img[alt]")].map((i) => i.alt).join(" ").trim()
+      if (t) return t
+    }
+    if (el.tagName === "INPUT" && /^(submit|button|reset)$/.test(el.type)) return (el.value || "").trim()
+    return (el.getAttribute("title") || "").trim()
+  }
+
+  if (!document.documentElement.getAttribute("lang")) add("html-has-lang", "serious", "The <html> element needs a lang attribute.", document.documentElement)
+  for (const img of document.querySelectorAll("img:not([alt])")) if (visible(img)) add("image-alt", "critical", "Images need alt text (empty alt for decorative images).", img)
+  for (const el of document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image]), select, textarea'))
+    if (visible(el) && !name(el)) add("label", "critical", "Form control has no label (use <label for>, aria-label or aria-labelledby).", el)
+  const actions = [...document.querySelectorAll('button, a[href], [role=button], input[type=submit], input[type=button]')].filter(visible)
+  for (const el of actions) if (!name(el)) add("button-name", "critical", "Button or link has no accessible name.", el)
+  // Repeated row actions: "Edit", "Edit", "Edit" in a list tells a screen reader user nothing about which item.
+  const groups = new Map()
+  for (const el of actions) {
+    const row = el.closest("li, tr, [role=row], [role=listitem], article")
+    const label = name(el).toLowerCase()
+    if (!row || !label) continue
+    const list = groups.get(label) ?? []
+    if (!list.some((other) => other.row === row)) list.push({ el, row })
+    groups.set(label, list)
+  }
+  for (const [label, list] of groups) if (list.length > 1)
+    for (const { el } of list.slice(0, 2)) add("repeated-action-name", "moderate", \`Several list items have an action named "\${label}"; name each after its item (for example aria-label="\${label[0].toUpperCase() + label.slice(1)} <item>").\`, el)
+
+  // Text contrast against the nearest opaque background (WCAG AA: 4.5:1, 3:1 for large text).
+  const canvas = document.createElement("canvas"); canvas.width = canvas.height = 1
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })
+  const cache = new Map()
+  const rgba = (color) => {
+    if (cache.has(color)) return cache.get(color)
+    ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = "#000"; ctx.fillStyle = color; ctx.fillRect(0, 0, 1, 1)
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data
+    const value = [r, g, b, a / 255]; cache.set(color, value); return value
+  }
+  const over = (top, bottom) => [0, 1, 2].map((i) => top[i] * top[3] + bottom[i] * (1 - top[3])).concat(1)
+  const background = (el) => {
+    const layers = []
+    for (let node = el; node; node = node.parentElement) {
+      const style = getComputedStyle(node)
+      if (style.backgroundImage && style.backgroundImage !== "none") return undefined
+      const color = rgba(style.backgroundColor)
+      if (color[3] > 0) layers.push(color)
+      if (color[3] >= 1) break
+    }
+    const dark = matchMedia("(prefers-color-scheme: dark)").matches && /dark/.test(getComputedStyle(document.documentElement).colorScheme)
+    return layers.reverse().reduce((acc, layer) => over(layer, acc), dark ? [18, 18, 18, 1] : [255, 255, 255, 1])
+  }
+  const luminance = ([r, g, b]) => [r, g, b].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4 }).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0)
+  const ratio = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05) }
+  const hex = (c) => \`#\${c.slice(0, 3).map((v) => Math.round(v).toString(16).padStart(2, "0")).join("")}\`
+  let checked = 0
+  for (const el of document.body ? document.body.querySelectorAll("*") : []) {
+    if (checked > 600) break
+    if (/^(SCRIPT|STYLE|NOSCRIPT|SVG|CANVAS|IMG|VIDEO|OPTION)$/i.test(el.tagName)) continue
+    if (![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) continue
+    if (!visible(el)) continue
+    checked++
+    const style = getComputedStyle(el)
+    const bg = background(el)
+    if (!bg) continue
+    const fg = over(rgba(style.color), bg)
+    const size = parseFloat(style.fontSize), bold = Number(style.fontWeight) >= 700
+    const need = size >= 24 || (bold && size >= 18.66) ? 3 : 4.5
+    const got = ratio(fg, bg)
+    if (got < need) add("color-contrast", "serious", \`Text contrast below \${need}:1 (for example \${got.toFixed(2)}:1, \${hex(fg)} on \${hex(bg)}).\`, el)
+  }
+  return JSON.stringify([...found.values()])
+})()`
+
 const DIFF_SCRIPT = `(async (a, b) => {
   const load = (u) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error("image decode failed")); i.src = u })
   const [A, B] = await Promise.all([load(a), load(b)])
@@ -271,6 +375,8 @@ export interface CheckOptions {
   plan: Array<{ viewport: ViewportSpec; scheme: Scheme }>
   fullPage: boolean
   axeSource?: string
+  /** Without axeSource: run the built-in BASIC_AUDIT instead. */
+  basicAudit?: boolean
   /** Previously saved PNG (base64) for a viewport/scheme label, to diff against. */
   baseline?: (label: string) => string | undefined
   mockup?: { file: string; base64: string }
@@ -288,7 +394,8 @@ export async function runCheck(opts: CheckOptions): Promise<CheckResult> {
     const consoleErrors: string[] = []
     cdp.on((method, params) => {
       if (method === "Runtime.exceptionThrown") consoleErrors.push(String(params.exceptionDetails?.exception?.description ?? params.exceptionDetails?.text).split("\n")[0])
-      else if (method === "Log.entryAdded" && params.entry.level === "error") consoleErrors.push(`${params.entry.text}${params.entry.url ? ` (${params.entry.url})` : ""}`)
+      // A missing favicon is browser noise, not a page error.
+      else if (method === "Log.entryAdded" && params.entry.level === "error" && !/\/favicon\.ico(?:[?#]|$)/.test(params.entry.url ?? "")) consoleErrors.push(`${params.entry.text}${params.entry.url ? ` (${params.entry.url})` : ""}`)
       else if (method === "Runtime.consoleAPICalled" && params.type === "error") consoleErrors.push(params.args.map((arg: { value?: unknown; description?: string }) => arg.value ?? arg.description).join(" "))
     })
     for (const domain of ["Page", "Runtime", "Log"]) await cdp.send(`${domain}.enable`)
@@ -319,17 +426,18 @@ export async function runCheck(opts: CheckOptions): Promise<CheckResult> {
     for (const { viewport, scheme } of opts.plan) {
       const shot = await capture(viewport, scheme)
       shots.push(shot)
+      let found: Array<{ id: string; impact: string; help: string; nodes: string[] }> = []
       if (opts.axeSource) {
         await evaluate(readFileSync(opts.axeSource, "utf8"))
-        const found: Array<{ id: string; impact: string; help: string; nodes: string[] }> = JSON.parse(
+        found = JSON.parse(
           await evaluate(`axe.run(document, { resultTypes: ["violations"] }).then((r) => JSON.stringify(r.violations.map((v) => ({ id: v.id, impact: v.impact || "minor", help: v.help, nodes: v.nodes.map((n) => n.target.join(" ")) }))))`),
         )
-        for (const item of found) {
-          const known = violations.get(item.id) ?? { ...item, nodes: [], seen: [] }
-          for (const node of item.nodes) if (!known.nodes.includes(node)) known.nodes.push(node)
-          known.seen.push(shot.label)
-          violations.set(item.id, known)
-        }
+      } else if (opts.basicAudit) found = JSON.parse(await evaluate(BASIC_AUDIT))
+      for (const item of found) {
+        const known = violations.get(item.id) ?? { ...item, nodes: [], seen: [] }
+        for (const node of item.nodes) if (!known.nodes.includes(node)) known.nodes.push(node)
+        known.seen.push(shot.label)
+        violations.set(item.id, known)
       }
     }
 
@@ -361,16 +469,18 @@ export async function runCheck(opts: CheckOptions): Promise<CheckResult> {
 }
 
 const ORDER = ["critical", "serious", "moderate", "minor"]
-export function formatReport(result: CheckResult, axe: "ran" | "missing", target: string) {
+export function formatReport(result: CheckResult, axe: "ran" | "missing" | "basic" | "off", target: string) {
   const out = [`UI check of ${target}: ${result.shots.map((shot) => shot.label).join(", ")}.`]
   const overflowing = result.shots.filter((shot) => shot.overflow)
   out.push(overflowing.length ? `Horizontal overflow (page wider than the viewport): ${overflowing.map((shot) => `${shot.label} by ${shot.overflow}px`).join(", ")}. Fix it.` : "No horizontal overflow at any width.")
   if (result.consoleErrors.length) out.push(`Console errors:\n${result.consoleErrors.map((line) => `  ${line}`).join("\n")}`)
-  if (axe === "missing") out.push("Accessibility: axe-core not found, so no automated accessibility audit ran. Resolve it by adding axe-core as a devDependency (not installed automatically) or set INFINITEOC_AXE_CORE to its axe.min.js. Check contrast, labels and keyboard focus by hand.")
-  else if (result.violations.length === 0) out.push("Accessibility (axe-core): no violations in the rendered page.")
+  const source = axe === "basic" ? "built-in checks; add axe-core as a devDependency for a full audit" : "axe-core"
+  if (axe === "off") {}
+  else if (axe === "missing") out.push("Accessibility: axe-core not found, so no automated accessibility audit ran. Resolve it by adding axe-core as a devDependency (not installed automatically) or set INFINITEOC_AXE_CORE to its axe.min.js. Check contrast, labels and keyboard focus by hand.")
+  else if (result.violations.length === 0) out.push(`Accessibility (${source}): no violations in the rendered page.${axe === "basic" ? " Still tab through the page and check focus by hand." : ""}`)
   else
     out.push(
-      `Accessibility (axe-core): ${result.violations.length} violation${result.violations.length === 1 ? "" : "s"}; fix them before reporting done.\n` +
+      `Accessibility (${source}): ${result.violations.length} violation${result.violations.length === 1 ? "" : "s"}; fix them before reporting done.\n` +
         result.violations
           .sort((a, b) => ORDER.indexOf(a.impact) - ORDER.indexOf(b.impact))
           .map((v) => `  [${v.impact}] ${v.id}: ${v.help}\n    at ${v.nodes.slice(0, 3).join(" ; ")}${v.nodes.length > 3 ? ` (+${v.nodes.length - 3} more)` : ""}\n    seen in ${[...new Set(v.seen)].join(", ")}`)

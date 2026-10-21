@@ -96,7 +96,7 @@ export const Plugin = define({
               const file = (label: string) => path.join(projectDir(dir), "shots", `${key}-${label}.png`)
               const axePath = input.a11y === false ? undefined : findAxe(dir)
               const result = yield* attempt(() =>
-                runCheck({ chrome, url, plan, fullPage: input.full_page !== false, axeSource: axePath, mockup, baseline: (label) => readBaseline(file(label))?.toString("base64") }),
+                runCheck({ chrome, url, plan, fullPage: input.full_page !== false, axeSource: axePath, basicAudit: input.a11y !== false && !axePath, mockup, baseline: (label) => readBaseline(file(label))?.toString("base64") }),
               )
               const saved: string[] = []
               for (const shot of result.shots)
@@ -104,7 +104,7 @@ export const Plugin = define({
                   writeBaseline(file(shot.label), Buffer.from(shot.png, "base64"))
                   saved.push(shot.label)
                 }
-              const report = formatReport(result, input.a11y === false || axePath ? "ran" : "missing", input.target)
+              const report = formatReport(result, input.a11y === false ? "off" : axePath ? "ran" : "basic", input.target)
               const parts: Tool.Content[] = [{ type: "text", text: report + (saved.length ? `\nSaved as the baseline for later diffs: ${saved.join(", ")}.` : "") }]
               for (const shot of result.shots) {
                 parts.push(image(`${shot.label}.png`, shot.png))

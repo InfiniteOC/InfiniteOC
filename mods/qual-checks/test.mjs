@@ -13,7 +13,7 @@ import { parseDeps, addedDeps, inspectInstalled } from "./lib/deps.ts"
 import { classifyText, risk, scanLicense, formatLicense } from "./lib/license.ts"
 import { parseCoverage, readReport, detectCommand, fmtDelta } from "./lib/coverage.ts"
 import { isTestCommand, isTestFile, isSourceFile, testFirstPhase, eventsFromMessages, testFirstEnd, mutate, compareBench, flakyVerdict, targets, MARK } from "./lib/tests.ts"
-import { findChrome, findAxe, playwrightChromium, toUrl, viewportSpecs, runCheck } from "./lib/browser.ts"
+import { findChrome, findAxe, playwrightChromium, toUrl, viewportSpecs, runCheck, formatReport } from "./lib/browser.ts"
 import { run } from "./lib/exec.ts"
 
 const src = (p, text) => ({ path: p, text })
@@ -290,4 +290,28 @@ test("applies to the pinned source: files, plugin registration, guidance; fails 
   await write("packages/core/src/plugin/internal.ts", "nothing\n")
   await write("packages/core/src/infiniteoc/guidance.ts", "// infiniteoc:guidance-extensions\n")
   await assert.rejects(applyMods([mod], root), /expected one internal\.ts plugin anchor/)
+})
+
+test("formatReport: built-in audit wording, and nothing about accessibility when it is off", () => {
+  const base = { shots: [{ label: "phone-light", viewport: "phone", scheme: "light", width: 375, png: "" }], consoleErrors: [], violations: [] }
+  assert.match(formatReport(base, "basic", "x.html"), /Accessibility \(built-in checks; add axe-core as a devDependency for a full audit\): no violations.*tab through/)
+  assert.doesNotMatch(formatReport(base, "off", "x.html"), /Accessibility/)
+  const found = { ...base, violations: [{ id: "color-contrast", impact: "serious", help: "Text contrast below 4.5:1", nodes: ["button"], seen: ["phone-light"] }] }
+  assert.match(formatReport(found, "basic", "x.html"), /built-in checks.*1 violation[\s\S]*\[serious\] color-contrast/)
+})
+
+test("built-in audit finds labels, names, repeated actions, contrast, alt and lang without axe-core", { skip: !chrome && "no Chrome installed", timeout: 300000 }, async (t) => {
+  const dir = await tmp(t)
+  const bad = path.join(dir, "bad.html"), good = path.join(dir, "good.html")
+  await writeFile(bad, `<!doctype html><html><head><title>t</title><style>
+    .pale { color: #fff; background: #60a5fa; padding: 4px }
+    </style></head><body><main><h1>List</h1><input type="text"><button></button><img src="x.png" width="10" height="10">
+    <ul><li>Lunch <button>Edit</button></li><li>Rent <button>Edit</button></li></ul><p class="pale">Low contrast</p></main></body></html>`)
+  await writeFile(good, `<!doctype html><html lang="en"><head><title>t</title></head><body><main><h1>List</h1>
+    <label for="a">Amount</label><input id="a"><button>Save</button><img src="x.png" alt="" width="10" height="10">
+    <ul><li>Lunch <button aria-label="Edit Lunch">Edit</button></li><li>Rent <button aria-label="Edit Rent">Edit</button></li></ul><p>Readable</p></main></body></html>`)
+  const plan = [{ viewport: viewportSpecs(["desktop"])[0], scheme: "light" }]
+  const ids = async (file) => (await runCheck({ chrome, url: toUrl(file, false), plan, fullPage: false, basicAudit: true })).violations.map((v) => v.id).sort()
+  assert.deepEqual(await ids(bad), ["button-name", "color-contrast", "html-has-lang", "image-alt", "label", "repeated-action-name"])
+  assert.deepEqual(await ids(good), [])
 })

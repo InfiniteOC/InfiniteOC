@@ -71,6 +71,7 @@ These are measurable. Check each one.
 - **Responsive**: works from 320 px to wide desktop with no horizontal scroll. Design mobile first; check at about 360, 768 and 1280 px. Use `min-height: 100dvh` rather than `100vh`, fluid type with `clamp()`, `img { max-width: 100%; height: auto }`, and explicit width and height on media to avoid layout shift.
 - **Interaction**: targets at least 44 by 44 px on touch (24 px absolute minimum). Every interactive element has hover, `:focus-visible` (a clearly visible ring, 2 px or more, with offset), active and disabled styles. Cursor and pointer behavior match the element.
 - **Accessibility**: semantic HTML first (`header`, `nav`, `main`, `section` with headings, `button` for actions, `a` for navigation, never a clickable `div`). One `h1`, headings in order. Every input has a visible label; errors are announced with text next to the field. Images have meaningful `alt` (empty for decorative). Icon-only buttons have an accessible name. Respect `prefers-reduced-motion`. Keyboard: everything reachable and operable, logical tab order, no focus traps, Escape closes overlays.
+- **Forms**: on a failed submit, keep what the user typed, move focus to the first invalid field, link each error to its field with `aria-describedby` and set `aria-invalid="true"`. Repeated actions in a list (Edit, Delete) get accessible names that say which item (`aria-label="Delete Lunch"`). Data a page saves (localStorage, drafts) is validated when read back, and every saved item has a stable id.
 - **States**: implement the loading, empty, error, disabled and success states from the plan. Empty states invite the next action. Errors say what happened and how to fix it.
 - **Performance**: no unused libraries or fonts; at most two font families and the weights you use, with `font-display: swap`; compress and size images; avoid layout thrash in animations (animate `transform` and `opacity`).
 
@@ -96,7 +97,7 @@ A UI is not done until it has been rendered and inspected.
 
 - [ ] Mode decided; existing tokens and components reused where they exist.
 - [ ] Plan written and reviewed against the brief and the defaults list.
-- [ ] Quality floor checked: text, spacing, contrast, responsive, interaction, accessibility, states, performance.
+- [ ] Quality floor checked: text, spacing, contrast, responsive, interaction, accessibility, forms, states, performance.
 - [ ] Rendered at mobile and desktop and inspected, or the inability to render stated.
 - [ ] Lint, type check and build pass for the touched files.
 - [ ] Copy is real, specific and consistent.
