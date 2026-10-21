@@ -21,7 +21,7 @@ const brief = (text: string) => {
 }
 
 const entries = (skills: ReadonlyArray<Summary>) =>
-  skills.map((skill) => \`- \${skill.id}\${skill.name === skill.id ? "" : \` (\${skill.name})\`}: \${brief(skill.description)}\`)`]
+  skills.map((skill) => \`- \${skill.id}\${(skill.name as string) === skill.id ? "" : \` (\${skill.name})\`}: \${brief(skill.description)}\`)`]
 
 export const CODEMODE_BUDGET = ["const INLINE_BUDGET = 2_000", "const INLINE_BUDGET = 500"]
 
