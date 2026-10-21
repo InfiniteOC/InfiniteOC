@@ -1,4 +1,5 @@
 import test from "node:test"
+import { spawnSync } from "node:child_process"
 import assert from "node:assert/strict"
 import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
@@ -14,6 +15,7 @@ import { classifyText, risk, scanLicense, formatLicense } from "./lib/license.ts
 import { parseCoverage, readReport, detectCommand, fmtDelta } from "./lib/coverage.ts"
 import { isTestCommand, isTestFile, isSourceFile, testFirstPhase, eventsFromMessages, testFirstEnd, mutate, compareBench, flakyVerdict, targets, MARK } from "./lib/tests.ts"
 import { findChrome, findAxe, playwrightChromium, toUrl, viewportSpecs, runCheck, formatReport, serveLocal } from "./lib/browser.ts"
+import { checkable, syntaxProblem } from "./lib/syntax.ts"
 import { run } from "./lib/exec.ts"
 
 const src = (p, text) => ({ path: p, text })
@@ -275,6 +277,56 @@ test("serveLocal serves one folder on 127.0.0.1: types, index, no dotfiles, no e
   await assert.rejects(fetch(`${server.origin}/index.html`))
 })
 
+test("syntax check: names the file, line and error of a saved file that does not parse", () => {
+  // Bun-shaped error: the runtime's transpiler reports the first problem with its position.
+  const bunError = (message, line, lineText) => Object.assign(new Error(message), { errors: [{ message, position: { line, lineText } }] })
+  const fail = (message, line, text) => () => { throw bunError(message, line, text) }
+  const ok = () => {}
+  // Eval run eval4/b-1: a second getMonthList made logic.js a SyntaxError and the model reported success.
+  const note = syntaxProblem("logic.js", "x", fail('"getMonthList" has already been declared', 212, "  export const getMonthList = (xs) => xs"))
+  assert.match(note, /^Syntax check: logic\.js does not parse: "getMonthList" has already been declared at line 212 \(`export const getMonthList = \(xs\) => xs`\)\. The file was saved as written/)
+  assert.equal(syntaxProblem("logic.js", "export const a = 1", ok), undefined)
+  // JS parses as JSX; TS and TSX use their own loaders; Flow files and other types are skipped; no transpiler, no check.
+  const seen = []
+  const spy = (loader) => { seen.push(loader) }
+  for (const file of ["a.js", "a.mjs", "a.cjs", "a.jsx", "a.ts", "a.mts", "a.tsx"]) syntaxProblem(file, "x", spy)
+  assert.deepEqual(seen, ["jsx", "jsx", "jsx", "jsx", "ts", "ts", "tsx"])
+  assert.equal(syntaxProblem("a.js", "// @flow\nconst a: number = 1", fail("Parse error", 2)), undefined)
+  assert.equal(syntaxProblem("a.js", "broken", undefined), undefined)
+  assert.equal(syntaxProblem("a.py", "def (", fail("x", 1)), undefined)
+  for (const file of ["a.js", "b.ts", "c.tsx", "package.json", "d.MJS"]) assert.ok(checkable(file), file)
+  for (const file of ["a.py", "b.css", "c.html", "README.md", "json"]) assert.ok(!checkable(file), file)
+  // JSON: strict JSON passes; comments and trailing commas (tsconfig, VS Code) pass; real breakage is reported.
+  assert.equal(syntaxProblem("package.json", '{"name": "x", "scripts": {"test": "node --test"}}'), undefined)
+  assert.equal(syntaxProblem("tsconfig.json", '{\n  // strict mode\n  "compilerOptions": { "strict": true, /* x */ "url": "http://a//b", },\n}'), undefined)
+  assert.equal(syntaxProblem("empty.json", "  "), undefined)
+  assert.match(syntaxProblem("package.json", '{"name": "x" "version": "1"}'), /^Syntax check: package\.json does not parse: /)
+  assert.match(syntaxProblem("package.json", '{"name": "x",'), /does not parse/)
+})
+
+const bun = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0
+test("syntax check with Bun's transpiler: real errors found, valid JSX/TS accepted", { skip: !bun && "bun not on PATH" }, async (t) => {
+  const dir = await tmp(t)
+  const script = path.join(dir, "check.ts")
+  await writeFile(script, `import { syntaxProblem } from ${JSON.stringify(new URL("./lib/syntax.ts", import.meta.url).pathname)}
+const cases = {
+  redeclared: ["logic.js", "export function getMonthList() {}\\nexport const getMonthList = () => 1\\n"],
+  unclosed: ["a.js", "export function a() {\\n  return 1\\n"],
+  jsx: ["App.js", "export const A = () => <div className='x'>{1 < 2 ? 'a' : 'b'}</div>\\n"],
+  ts: ["a.ts", "export function f(a: number): number { return a }\\n"],
+  badTs: ["b.ts", "export function f(a: number { return a }\\n"],
+  tla: ["c.mjs", "const r = await Promise.resolve(1)\\nexport default r\\n"],
+}
+console.log(JSON.stringify(Object.fromEntries(Object.entries(cases).map(([k, [f, t]]) => [k, syntaxProblem(f, t) ?? null]))))`)
+  const out = JSON.parse(spawnSync("bun", [script], { encoding: "utf8" }).stdout)
+  assert.match(out.redeclared, /logic\.js does not parse: .*already been declared at line 2/)
+  assert.match(out.unclosed, /a\.js does not parse: Unexpected end of file/)
+  assert.match(out.badTs, /b\.ts does not parse/)
+  assert.equal(out.jsx, null)
+  assert.equal(out.ts, null)
+  assert.equal(out.tla, null)
+})
+
 const chrome = findChrome()
 test("browser check: screenshots, overflow, dark mode, diff and mockup against real Chrome", { skip: !chrome && "no Chrome installed", timeout: 600000 }, async (t) => {
   const dir = await tmp(t)
@@ -329,7 +381,7 @@ test("applies to the pinned source: files, plugin registration, guidance; fails 
   await write("packages/core/src/plugin/internal.ts", 'import { PlanPlugin } from "./plan.js"\nexport const plugins = [\n  PlanPlugin.Plugin,\n  Other.Plugin,\n]\n')
   await write("packages/core/src/infiniteoc/guidance.ts", "export const infiniteocGuidance: Record<string, string[]> = { build: [] }\n// infiniteoc:guidance-extensions\n")
   const result = await applyMods([mod], root)
-  assert.equal(result.changes.length, 11 + 1 + 2)
+  assert.equal(result.changes.length, 12 + 1 + 2)
   const internal = await readFile(path.join(root, "packages/core/src/plugin/internal.ts"), "utf8")
   assert.match(internal, /import \* as InfiniteocQuality from "\.\/infiniteoc-quality\.js"/)
   assert.match(internal, /  InfiniteocQuality\.Plugin,\n  PlanPlugin\.Plugin,\n  Other\.Plugin,/)
