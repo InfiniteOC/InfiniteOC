@@ -112,7 +112,8 @@ export const Plugin = define({
                 }
               const formatted = formatReport(result, input.a11y === false ? "off" : axePath ? "ran" : "basic", input.target)
               // Console errors name the temporary origin; show the files they mean instead.
-              const report = local ? formatted.split(`${local.origin}/`).join(`${local.root}${path.sep}`) : formatted
+              const mapped = local ? formatted.split(`${local.origin}/`).join(`${local.root}${path.sep}`) : formatted
+              const report = local?.missing.length ? `${mapped}\nMissing files: the page requests ${local.missing.join(", ")}, which do not exist. Create them or fix the links.` : mapped
               const parts: Tool.Content[] = [{ type: "text", text: report + (saved.length ? `\nSaved as the baseline for later diffs: ${saved.join(", ")}.` : "") }]
               for (const shot of result.shots) {
                 parts.push(image(`${shot.label}.png`, shot.png))
