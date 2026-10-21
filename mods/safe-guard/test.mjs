@@ -94,6 +94,11 @@ test("tool input helpers: targets, written text, changed lines", () => {
   assert.equal(safety.changedLines("write", { content: "a\nb\nc" }), 3)
   assert.equal(safety.changedLines("edit", { oldString: "a\nb", newString: "c" }), 3)
   assert.equal(safety.changedLines("patch", { patchText: "*** Update File: a\n@@\n-x\n+y\n+z\n context" }), 3)
+  // A brand-new file counts as a file, not as changed lines; overwrites and edits still count.
+  assert.equal(safety.budgetLines("write", { content: "a\nb\nc" }, { output: { existed: false } }), 0)
+  assert.equal(safety.budgetLines("write", { content: "a\nb\nc" }, { output: { existed: true } }), 3)
+  assert.equal(safety.budgetLines("write", { content: "a\nb\nc" }, undefined), 3)
+  assert.equal(safety.budgetLines("edit", { oldString: "a\nb", newString: "c" }, { output: { existed: false } }), 3)
 })
 
 test("readonly shell analysis", () => {
