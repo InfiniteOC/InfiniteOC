@@ -181,6 +181,14 @@ test("register-only setup restores hooks without rewriting cached source or exec
   assert.equal(emitted, true)
 })
 
+test("reports which mods registered launch hooks, so cached launches can skip the rest", async (t) => {
+  const { root } = await fixture(t)
+  const quiet = { id: "quiet", async setup() {} }
+  const hooked = { id: "hooked", async setup(api) { api.on("afterExit", () => {}) } }
+  const result = await applyMods([quiet, hooked], root, {}, true)
+  assert.deepEqual(result.hookMods, ["hooked"])
+})
+
 test("bundled mod applies through the real loader to a minimal copy of pinned upstream", async (t) => {
   const upstream = join(repository, ".upstream")
   try { await access(join(upstream, "package.json")) } catch { t.skip("Local .upstream is absent; run setup/doctor to fetch pinned source"); return }

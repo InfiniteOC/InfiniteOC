@@ -4,7 +4,8 @@ import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, stat, utimes, symlink
 import { existsSync } from "node:fs"
 import path from "node:path"
 import { tmpdir } from "node:os"
-import { startDaemon, ensureDaemon, modsDigest, daemonPaths, socketLimit } from "../src/opendaemon.mjs"
+import { createHash } from "node:crypto"
+import { startDaemon, ensureDaemon, modsDigest, daemonPaths, socketLimit, fileDigest, digestCache, digestTree } from "../src/opendaemon.mjs"
 import { installDaemonTool } from "../src/opendaemon-tool.mjs"
 import { safeError } from "../src/tui-features.mjs"
 import { daemonRequest } from "../src/daemon-client.mjs"
@@ -217,6 +218,50 @@ test("mods digest ignores OS/editor litter but tracks real edits", async t => {
   assert.equal(await modsDigest(base), before)
   await writeFile(path.join(base, "mods/test/index.mjs"), "edited")
   assert.notEqual(await modsDigest(base), before)
+})
+test("file digests come from the stat cache when unchanged and still catch same-size edits", async t => {
+  const dir = await mkdtemp(path.join(tmpdir(), "iod-digest-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  const file = path.join(dir, "a.txt"), later = Date.now() + 10_000
+  await writeFile(file, "aaaa")
+  const cache = new Map()
+  const first = await fileDigest(file, cache, later)
+  // A cached entry is used without reading: swap in a sentinel and get it back.
+  cache.set(file, { ...cache.get(file), digest: "sentinel" })
+  assert.equal(await fileDigest(file, cache, later), "sentinel")
+  // Same size, new bytes: ctime moves, so the file is read again.
+  await writeFile(file, "bbbb")
+  const second = await fileDigest(file, cache, later)
+  assert.notEqual(second, first)
+  assert.notEqual(second, "sentinel")
+  // Racy: a file changed just now is never cached.
+  const fresh = new Map()
+  await fileDigest(file, fresh, Date.now())
+  assert.equal(fresh.size, 0)
+})
+test("a persisted digest cache keeps only files still present and reports changes", async t => {
+  const dir = await mkdtemp(path.join(tmpdir(), "iod-digest-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(path.join(dir, "a.txt"), "a")
+  await writeFile(path.join(dir, "b.txt"), "b")
+  const later = Date.now() + 10_000
+  const warm = digestCache()
+  for (const name of ["a.txt", "b.txt"]) await fileDigest(path.join(dir, name), warm, later)
+  assert.equal(warm.changed, true)
+  const saved = JSON.parse(JSON.stringify(warm))
+  const again = digestCache(saved)
+  for (const name of ["a.txt", "b.txt"]) await fileDigest(path.join(dir, name), again, later)
+  assert.equal(again.changed, false)
+  await rm(path.join(dir, "b.txt"))
+  const pruned = digestCache(saved)
+  await fileDigest(path.join(dir, "a.txt"), pruned, later)
+  assert.equal(pruned.changed, true)
+  assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(pruned))), [path.join(dir, "a.txt")])
+  // The tree digest is the same whether file digests come from the cache or from disk.
+  const h1 = createHash("sha256"), h2 = createHash("sha256")
+  await digestTree(dir, h1, dir, new Map())
+  await digestTree(dir, h2, dir, again)
+  assert.equal(h1.digest("hex"), h2.digest("hex"))
 })
 test("ensureDaemon fails fast when the spawned daemon exits during startup", async t => {
   const base = await mkdtemp(path.join(tmpdir(), "iod-")) // no infiniteoc.json: serve exits at once
