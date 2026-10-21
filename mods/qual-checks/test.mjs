@@ -13,7 +13,7 @@ import { parseDeps, addedDeps, inspectInstalled } from "./lib/deps.ts"
 import { classifyText, risk, scanLicense, formatLicense } from "./lib/license.ts"
 import { parseCoverage, readReport, detectCommand, fmtDelta } from "./lib/coverage.ts"
 import { isTestCommand, isTestFile, isSourceFile, testFirstPhase, eventsFromMessages, testFirstEnd, mutate, compareBench, flakyVerdict, targets, MARK } from "./lib/tests.ts"
-import { findChrome, findAxe, toUrl, viewportSpecs, runCheck } from "./lib/browser.ts"
+import { findChrome, findAxe, playwrightChromium, toUrl, viewportSpecs, runCheck } from "./lib/browser.ts"
 import { run } from "./lib/exec.ts"
 
 const src = (p, text) => ({ path: p, text })
@@ -228,6 +228,17 @@ test("axe-core is resolved from the project, never fetched", async (t) => {
   await writeFile(path.join(dir, "node_modules/axe-core/axe.min.js"), "")
   assert.equal(findAxe(path.join(dir, "a/b"), {}), path.join(dir, "node_modules/axe-core/axe.min.js"))
   assert.equal(findAxe(dir, { INFINITEOC_AXE_CORE: path.join(dir, "node_modules/axe-core/axe.min.js") }), path.join(dir, "node_modules/axe-core/axe.min.js"))
+})
+
+test("finds Playwright's newest downloaded Chromium when no system Chrome is configured", async (t) => {
+  const dir = await tmp(t)
+  for (const revision of ["chromium-1100", "chromium-1194", "chromium_headless_shell-1194"]) {
+    await mkdir(path.join(dir, revision, "chrome-linux"), { recursive: true })
+    await writeFile(path.join(dir, revision, "chrome-linux", "chrome"), "")
+  }
+  assert.equal(playwrightChromium({ PLAYWRIGHT_BROWSERS_PATH: dir }), path.join(dir, "chromium-1194", "chrome-linux", "chrome"))
+  assert.equal(playwrightChromium({ HOME: path.join(dir, "nowhere") }), undefined)
+  assert.equal(playwrightChromium({ PLAYWRIGHT_BROWSERS_PATH: "0", HOME: path.join(dir, "nowhere") }), undefined)
 })
 
 const chrome = findChrome()

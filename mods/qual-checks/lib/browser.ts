@@ -2,7 +2,7 @@
 // diff, axe-core and an overflow check. Detects an installed Chrome/Chromium/Edge; never installs anything.
 // ponytail: one browser per check, sequential captures; add a pool if checks ever need to be faster.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process"
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
@@ -45,6 +45,32 @@ export function findChrome(env: Record<string, string | undefined> = process.env
   for (const name of ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "microsoft-edge"]) {
     const found = spawnSync(process.platform === "win32" ? "where" : "which", [name], { encoding: "utf8" })
     if (found.status === 0 && found.stdout.trim()) return found.stdout.trim().split("\n")[0]
+  }
+  return playwrightChromium(env)
+}
+
+const PLAYWRIGHT_BINARIES = [
+  "chrome-linux/chrome", "chrome-linux64/chrome",
+  "chrome-mac/Chromium.app/Contents/MacOS/Chromium", "chrome-mac-arm64/Chromium.app/Contents/MacOS/Chromium",
+  "chrome-win/chrome.exe", "chrome-win64/chrome.exe",
+]
+
+/** Chromium that Playwright downloaded (common on dev machines without a system Chrome), newest revision first. */
+export function playwrightChromium(env: Record<string, string | undefined> = process.env): string | undefined {
+  const home = env.HOME || env.USERPROFILE
+  const roots = [
+    env.PLAYWRIGHT_BROWSERS_PATH && env.PLAYWRIGHT_BROWSERS_PATH !== "0" ? env.PLAYWRIGHT_BROWSERS_PATH : undefined,
+    home && path.join(home, ".cache", "ms-playwright"),
+    home && path.join(home, "Library", "Caches", "ms-playwright"),
+    env.LOCALAPPDATA && path.join(env.LOCALAPPDATA, "ms-playwright"),
+  ]
+  for (const root of roots) {
+    if (!root || !existsSync(root)) continue
+    const revisions = readdirSync(root).filter((name) => /^chromium-\d+$/.test(name)).sort((a, b) => Number(b.slice(9)) - Number(a.slice(9)))
+    for (const revision of revisions) for (const binary of PLAYWRIGHT_BINARIES) {
+      const file = path.join(root, revision, binary)
+      if (existsSync(file)) return file
+    }
   }
   return undefined
 }
@@ -141,7 +167,10 @@ async function launch(chrome: string) {
   const profile = mkdtempSync(path.join(tmpdir(), "infiniteoc-chrome-"))
   const child: ChildProcess = spawn(chrome, [
     "--headless=new", "--disable-gpu", "--hide-scrollbars", "--mute-audio", "--no-first-run", "--no-default-browser-check",
-    "--disable-extensions", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "about:blank",
+    "--disable-extensions", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
+    // Chrome refuses to start as root on Linux (containers, CI) unless its sandbox is off.
+    ...(process.platform === "linux" && process.getuid?.() === 0 ? ["--no-sandbox"] : []),
+    "about:blank",
   ], { stdio: ["ignore", "ignore", "pipe"] })
   const stop = () => {
     child.kill("SIGKILL")
