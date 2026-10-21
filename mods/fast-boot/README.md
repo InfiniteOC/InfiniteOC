@@ -25,13 +25,15 @@ Measured with interleaved runs of the same build with and without this mod
   format, TTL, fetch and Refreshed events are unchanged. If another process
   refreshes the cache, this one may fetch once more than before, and it then
   picks up the newer catalog instead of keeping its older in-memory copy.
-- **`tool/runtime.ts`: convert each tool schema once.** Converting an input
-  schema to JSON Schema is pure but costly. Upstream repeated it for every tool
-  on each registration, each tool-state fold, each step's tool snapshot and
-  each call's input repair. Each schema object is now converted once per
-  direction. Every caller still gets its own copy, so a hook that edits a
-  schema cannot change the next request. A failed conversion is not cached, so
-  registration still reports it.
+- **`tool/runtime.ts`: convert each Effect tool schema once.** Converting an
+  input schema to JSON Schema is costly. Upstream repeated it for every tool on
+  each registration, each tool-state fold, each step's tool snapshot and each
+  call's input repair. Effect schemas are immutable, so each is now converted
+  once per direction. Standard Schema vendors (Zod and others) are still asked
+  every time, as upstream does, because a vendor's converter need not be pure.
+  Every caller still gets its own copy, so a hook that edits a schema cannot
+  change the next request. A failed conversion is not cached, so registration
+  still reports it.
 - **`integration.ts`: reuse unchanged integration entries.** Every provider
   snapshot (several per step) lists all ~230 integrations. Each list validated
   every entry through `Info.make` and sorted them with `localeCompare`. An entry

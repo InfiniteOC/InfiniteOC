@@ -52,11 +52,12 @@ export const BOOT = [`        yield* Effect.forkScoped(refresh().pipe(Effect.rep
           ),
         )`]
 
-// Converting a tool's input schema to JSON Schema is pure but costly, and upstream repeats it for
-// every tool on each registration, each tool-state fold, each step's tool snapshot and each call's
-// input repair. Each schema object is now converted once per direction. Callers still get their own
-// copy, so a hook that edits a schema cannot change the next request.
-export const CONVERTED = `// InfiniteOC fast-boot: one conversion per schema object and direction; every caller gets its own copy.
+// Converting a tool's Effect input schema to JSON Schema is costly, and upstream repeats it for every
+// tool on each registration, each tool-state fold, each step's tool snapshot and each call's input
+// repair. Effect schemas are immutable, so each is now converted once per direction. Standard Schema
+// vendors are still asked every time, as upstream does, because a vendor's converter need not be pure.
+// Callers still get their own copy, so a hook that edits a schema cannot change the next request.
+export const CONVERTED = `// InfiniteOC fast-boot: one conversion per Effect schema and direction; every caller gets its own copy.
 const conversions = { input: new WeakMap<object, unknown>(), output: new WeakMap<object, unknown>() }
 const converted = (schema: object, io: "input" | "output", convert: () => JsonSchema.JsonSchema): JsonSchema.JsonSchema => {
   let json = conversions[io].get(schema)
@@ -84,13 +85,13 @@ export const SCHEMAS = [`  if (isStandardSchema(schema)) return standardJsonSche
 const outputJsonSchema = (schema: Tool.ValueSchema<any>): JsonSchema.JsonSchema => {
   if (isStandardSchema(schema)) return standardJsonSchema(schema, "output")
   return Schema.isSchema(schema) ? toJsonSchema(schema) : schema
-}`, `  if (isStandardSchema(schema)) return converted(schema, "input", () => standardJsonSchema(schema, "input"))
+}`, `  if (isStandardSchema(schema)) return standardJsonSchema(schema, "input")
   if (!Schema.isSchema(schema)) return schema
   return converted(schema, "input", () => emptyInputJsonSchema(schema) ?? toJsonSchema(schema))
 }
 
 const outputJsonSchema = (schema: Tool.ValueSchema<any>): JsonSchema.JsonSchema => {
-  if (isStandardSchema(schema)) return converted(schema, "output", () => standardJsonSchema(schema, "output"))
+  if (isStandardSchema(schema)) return standardJsonSchema(schema, "output")
   return Schema.isSchema(schema) ? converted(schema, "output", () => toJsonSchema(schema)) : schema
 }
 
