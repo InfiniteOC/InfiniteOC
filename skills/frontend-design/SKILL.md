@@ -71,6 +71,7 @@ These are measurable. Check each one.
 - **Responsive**: works from 320 px to wide desktop with no horizontal scroll. Design mobile first; check at about 360, 768 and 1280 px. Use `min-height: 100dvh` rather than `100vh`, fluid type with `clamp()`, `img { max-width: 100%; height: auto }`, and explicit width and height on media to avoid layout shift.
 - **Interaction**: targets at least 44 by 44 px on touch (24 px absolute minimum). Every interactive element has hover, `:focus-visible` (a clearly visible ring, 2 px or more, with offset), active and disabled styles. Cursor and pointer behavior match the element.
 - **Accessibility**: semantic HTML first (`header`, `nav`, `main`, `section` with headings, `button` for actions, `a` for navigation, never a clickable `div`). One `h1`, headings in order. Every input has a visible label; errors are announced with text next to the field. Images have meaningful `alt` (empty for decorative). Icon-only buttons have an accessible name. Respect `prefers-reduced-motion`. Keyboard: everything reachable and operable, logical tab order, no focus traps, Escape closes overlays.
+- **Forms**: on a failed submit, keep what the user typed, move focus to the first invalid field, link each error to its field with `aria-describedby` and set `aria-invalid="true"`. Repeated actions in a list (Edit, Delete) get accessible names that say which item (`aria-label="Delete Lunch"`). Data a page saves (localStorage, drafts) is validated when read back: drop entries that are invalid, but give a valid entry that lacks an id a new unique one instead of dropping it, so no user data is lost and edit and delete always act on exactly one item.
 - **States**: implement the loading, empty, error, disabled and success states from the plan. Empty states invite the next action. Errors say what happened and how to fix it.
 - **Performance**: no unused libraries or fonts; at most two font families and the weights you use, with `font-display: swap`; compress and size images; avoid layout thrash in animations (animate `transform` and `opacity`).
 
@@ -87,7 +88,7 @@ These are measurable. Check each one.
 A UI is not done until it has been rendered and inspected.
 
 1. Run the project's lint, type check and build for the files you touched.
-2. Render the UI. Use whatever is available: the dev server plus a browser tool, Playwright or another headless browser (see the `webapp-testing` skill), or a screenshot tool. Capture mobile (about 375 px) and desktop (about 1280 px) at minimum.
+2. Render the UI. With a `ui_check` tool, pass a static page's HTML file (it is served for the check; start no server yourself) or the URL of the dev server a framework app already runs, and render lists and tables filled as well as empty (its `storage` or `setup` input). Otherwise use whatever is available: the dev server plus a browser tool, Playwright or another headless browser (see the `webapp-testing` skill), or a screenshot tool. Capture mobile (about 375 px) and desktop (about 1280 px) at minimum.
 3. Inspect the screenshots against the plan and the quality floor: hierarchy, alignment, spacing rhythm, overflow, contrast, truncated text, focus rings (tab through), and every state you implemented.
 4. Fix what you find and look again. Critique your own work as a picky senior designer would.
 5. If you cannot render in this environment, say so plainly and list exactly what the user should check. Never claim a UI looks right without having seen it.
@@ -96,7 +97,7 @@ A UI is not done until it has been rendered and inspected.
 
 - [ ] Mode decided; existing tokens and components reused where they exist.
 - [ ] Plan written and reviewed against the brief and the defaults list.
-- [ ] Quality floor checked: text, spacing, contrast, responsive, interaction, accessibility, states, performance.
+- [ ] Quality floor checked: text, spacing, contrast, responsive, interaction, accessibility, forms, states, performance.
 - [ ] Rendered at mobile and desktop and inspected, or the inability to render stated.
 - [ ] Lint, type check and build pass for the touched files.
 - [ ] Copy is real, specific and consistent.

@@ -123,7 +123,7 @@ tests. No arbitrary source-file hot patching or automatic rollback is promised.
 - Supporting local imports that Bun can bundle without another TUI framework.
 - Toast notifications and explicit non-destructive close-all-tabs requests (the UI
   then offers Undo, like `/clearall`).
-- Local mod changes detected by content hashing, including editor atomic saves.
+- Local mod changes detected by content hashing, including editor atomic saves. Per-file digests are reused while a file's size, mtime, ctime and inode are unchanged, so an idle check only stats the files.
 
 Live handlers use `FeatureContext`: `tabs`, `route`, `dialog`, `toast` and the
 `ui` promise dialogs. Type-only `import type { FeatureContext } from "./api"` is

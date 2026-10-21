@@ -1,13 +1,16 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
+import { rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { applyMods } from "../../src/mod-loader.mjs"
 import mod from "./index.mjs"
 import { collectRefs, fileTokens, planRepair, preflightFile, resolveFileRef, scanTextRefs } from "./preflight.mjs"
 
-const dir = () => mkdtemp(path.join(tmpdir(), "crash-guard-"))
+const dirs = []
+const dir = async () => { const made = await mkdtemp(path.join(tmpdir(), "crash-guard-")); dirs.push(made); return made }
+process.on("exit", () => { for (const made of dirs) rmSync(made, { recursive: true, force: true }) })
 
 test("file tokens and upstream-compatible path resolution", () => {
   assert.deepEqual(fileTokens('a {file:/x.key} b {env:Y}'), ["{file:/x.key}"])

@@ -52,8 +52,9 @@ file can tighten the rules, never grant commands or run hooks. `allow`, `hooks`,
   `git commit` whose subject does not is refused with the recent subjects as examples. The
   agent guidance also tells it to read `git log` before committing.
 - Diff budget: after a turn's edits pass the file or line budget, the next tool result gets a
-  note telling the agent to stop widening the change, and a toast warns you. Once per turn.
-  `0` disables a limit.
+  note telling the agent to stop widening the change unless you asked for that much, and a toast
+  warns you. Once per turn. Lines of newly created files count toward the file limit only, so a
+  new project is not stopped by its first large file. `0` disables a limit.
 - User hooks: shell commands run with the event JSON on stdin (`event`, `sessionID`, `tool`,
   `files`, `input`/`prompt`). `before-edit` blocks the edit on a non-zero exit and the hook's
   output is shown to the agent. `after-edit`, `prompt-submit` (cannot block) and `session-end`

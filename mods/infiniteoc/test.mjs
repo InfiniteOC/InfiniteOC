@@ -126,7 +126,7 @@ test("wordmark data and resume hints point at InfiniteOC", async () => {
   assert.match(files.get("packages/cli/src/commands/handlers/uninstall.ts"), /if \(OPENCODE_CHANNEL === "infiniteoc"\) return yield\* Effect\.fail/)
   assert.equal(JSON.parse(files.get("packages/tui/src/theme/assets/v2/infiniteoc.json")).dark.categorical[0], "purple")
   assert.match(files.get("packages/tui/src/routes/session/index.tsx"), /\?\.name \?\? Locale\.titlecase\(props\.message\.agent\)/)
-  assert.equal(files.get("packages/tui/src/app.tsx").match(/setTerminalTitle\("InfiniteOC"\)/g).length, 2)
+  assert.equal(files.get("packages/tui/src/app.tsx").match(/setTerminalTitle\(renderer, "InfiniteOC"\)/g).length, 2)
   const dialog = files.get("packages/tui/src/ui/dialog.tsx")
   assert.match(dialog, /enabled: \(\) => config\.data\.animations \?\? true, transition: tween\(\{ duration: 0\.12 \}\)/)
   assert.match(dialog, /RGBA\.fromInts\(0, 0, 0, Math\.round\(dim\.value\(\)\.alpha\)\)/)
@@ -370,6 +370,30 @@ test("frontend gate covers UI files from edit, write and patch, and names the sk
   assert.equal(loaded([tool(SKILL, "error")]), false)
   assert.equal(loaded([tool(SKILL)]), true)
   assert.equal(loaded([{ type: "skill", skill: SKILL }]), true)
+  // Attached to a prompt: counts once the skill's text was resolved into the message.
+  assert.equal(loaded([{ type: "user", text: "make a page", skills: [{ id: SKILL, name: SKILL, text: "..." }] }]), true)
+  assert.equal(loaded([{ type: "user", text: "make a page", skills: [{ id: SKILL, name: SKILL }] }]), false)
+  assert.equal(loaded([{ type: "user", text: "make a page", skills: [{ id: "impeccable", name: "impeccable", text: "..." }] }]), false)
+})
+
+test("clear web UI requests attach the bundled frontend-design skill to the prompt", async (t) => {
+  const source = await readFile(new URL("./frontend.ts", import.meta.url), "utf8")
+  const dir = await mkdtemp(path.join(tmpdir(), "frontend-"))
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeFile(path.join(dir, "frontend.ts"), source.split("export const Plugin")[0].replace(/^import (?!.*node:).*$/gm, ""))
+  const { wantsUi, bundled } = await import(path.join(dir, "frontend.ts"))
+  for (const text of [
+    "Build a complete expense tracker web app in this directory. No build step: plain HTML, CSS and ES modules.",
+    "make a landing page for my bakery", "Fix the dashboard layout on mobile", "add dark mode to the UI",
+    "Create a React component for the settings form", "the website footer overlaps", "frontend: tidy the nav",
+  ]) assert.ok(wantsUi(text), text)
+  for (const text of [
+    "fix the failing test in parser.ts", "write a CLI that renames files", "speed up the build", "why is the query slow",
+    "the TUI scrolls wrong", "add a guide for contributors", "build an API endpoint for invoices",
+  ]) assert.ok(!wantsUi(text), text)
+  assert.equal(bundled({ INFINITEOC_SKILLS: path.resolve(import.meta.dirname, "../../skills") }), true)
+  assert.equal(bundled({ INFINITEOC_SKILLS: dir }), false)
+  assert.equal(bundled({}), false)
 })
 
 test("every agent's guidance requires the frontend-design skill for UI work", () => {

@@ -24,14 +24,7 @@ const CORE = "packages/core/src/plugin"
 const FEATURES = "packages/tui/src/infiniteoc-features"
 
 export const guidance = `[Agent display]
-Your isolated screen (Xvfb :99, 1280x800), never the user's display: exec there with DISPLAY=:99, no WAYLAND_DISPLAY. Use the agent_display tool.
-- Fast loop: exec (waits for window, returns id+geometry), then steps with several ops + screenshot: true; read frame, repeat. Prefer one steps call over many single wins.
-- Click by label, not pixels: { op: "click", label: "Consent" } OCR-clicks center; button/link beats same word in sentence; nth picks next. find lists visible text+x,y (cheaper than screenshot); { op: "wait", label: "Done" } waits. Pixel x/y off by 20-50px: use x/y only for icon/canvas/game without text.
-- Coordinates: no window = screen pixels (same as full screenshot). With window (id/title/class) = window-relative.
-- Real input (XTEST): click focuses; type/key go to focused window. keys are X keysyms ("Return", "ctrl+l", "ctrl+a BackSpace").
-- Screenshot when claim depends on screen; read before describing. show shares frame; live stream page is for user watch, not you.
-- Desktop: openbox title bars, taskbar bottom 36px, click focuses. status tells bare X vs ready. /display realistic toggle: instant default, human-speed when on.
-- Chromium: --ozone-platform=x11 + fresh --user-data-dir per spawn, else Wayland/wrong instance. exec/kill/stream/input need shell permission, so /readonly/allow-lists/yolo apply.`
+You have an isolated GUI screen (Xvfb :99, 1280x800, never the user's display) for running and checking GUI programs: load the agent_display tool when a task needs one; its description has the fast loop (exec, then steps with screenshot: true), labels vs screen pixels or window-relative coordinates, and the Chromium flags. Take a screenshot before any claim that depends on the screen. exec/kill/stream/input need shell permission, so /readonly, allow-lists and yolo apply.`
 const marker = "// infiniteoc:guidance-extensions"
 
 // safe-guard's /readonly refuses shells that may change state and editing subagents;

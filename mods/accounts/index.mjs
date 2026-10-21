@@ -53,8 +53,8 @@ export default {
     const prov = "packages/core/src/plugin/infiniteoc-prov.ts"
     if (await api.read(prov).then(() => true, () => false))
       await api.patch(prov, (source) =>
-        replace(source, "if (!backup || !event.decision.retry || !lib.failsOver(event.error)) return",
-          "if (!backup || !event.decision.retry || !lib.failsOver(event.error) || (event as { accountRotated?: boolean }).accountRotated) return"))
+        replace(source, "if (!backup || !lib.failsOver(event.error)) return",
+          "if (!backup || !lib.failsOver(event.error) || (event as { accountRotated?: boolean }).accountRotated) return"))
 
     // ---- TUI: /account, footer label, InfiniteOC Settings → Accounts ----
     await api.write(`${system}/infiniteoc-accounts-lib.ts`, lib)

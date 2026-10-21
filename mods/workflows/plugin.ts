@@ -49,16 +49,11 @@ const MAX_ITEM_OUTPUT = 20_000
 const MAX_WAIT_SECONDS = 120
 
 export const GUIDANCE = `[Workflows]
-The workflow tool is your default way to delegate more than one task. Use it whenever you would otherwise make two or more subagent calls, or one subagent call followed by a review. One call runs them all: independent steps in parallel, dependent steps in order, each on a model chosen for its kind of work, with one notification at the end. One quick task: the plain subagent tool.
-- Steps: id, agent, title, a self-contained prompt (the worker starts with no context), needs (the ids it depends on; their results are passed in, or place one with {{steps.<id>}}). Mark a step optional when the rest can go on without it. Never give two steps the same files to edit.
-- Shapes that pay off: parallel explore/researcher steps on separate questions; general steps on disjoint files followed by a reviewer step that needs them all; explore, then general, then reviewer for one change in unfamiliar code.
-- Fast: keep each step narrow, split a broad search into parallel steps rather than one long one, set kind (search and summarize run on the fast model) and leave model unset (set it only when the user asks for a model).
-- When its result is the only thing you need next, start it with wait: true: the results come back in that call, with no extra wake-up turn. Otherwise it runs in the background: keep working on non-overlapping tasks, or tell the user what you launched and end your turn; that notification wakes you, also under /goal. Do not poll: a status check that finds nothing new only says so.
-- Check status only for a reason: the user asks, it has been silent far longer than its steps should take, or you need one step's result early (then status with wait: true blocks once until something changes, instead of repeated checks). "cancel" stops it.
-- Many similar tasks (per file, per item, up to hundreds): one step with glob: "src/**/*.ts" (or each: [...items]), not one step per item. Put {{file}} in its prompt to inline each file (the step answers in one model call, no read), or {{item}} for the path or item. Keep those prompts short and ask for a short answer; a step that needs the group gets a digest of every result.
-- One goal, many agents: action "swarm" with goal (and edits: true when files must change). A planner splits it into up to size tasks with a shared contract (layout, interfaces, names), they all run at once, workers message each other and add tasks they discover (swarm_add), and an edit swarm ends with a reviewer step. Use it whenever the work splits but you have not split it yourself.
-- Steps can talk: send_message(to, text) to a step id, "main" (you) or "all", and read_messages.
-- Results are the steps' reports: answer from them. Do not re-read files or re-run checks to confirm them unless the user asked for verification or reports contradict each other; never redo a step's work.`
+Use the workflow tool whenever you would otherwise make two or more subagent calls, or one subagent call followed by a review; one quick task: the plain subagent tool. Its description covers steps, glob/each fan-out and swarm.
+- Keep steps narrow with self-contained prompts, never two steps editing the same files; set kind and leave model unset unless the user asks for one.
+- When its result is the only thing you need next, start it with wait: true: the results come back in that call. Otherwise keep working on non-overlapping tasks, or tell the user what you launched and end your turn; that notification wakes you, also under /goal. Do not poll.
+- Check status only for a reason: the user asks, it has been silent far longer than its steps should take, or you need one step's result early (then status with wait: true blocks once until something changes).
+- Answer from the steps' reports and never redo a step's work; for steps that changed files, verify as for any change: read the diff and run the checks.`
 
 /** Added for primary agents while fleet mode is on; it overrides the "one quick task: subagent" rule above. */
 export const FLEET_GUIDANCE = `[Fleet mode]
@@ -1241,8 +1236,10 @@ export const Plugin = define({
         tool.description = [
           tool.description,
           "",
-          "Agents for steps:",
-          ...available.map((agent) => `- ${agent.id}: ${agent.description ?? "Use only when explicitly requested."}`),
+          // The subagent tool in the same request already describes each agent; repeat only the names then.
+          ...(event.tools.subagent
+            ? [`Agents for steps (described in the subagent tool): ${available.map((agent) => agent.id).join(", ")}.`]
+            : ["Agents for steps:", ...available.map((agent) => `- ${agent.id}: ${agent.description ?? "Use only when explicitly requested."}`)]),
           "",
           `Model tiers now: fast = ${current.models.fast}, strong = ${current.models.strong}, default = ${current.models.default}. At most ${current.maxParallel} steps run at once (Claude Code: ${current.claudeParallel}), ${current.maxSteps} steps per workflow after expanding each.`,
           ...(!current.fleet && C.findBinary()

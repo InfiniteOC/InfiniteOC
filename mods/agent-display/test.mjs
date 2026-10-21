@@ -310,13 +310,16 @@ test("command dialog follows the select-alert-confirm pattern", async () => {
   assert.match(source, /pidAlive/)
 })
 
-test("agent guidance teaches the fast loop, coordinates and the chromium tips", () => {
+test("agent guidance teaches the fast loop, coordinates and the chromium tips", async () => {
+  const description = await readFile(new URL("./plugin.ts", import.meta.url), "utf8")
+  assert.match(description, /--ozone-platform=x11 and a fresh --user-data-dir per spawn/)
+  assert.match(description, /window-relative|relative to that window/)
+  assert.ok(guidance.length < 700, "always-on guidance stays a pointer; the tool description holds the detail")
   assert.match(guidance, /steps/)
   assert.match(guidance, /screenshot: true/)
   assert.match(guidance, /screen pixels/)
   assert.match(guidance, /window-relative/)
-  assert.match(guidance, /--user-data-dir/)
-  assert.match(guidance, /--ozone-platform=x11/)
+  assert.match(guidance, /Chromium flags/)
   assert.match(guidance, /shell permission/)
 })
 

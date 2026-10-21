@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process"
-import { access, readFile, writeFile, mkdir, rm, stat, link, copyFile } from "node:fs/promises"
+import { access, readFile, writeFile, mkdir, rm, rename, stat, link, copyFile } from "node:fs/promises"
 import { createWriteStream, rmSync } from "node:fs"
 import { resolve, join, dirname, basename } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -9,7 +9,7 @@ import { setTimeout as sleep } from "node:timers/promises"
 import { loadMods, applyMods } from "./mod-loader.mjs"
 import { applyTraffic, probeSocks } from "./traffic.mjs"
 import { loadSettings, saveSettings, settingsFile, providerConfigFile } from "../mods/infiniteoc/settings/settings-store.mjs"
-import { ensureDaemon, daemonPaths, digestTree } from "./opendaemon.mjs"
+import { ensureDaemon, daemonPaths, digestTree, digestCache } from "./opendaemon.mjs"
 import { daemonRequest } from "./daemon-client.mjs"
 import {
   binaryCandidates,
@@ -154,7 +154,14 @@ export async function fingerprint(settings, mods) {
   hash.update(await readFile(join(home, "src/tui-features.mjs")))
   for (const file of ["live-runtime.ts", "daemon-client.mjs", "opendaemon-tool.mjs", "export-tool.mjs", "project-export.mjs"]) hash.update(await readFile(join(home, "src", file)))
   hash.update(await readFile(join(home, "src/traffic.mjs")))
-  for (const mod of mods) await digestTree(dirname(mod.filename), hash)
+  // Per-file digests persist between launches, so an unchanged checkout is stat-ed, not re-read.
+  const cacheFile = join(home, ".runtime/digest-cache.json")
+  const cache = digestCache(await readFile(cacheFile, "utf8").then(JSON.parse).catch(() => ({})))
+  for (const mod of mods) await digestTree(dirname(mod.filename), hash, undefined, cache)
+  if (cache.changed) {
+    const temporary = `${cacheFile}.${process.pid}.tmp`
+    await mkdir(dirname(cacheFile), { recursive: true }).then(() => writeFile(temporary, JSON.stringify(cache))).then(() => rename(temporary, cacheFile)).catch(() => rm(temporary, { force: true }))
+  }
   return hash.digest("hex")
 }
 // Self-healing: a lock whose owner died, or a pid-less one older than 30 minutes, is reclaimed.
@@ -317,7 +324,7 @@ export async function prepare(settings, force = false, { clean = false } = {}) {
       await keepArchive(join(root, "packages/cli/.cache/bun-app-archive.bin"), cache, web.key)
       await pruneBrotli(web.brotli, building)
     } catch (error) { console.error(`[InfiniteOC] Could not keep the web UI build for reuse: ${error.message}`) }
-    manifest = { key, upstream: settings.upstream, builtAt: new Date().toISOString(), mods: mods.map(mod => mod.id), webUi, changes: applied.changes, timings }
+    manifest = { key, upstream: settings.upstream, builtAt: new Date().toISOString(), mods: mods.map(mod => mod.id), hookMods: applied.hookMods, webUi, changes: applied.changes, timings }
     await writeFile(marker, JSON.stringify(manifest, null, 2))
     // launch() falls back to this when a later build fails; a hardlink survives the next rm of root.
     // Best-effort: losing the fallback must never fail a finished build.
@@ -379,7 +386,9 @@ export async function launch(args, settings, options = {}) {
   let prepared, hooks
   try {
     prepared = await prepare(settings)
-    hooks = await applyMods(prepared.mods, prepared.root, settings.options, true)
+    // Only mods that registered launch hooks in this build re-run setup; builds that predate the list run all of them.
+    const hookMods = prepared.manifest?.hookMods
+    hooks = await applyMods(Array.isArray(hookMods) ? prepared.mods.filter(mod => hookMods.includes(mod.id)) : prepared.mods, prepared.root, settings.options, true)
   } catch (error) {
     // A broken mod or build must not lock the user out: run the last good build, without mod hooks.
     if (error.exitCode) throw error

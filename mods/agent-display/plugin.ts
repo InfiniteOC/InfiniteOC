@@ -829,6 +829,7 @@ export const Plugin = define({
             'Ops: click (label or x/y, button, count 2 = double), find (visible text and where), mousedown, mouseup, mousemove, scroll (button 4 up / 5 down / 6 left / 7 right, count), drag (x,y to x2,y2), type (text), key (keys like "ctrl+l" or "ctrl+a BackSpace", count), keydown, keyup, focus, move, resize, close, list, wait (until a window appears), sleep (ms).',
             "Input is real (XTEST): a click hits whatever is on top at that point and moves keyboard focus there; type/key go to the focused window, or focus window first when given.",
             "Also: status (apps and windows), screenshot/show (window captures one window; show tells the user), kill (pid from status), stream (live watch page on 127.0.0.1 for the user), start/stop. exec, kill, stream and input ops ask through the normal shell permission. Screenshots cost image tokens.",
+            "Chromium: pass --ozone-platform=x11 and a fresh --user-data-dir per spawn, or it picks Wayland or reuses another instance. Read the frame before describing the screen; the live page is for the user to watch, not for you.",
           ].join("\n"),
           input: Input,
           execute,

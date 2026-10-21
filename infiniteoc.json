@@ -1,5 +1,5 @@
 {
-  "upstream": "v2.0.32",
+  "upstream": "v2.1.2",
   "mods": [
     "./mods/infiniteoc/index.mjs",
     "./mods/clearall/index.mjs",
@@ -16,6 +16,11 @@
     "./mods/awareness/index.mjs",
     "./mods/hash-mentions/index.mjs",
     "./mods/tool-perf/index.mjs",
+    "./mods/path-repair/index.mjs",
+    "./mods/lean-context/index.mjs",
+    "./mods/fast-boot/index.mjs",
+    "./mods/lazy-catalog/index.mjs",
+    "./mods/inline-run/index.mjs",
     "./mods/win-utf8/index.mjs",
     "./mods/yolo/index.mjs",
     "./mods/accounts/index.mjs",

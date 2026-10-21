@@ -11,6 +11,8 @@ import { buildLive } from "../src/live-build.mjs"
 import clearall from "../mods/clearall/index.mjs"
 // Personal mods (src/user-mods.mjs) must never touch the real ~/.config/infiniteoc/mods from a test.
 process.env.INFINITEOC_MODS_DIR = (await import("node:fs")).mkdtempSync((await import("node:path")).join((await import("node:os")).tmpdir(), "ioc-personal-mods-"))
+const personalModsDir = process.env.INFINITEOC_MODS_DIR, { rmSync: removeTree } = await import("node:fs")
+process.on("exit", () => removeTree(personalModsDir, { recursive: true, force: true }))
 
 // The injected tab methods and the upstream tab model are TypeScript.
 const skip = !(process.features.typescript && module.stripTypeScriptTypes) && "needs Node type stripping"
@@ -97,6 +99,10 @@ test("patchExact rejects missing/ambiguous anchors", async t => {
   await applyMods([{ id: "exact", setup: api => api.patchExact("anchor.txt", "original", "changed") }], root)
   assert.equal(await readFile(join(root, "anchor.txt"), "utf8"), "changed")
   await assert.rejects(applyMods([{ id: "exact", setup: api => api.patchExact("anchor.txt", "missing", "changed") }], root), /expected one/)
+})
+test("patchExact inserts the replacement literally, without $ patterns", () => {
+  const code = 'text.replace(/[.]/g, "\\\\$&") + "$$" + "$`" + "$\'" + "$1"'
+  assert.equal(replaceExact("before ANCHOR after", "ANCHOR", code), `before ${code} after`)
 })
 
 // Execute the exact methods injected into the TUI (types stripped) with the real

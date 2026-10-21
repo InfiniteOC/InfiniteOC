@@ -1,4 +1,5 @@
 import test from "node:test"
+import { spawnSync } from "node:child_process"
 import assert from "node:assert/strict"
 import { mkdtemp, mkdir, writeFile, rm, readFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
@@ -13,7 +14,8 @@ import { parseDeps, addedDeps, inspectInstalled } from "./lib/deps.ts"
 import { classifyText, risk, scanLicense, formatLicense } from "./lib/license.ts"
 import { parseCoverage, readReport, detectCommand, fmtDelta } from "./lib/coverage.ts"
 import { isTestCommand, isTestFile, isSourceFile, testFirstPhase, eventsFromMessages, testFirstEnd, mutate, compareBench, flakyVerdict, targets, MARK } from "./lib/tests.ts"
-import { findChrome, findAxe, toUrl, viewportSpecs, runCheck } from "./lib/browser.ts"
+import { findChrome, findAxe, playwrightChromium, toUrl, viewportSpecs, runCheck, formatReport, serveLocal } from "./lib/browser.ts"
+import { checkable, syntaxProblem } from "./lib/syntax.ts"
 import { run } from "./lib/exec.ts"
 
 const src = (p, text) => ({ path: p, text })
@@ -230,6 +232,104 @@ test("axe-core is resolved from the project, never fetched", async (t) => {
   assert.equal(findAxe(dir, { INFINITEOC_AXE_CORE: path.join(dir, "node_modules/axe-core/axe.min.js") }), path.join(dir, "node_modules/axe-core/axe.min.js"))
 })
 
+test("finds Playwright's newest downloaded Chromium when no system Chrome is configured", async (t) => {
+  const dir = await tmp(t)
+  for (const revision of ["chromium-1100", "chromium-1194", "chromium_headless_shell-1194"]) {
+    await mkdir(path.join(dir, revision, "chrome-linux"), { recursive: true })
+    await writeFile(path.join(dir, revision, "chrome-linux", "chrome"), "")
+  }
+  assert.equal(playwrightChromium({ PLAYWRIGHT_BROWSERS_PATH: dir }), path.join(dir, "chromium-1194", "chrome-linux", "chrome"))
+  assert.equal(playwrightChromium({ HOME: path.join(dir, "nowhere") }), undefined)
+  assert.equal(playwrightChromium({ PLAYWRIGHT_BROWSERS_PATH: "0", HOME: path.join(dir, "nowhere") }), undefined)
+})
+
+test("serveLocal serves one folder on 127.0.0.1: types, index, no dotfiles, no escape, GET/HEAD only", async (t) => {
+  const dir = await tmp(t)
+  await mkdir(path.join(dir, "site", "sub"), { recursive: true })
+  await mkdir(path.join(dir, "site", ".git"), { recursive: true })
+  await writeFile(path.join(dir, "site", "index.html"), "<!doctype html><title>home</title>")
+  await writeFile(path.join(dir, "site", "app.mjs"), "export const x = 1")
+  await writeFile(path.join(dir, "site", "sub", "index.html"), "sub")
+  await writeFile(path.join(dir, "site", "my file.css"), "body{}")
+  await writeFile(path.join(dir, "site", ".env"), "SECRET=1")
+  await writeFile(path.join(dir, "site", ".git", "config"), "[core]")
+  await writeFile(path.join(dir, "outside.txt"), "outside")
+  const server = await serveLocal(path.join(dir, "site", "index.html"))
+  try {
+    assert.match(server.url, /^http:\/\/127\.0\.0\.1:\d+\/index\.html$/)
+    assert.equal(server.root, path.join(dir, "site"))
+    const get = (p, init) => fetch(`${server.origin}${p}`, init)
+    const page = await get("/index.html")
+    assert.equal(page.status, 200)
+    assert.match(page.headers.get("content-type"), /^text\/html/)
+    assert.equal(page.headers.get("cache-control"), "no-store")
+    assert.match((await get("/app.mjs")).headers.get("content-type"), /^text\/javascript/)
+    assert.equal(await (await get("/sub/")).text(), "sub")
+    assert.equal(await (await get("/my%20file.css")).text(), "body{}")
+    for (const blocked of ["/.env", "/.git/config", "/%2e%2e/outside.txt", "/..%2foutside.txt", "/missing.js", "/favicon.ico", "/missing.js"]) assert.equal((await get(blocked)).status, 404, blocked)
+    // Requested files that do not exist are listed once; refused paths and favicon.ico are not. The URL parser
+    // already resolves /%2e%2e/outside.txt to /outside.txt inside the folder, a plain missing file.
+    assert.deepEqual(server.missing, ["outside.txt", "missing.js"])
+    assert.equal((await get("/index.html", { method: "POST" })).status, 405)
+    const head = await get("/index.html", { method: "HEAD" })
+    assert.equal(head.status, 200)
+    assert.equal(await head.text(), "")
+  } finally {
+    await server.close()
+  }
+  await assert.rejects(fetch(`${server.origin}/index.html`))
+})
+
+test("syntax check: names the file, line and error of a saved file that does not parse", () => {
+  // Bun-shaped error: the runtime's transpiler reports the first problem with its position.
+  const bunError = (message, line, lineText) => Object.assign(new Error(message), { errors: [{ message, position: { line, lineText } }] })
+  const fail = (message, line, text) => () => { throw bunError(message, line, text) }
+  const ok = () => {}
+  // Eval run eval4/b-1: a second getMonthList made logic.js a SyntaxError and the model reported success.
+  const note = syntaxProblem("logic.js", "x", fail('"getMonthList" has already been declared', 212, "  export const getMonthList = (xs) => xs"))
+  assert.match(note, /^Syntax check: logic\.js does not parse: "getMonthList" has already been declared at line 212 \(`export const getMonthList = \(xs\) => xs`\)\. The file was saved as written/)
+  assert.equal(syntaxProblem("logic.js", "export const a = 1", ok), undefined)
+  // JS parses as JSX; TS and TSX use their own loaders; Flow files and other types are skipped; no transpiler, no check.
+  const seen = []
+  const spy = (loader) => { seen.push(loader) }
+  for (const file of ["a.js", "a.mjs", "a.cjs", "a.jsx", "a.ts", "a.mts", "a.tsx"]) syntaxProblem(file, "x", spy)
+  assert.deepEqual(seen, ["jsx", "jsx", "jsx", "jsx", "ts", "ts", "tsx"])
+  assert.equal(syntaxProblem("a.js", "// @flow\nconst a: number = 1", fail("Parse error", 2)), undefined)
+  assert.equal(syntaxProblem("a.js", "broken", undefined), undefined)
+  assert.equal(syntaxProblem("a.py", "def (", fail("x", 1)), undefined)
+  for (const file of ["a.js", "b.ts", "c.tsx", "package.json", "d.MJS"]) assert.ok(checkable(file), file)
+  for (const file of ["a.py", "b.css", "c.html", "README.md", "json"]) assert.ok(!checkable(file), file)
+  // JSON: strict JSON passes; comments and trailing commas (tsconfig, VS Code) pass; real breakage is reported.
+  assert.equal(syntaxProblem("package.json", '{"name": "x", "scripts": {"test": "node --test"}}'), undefined)
+  assert.equal(syntaxProblem("tsconfig.json", '{\n  // strict mode\n  "compilerOptions": { "strict": true, /* x */ "url": "http://a//b", },\n}'), undefined)
+  assert.equal(syntaxProblem("empty.json", "  "), undefined)
+  assert.match(syntaxProblem("package.json", '{"name": "x" "version": "1"}'), /^Syntax check: package\.json does not parse: /)
+  assert.match(syntaxProblem("package.json", '{"name": "x",'), /does not parse/)
+})
+
+const bun = spawnSync("bun", ["--version"], { encoding: "utf8" }).status === 0
+test("syntax check with Bun's transpiler: real errors found, valid JSX/TS accepted", { skip: !bun && "bun not on PATH" }, async (t) => {
+  const dir = await tmp(t)
+  const script = path.join(dir, "check.ts")
+  await writeFile(script, `import { syntaxProblem } from ${JSON.stringify(new URL("./lib/syntax.ts", import.meta.url).pathname)}
+const cases = {
+  redeclared: ["logic.js", "export function getMonthList() {}\\nexport const getMonthList = () => 1\\n"],
+  unclosed: ["a.js", "export function a() {\\n  return 1\\n"],
+  jsx: ["App.js", "export const A = () => <div className='x'>{1 < 2 ? 'a' : 'b'}</div>\\n"],
+  ts: ["a.ts", "export function f(a: number): number { return a }\\n"],
+  badTs: ["b.ts", "export function f(a: number { return a }\\n"],
+  tla: ["c.mjs", "const r = await Promise.resolve(1)\\nexport default r\\n"],
+}
+console.log(JSON.stringify(Object.fromEntries(Object.entries(cases).map(([k, [f, t]]) => [k, syntaxProblem(f, t) ?? null]))))`)
+  const out = JSON.parse(spawnSync("bun", [script], { encoding: "utf8" }).stdout)
+  assert.match(out.redeclared, /logic\.js does not parse: .*already been declared at line 2/)
+  assert.match(out.unclosed, /a\.js does not parse: Unexpected end of file/)
+  assert.match(out.badTs, /b\.ts does not parse/)
+  assert.equal(out.jsx, null)
+  assert.equal(out.ts, null)
+  assert.equal(out.tla, null)
+})
+
 const chrome = findChrome()
 test("browser check: screenshots, overflow, dark mode, diff and mockup against real Chrome", { skip: !chrome && "no Chrome installed", timeout: 600000 }, async (t) => {
   const dir = await tmp(t)
@@ -244,7 +344,9 @@ test("browser check: screenshots, overflow, dark mode, diff and mockup against r
   const first = await runCheck({ chrome, url, plan, fullPage: true })
   assert.equal(first.shots.length, 2)
   assert.equal(first.shots[0].overflow, 225)
+  assert.deepEqual(first.shots[0].offenders, ["div.wide (600px wide, right edge at 600px)"])
   assert.equal(first.shots[1].overflow, undefined)
+  assert.equal(first.shots[1].offenders, undefined)
   assert.ok(first.consoleErrors.some((line) => line.includes("boom")), JSON.stringify(first.consoleErrors))
   for (const shot of first.shots) assert.equal(Buffer.from(shot.png, "base64").subarray(1, 4).toString(), "PNG")
   assert.notEqual(first.shots[0].png, first.shots[1].png)
@@ -259,13 +361,77 @@ test("browser check: screenshots, overflow, dark mode, diff and mockup against r
   assert.ok(changed.mockup.diff.changedPct > 0 && changed.mockup.diff.hot.length > 0)
 })
 
+test("an ES-module page that file:// blocks renders cleanly when served from its folder", { skip: !chrome && "no Chrome installed", timeout: 300000 }, async (t) => {
+  const dir = await tmp(t)
+  const page = path.join(dir, "index.html")
+  await writeFile(page, '<!doctype html><html lang="en"><head><title>m</title></head><body><main id="out">loading</main><script type="module" src="./app.mjs"></script></body></html>')
+  await writeFile(path.join(dir, "app.mjs"), 'import { label } from "./lib.mjs"\nlocalStorage.setItem("k", "v")\ndocument.getElementById("out").textContent = label + localStorage.getItem("k")')
+  await writeFile(path.join(dir, "lib.mjs"), 'export const label = "ready-"')
+  const plan = [{ viewport: viewportSpecs(["phone"])[0], scheme: "light" }]
+  const blocked = await runCheck({ chrome, url: toUrl(page, false), plan, fullPage: false })
+  assert.ok(blocked.consoleErrors.some((line) => /CORS|ERR_FAILED/.test(line)), JSON.stringify(blocked.consoleErrors))
+  const server = await serveLocal(page)
+  try {
+    const served = await runCheck({ chrome, url: server.url, plan, fullPage: false })
+    assert.deepEqual(served.consoleErrors, [])
+    assert.notEqual(served.shots[0].png, blocked.shots[0].png)
+  } finally {
+    await server.close()
+  }
+})
+
+test("overflow culprits: the outermost element that sticks out, not content of a scrolling box", { skip: !chrome && "no Chrome installed", timeout: 300000 }, async (t) => {
+  const dir = await tmp(t)
+  const page = path.join(dir, "wide.html")
+  await writeFile(page, `<!doctype html><html lang="en"><head><title>w</title><meta name="viewport" content="width=device-width"><style>
+    body { margin: 0 } .scroll { overflow-x: auto } .scroll div { width: 900px; height: 10px }
+    main { padding: 8px } table { width: 520px } td { height: 10px }
+    </style></head><body><div class="scroll"><div></div></div><main><table class="list"><tr><td>x</td></tr></table></main></body></html>`)
+  const [shot] = (await runCheck({ chrome, url: toUrl(page, false), plan: [{ viewport: viewportSpecs(["phone"])[0], scheme: "light" }], fullPage: false })).shots
+  assert.equal(shot.overflow, 528 - 375)
+  assert.deepEqual(shot.offenders, ["main > table.list (520px wide, right edge at 528px)"])
+})
+
+test("filled states: storage seeds the app, setup adds items once per capture, empty lists are flagged", { skip: !chrome && "no Chrome installed", timeout: 300000 }, async (t) => {
+  const dir = await tmp(t)
+  const page = path.join(dir, "index.html")
+  await writeFile(page, `<!doctype html><html lang="en"><head><title>l</title><meta name="viewport" content="width=device-width"></head><body>
+    <form id="f"><label>Item <input id="name"></label><button>Add</button></form><ul id="list"></ul>
+    <script>
+      const items = JSON.parse(localStorage.getItem("items") || "[]")
+      const render = () => { document.getElementById("list").innerHTML = items.map((i) => "<li>" + i + " <button>Delete</button></li>").join("") }
+      document.getElementById("f").addEventListener("submit", (e) => { e.preventDefault(); items.push(document.getElementById("name").value); localStorage.setItem("items", JSON.stringify(items)); render() })
+      render()
+    </script></body></html>`)
+  const plan = [{ viewport: viewportSpecs(["phone"])[0], scheme: "light" }, { viewport: viewportSpecs(["desktop"])[0], scheme: "light" }]
+  const server = await serveLocal(page)
+  try {
+    const empty = await runCheck({ chrome, url: server.url, plan, fullPage: false, basicAudit: true })
+    assert.equal(empty.emptyLists, true)
+    assert.match(formatReport(empty, "basic", "index.html"), /Lists on the page are empty[\s\S]*pass storage[\s\S]*or setup/)
+    // Seeded storage: the list renders filled, the note goes away, and the row audit sees same-named actions.
+    const seeded = await runCheck({ chrome, url: server.url, plan, fullPage: false, basicAudit: true, storage: { items: JSON.stringify(["Lunch", "Bus"]) } })
+    assert.equal(seeded.emptyLists, undefined)
+    assert.ok(seeded.violations.some((v) => v.id === "repeated-action-name"), JSON.stringify(seeded.violations.map((v) => v.id)))
+    // A setup that submits the form twice: two rows at every width, not two more per capture.
+    const setup = 'for (const name of ["a", "b"]) { document.getElementById("name").value = name; document.getElementById("f").requestSubmit() }'
+    const added = await runCheck({ chrome, url: server.url, plan, fullPage: false, basicAudit: true, setup })
+    assert.equal(added.emptyLists, undefined)
+    const rows = await runCheck({ chrome, url: server.url, plan, fullPage: false, setup: `${setup}; if (document.querySelectorAll("#list li").length !== 2) throw new Error("rows: " + document.querySelectorAll("#list li").length)` })
+    assert.equal(rows.shots.length, 2)
+    await assert.rejects(runCheck({ chrome, url: server.url, plan, fullPage: false, setup: "throw new Error('no such button')" }), /The setup script failed: .*no such button/)
+  } finally {
+    await server.close()
+  }
+})
+
 test("applies to the pinned source: files, plugin registration, guidance; fails closed", async (t) => {
   const root = await tmp(t)
   const write = async (file, text) => { await mkdir(path.dirname(path.join(root, file)), { recursive: true }); await writeFile(path.join(root, file), text) }
   await write("packages/core/src/plugin/internal.ts", 'import { PlanPlugin } from "./plan.js"\nexport const plugins = [\n  PlanPlugin.Plugin,\n  Other.Plugin,\n]\n')
   await write("packages/core/src/infiniteoc/guidance.ts", "export const infiniteocGuidance: Record<string, string[]> = { build: [] }\n// infiniteoc:guidance-extensions\n")
   const result = await applyMods([mod], root)
-  assert.equal(result.changes.length, 11 + 1 + 2)
+  assert.equal(result.changes.length, 12 + 1 + 2)
   const internal = await readFile(path.join(root, "packages/core/src/plugin/internal.ts"), "utf8")
   assert.match(internal, /import \* as InfiniteocQuality from "\.\/infiniteoc-quality\.js"/)
   assert.match(internal, /  InfiniteocQuality\.Plugin,\n  PlanPlugin\.Plugin,\n  Other\.Plugin,/)
@@ -279,4 +445,31 @@ test("applies to the pinned source: files, plugin registration, guidance; fails 
   await write("packages/core/src/plugin/internal.ts", "nothing\n")
   await write("packages/core/src/infiniteoc/guidance.ts", "// infiniteoc:guidance-extensions\n")
   await assert.rejects(applyMods([mod], root), /expected one internal\.ts plugin anchor/)
+})
+
+test("formatReport: built-in audit wording, and nothing about accessibility when it is off", () => {
+  const base = { shots: [{ label: "phone-light", viewport: "phone", scheme: "light", width: 375, png: "" }], consoleErrors: [], violations: [] }
+  assert.match(formatReport(base, "basic", "x.html"), /Accessibility \(built-in checks; add axe-core as a devDependency for a full audit\): no violations.*tab through/)
+  assert.doesNotMatch(formatReport(base, "off", "x.html"), /Accessibility/)
+  const found = { ...base, violations: [{ id: "color-contrast", impact: "serious", help: "Text contrast below 4.5:1", nodes: ["button"], seen: ["phone-light"] }] }
+  assert.match(formatReport(found, "basic", "x.html"), /built-in checks.*1 violation[\s\S]*\[serious\] color-contrast/)
+  // Overflow names the elements that stick out, so the model does not script its own browser to find them.
+  const wide = { ...base, shots: [{ ...base.shots[0], overflow: 233, offenders: ["main > canvas#chart (608px wide, right edge at 608px)"] }] }
+  assert.match(formatReport(wide, "basic", "x.html"), /phone-light by 233px\. Fix it\.\n  Sticking out at phone-light: main > canvas#chart \(608px wide, right edge at 608px\)/)
+})
+
+test("built-in audit finds labels, names, repeated actions, contrast, alt and lang without axe-core", { skip: !chrome && "no Chrome installed", timeout: 300000 }, async (t) => {
+  const dir = await tmp(t)
+  const bad = path.join(dir, "bad.html"), good = path.join(dir, "good.html")
+  await writeFile(bad, `<!doctype html><html><head><title>t</title><style>
+    .pale { color: #fff; background: #60a5fa; padding: 4px }
+    </style></head><body><main><h1>List</h1><input type="text"><button></button><img src="x.png" width="10" height="10">
+    <ul><li>Lunch <button>Edit</button></li><li>Rent <button>Edit</button></li></ul><p class="pale">Low contrast</p></main></body></html>`)
+  await writeFile(good, `<!doctype html><html lang="en"><head><title>t</title></head><body><main><h1>List</h1>
+    <label for="a">Amount</label><input id="a"><button>Save</button><img src="x.png" alt="" width="10" height="10">
+    <ul><li>Lunch <button aria-label="Edit Lunch">Edit</button></li><li>Rent <button aria-label="Edit Rent">Edit</button></li></ul><p>Readable</p></main></body></html>`)
+  const plan = [{ viewport: viewportSpecs(["desktop"])[0], scheme: "light" }]
+  const ids = async (file) => (await runCheck({ chrome, url: toUrl(file, false), plan, fullPage: false, basicAudit: true })).violations.map((v) => v.id).sort()
+  assert.deepEqual(await ids(bad), ["button-name", "color-contrast", "html-has-lang", "image-alt", "label", "repeated-action-name"])
+  assert.deepEqual(await ids(good), [])
 })

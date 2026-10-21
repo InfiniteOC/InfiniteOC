@@ -10,6 +10,8 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import { acquireLock, checked, config, run } from "../src/launcher.mjs"
 // Personal mods (src/user-mods.mjs) must never touch the real ~/.config/infiniteoc/mods from a test.
 process.env.INFINITEOC_MODS_DIR = (await import("node:fs")).mkdtempSync((await import("node:path")).join((await import("node:os")).tmpdir(), "ioc-personal-mods-"))
+const personalModsDir = process.env.INFINITEOC_MODS_DIR, { rmSync: removeTree } = await import("node:fs")
+process.on("exit", () => removeTree(personalModsDir, { recursive: true, force: true }))
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const settings = { upstream: "v2.0.21", mods: [] }
