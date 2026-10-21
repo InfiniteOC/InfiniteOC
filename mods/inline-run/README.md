@@ -1,5 +1,11 @@
 # inline-run — no second process for the private server
 
+**Disabled (not listed in `infiniteoc.json`).** In one process the server shares the terminal with the
+interface: output that the separate server process used to discard reached it. Effect's default logger
+printed `spawning process` for every MCP server to stdout, which garbled InfiniTUI and broke
+`run --format json`, and MCP servers inherit that process's stderr too. Bun cannot redirect its own file
+descriptors (no `dup2`), so the separate process stays until the server can run with its output isolated.
+
 `run` started its private server as a child process (`serve --stdio`): a second runtime to boot and the
 same modules to evaluate again before the first model request. Under InfiniteOC (`INFINITEOC=1`), `run` now
 starts that same private server inside its own process and talks to it over loopback HTTP as before. Each
