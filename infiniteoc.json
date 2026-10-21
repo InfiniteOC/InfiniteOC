@@ -19,6 +19,7 @@
     "./mods/path-repair/index.mjs",
     "./mods/lean-context/index.mjs",
     "./mods/fast-boot/index.mjs",
+    "./mods/lazy-catalog/index.mjs",
     "./mods/win-utf8/index.mjs",
     "./mods/yolo/index.mjs",
     "./mods/accounts/index.mjs",
