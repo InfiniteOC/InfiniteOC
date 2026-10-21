@@ -98,6 +98,10 @@ test("patchExact rejects missing/ambiguous anchors", async t => {
   assert.equal(await readFile(join(root, "anchor.txt"), "utf8"), "changed")
   await assert.rejects(applyMods([{ id: "exact", setup: api => api.patchExact("anchor.txt", "missing", "changed") }], root), /expected one/)
 })
+test("patchExact inserts the replacement literally, without $ patterns", () => {
+  const code = 'text.replace(/[.]/g, "\\\\$&") + "$$" + "$`" + "$\'" + "$1"'
+  assert.equal(replaceExact("before ANCHOR after", "ANCHOR", code), `before ${code} after`)
+})
 
 // Execute the exact methods injected into the TUI (types stripped) with the real
 // upstream tab model and queued storage/route adapters. Testing the old server

@@ -4,7 +4,8 @@ import { join } from "node:path"
 export function replaceExact(source, before, after, label = "source") {
   if (typeof before !== "string" || !before || source.split(before).length !== 2)
     throw new Error(`InfiniteOC: expected one ${label} anchor; pinned source is incompatible or another mod changed it`)
-  return source.replace(before, after)
+  // A function replacement keeps `after` literal: a string would expand `$&`, `$$` and `` $` `` in patched code.
+  return source.replace(before, () => after)
 }
 // Framework-authored static text naming only validated ids or slash names: safe to show in the UI and daemon status.
 export const safeError = message => Object.assign(new Error(message), { safe: true })
