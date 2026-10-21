@@ -23,7 +23,7 @@ export default {
 
     // Zen mode hides the tab strip; terminals that never report light/dark get it from OSC 11.
     await api.patch("packages/tui/src/app.tsx", (source) => {
-      source = replace(source, 'import { registerOpencodeSpinner } from "./component/register-spinner"', `import { registerOpencodeSpinner } from "./component/register-spinner"\nimport { zen as tstatZen, detectMode as tstatDetectMode } ${STATE}`)
+      source = replace(source, 'import "./component/spinner-renderable"', `import "./component/spinner-renderable"\nimport { zen as tstatZen, detectMode as tstatDetectMode } ${STATE}`)
       source = replace(source, "  const tabsVisible = () => tabsAvailable() && !fullscreenPanel()", "  const tabsVisible = () => tabsAvailable() && !fullscreenPanel() && !tstatZen()")
       return replace(source, '(await renderer.waitForThemeMode(1000)) ?? "dark"', '(await renderer.waitForThemeMode(1000)) ?? (await tstatDetectMode(renderer)) ?? "dark"')
     })

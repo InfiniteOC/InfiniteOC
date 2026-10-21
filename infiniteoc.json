@@ -1,5 +1,5 @@
 {
-  "upstream": "v2.0.32",
+  "upstream": "v2.1.2",
   "mods": [
     "./mods/infiniteoc/index.mjs",
     "./mods/clearall/index.mjs",
