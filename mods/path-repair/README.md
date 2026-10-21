@@ -8,13 +8,18 @@ HTML. In one measured run this cost about half the output tokens and half the
 wall time, plus cleanup steps.
 
 - `packages/core/src/tool/path-guard.ts` (new): `repairLeakedPath` and `pathProblem`.
-- `plugin/tool-input-repair.ts`: after the existing schema repairs, strips a
-  leaked `">` + body from `path` **only when that body matches another string
-  argument** (`content`, `newString`, …). A real path is never rewritten on a
-  guess. This runs in `execute.before`, so permission prompts and the
-  external-directory check see the repaired path.
+- `plugin/tool-input-repair.ts`: after the existing schema repairs, a `path` of
+  the form `file">` + text is repaired (`">` never belongs in a real path). When
+  another argument repeats the leaked text (either may be cut short), the
+  arguments are kept as sent; otherwise, for a write, the leaked text becomes
+  `content` (in observed runs it was the intended body while `content` held
+  unrelated text). Edit-shaped calls with an unmatched leak are left for the tool
+  to refuse. This runs in `execute.before`, so permission prompts, diffs and the
+  external-directory check see the repaired call. Replaying all 12 leaked
+  write/edit calls from two beam-free runs: all 12 now land on the right file.
 - `tool/plugin/write.ts`, `edit.ts`, `patch.ts`: any remaining path with a line
   break, markup or a name over 255 bytes is refused before `access.resolve` with
-  a short model-facing message that says how to retry. Nothing is written.
+  a short model-facing message that says how to retry. Nothing is written. The
+  message never suggests the shell, which would bypass the edit gates.
 
 No permission, approval or message text of the existing tools changes.

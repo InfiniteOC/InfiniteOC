@@ -62,8 +62,12 @@ test("repairs a leaked body only when another argument echoes it", { skip: canSt
   assert.equal(repairLeakedPath({ path: `styles.css" >\r\n${body}`, content: body.replaceAll("\n", "\r\n") }).path, "styles.css")
   // Edit-style input: the leak echoes newString.
   assert.equal(repairLeakedPath({ path: `a.ts">${body}`, oldString: "x", newString: body }).path, "a.ts")
-  // No echo: left untouched for the tool to refuse.
-  const unmatched = { path: `logic.js">\n${body}`, content: "something else entirely" }
+  // Run 2: the leak is the real body and content holds unrelated text, so the body is written.
+  assert.deepEqual(repairLeakedPath({ path: `logic.js">\n${body}`, content: "# Expense Tracker\n\nplaceholder" }), { path: "logic.js", content: body })
+  // A cut-short leak that content completes keeps content ("hello" vs "hello world").
+  assert.deepEqual(repairLeakedPath({ path: "test.txt\">\nhello", content: "hello world" }), { path: "test.txt", content: "hello world" })
+  // Edit-shaped input whose leak matches nothing: left untouched for the tool to refuse.
+  const unmatched = { path: `a.ts">\n${body}`, oldString: "x", newString: "y" }
   assert.equal(repairLeakedPath(unmatched), unmatched)
   // Ordinary and odd-but-valid paths are never rewritten.
   for (const input of [{ path: "src/app.ts", content: body }, { path: "a>b.txt", content: "b.txt and more" }, { path: "x", content: "" }, "not an object", { content: body }])
@@ -72,7 +76,8 @@ test("repairs a leaked body only when another argument echoes it", { skip: canSt
 
 test("refuses paths that hold file text, accepts real paths", { skip: canStrip ? false : "needs module.stripTypeScriptTypes" }, async () => {
   const { pathProblem } = await loadGuard()
-  assert.match(pathProblem(leaked.path), /contains a line break.*Pass only the file path.*shell tool instead/s)
+  assert.match(pathProblem(leaked.path), /contains a line break.*No file was changed.*Retry with only the file path/s)
+  assert.doesNotMatch(pathProblem(leaked.path), /shell/, "never steer writes around the edit gates")
   assert.match(pathProblem(`index.html"> <!DOCTYPE html> <html lang="en">`), /contains markup/)
   assert.match(pathProblem(`dir/${"a".repeat(256)}.js`), /longer than 255 bytes/)
   assert.ok(pathProblem(leaked.path).length < 500, "message stays short")
