@@ -57,9 +57,13 @@ export async function inspect(home, { fetch = true, tags = false } = {}) {
     return { behind: 0, commits: [], blocked: "the current branch tracks no remote branch" }
   }
   if (fetch) await git(home, ["fetch", "--quiet", tags ? "--tags" : "--no-tags"], 20000)
-  const behind = Number(await git(home, ["rev-list", "--count", "HEAD..@{u}"]))
   const ahead = Number(await git(home, ["rev-list", "--count", "@{u}..HEAD"]))
   const dirty = await git(home, ["status", "--porcelain", "--untracked-files=no"]) !== ""
+  // A rewritten upstream history (an author address changed, say) leaves the local commits off upstream. When the
+  // checkout's files are exactly those of an upstream commit, it has nothing of its own to lose and moves over.
+  const base = ahead && !dirty ? await sameTree(home) : undefined
+  const since = base ?? "HEAD"
+  const behind = Number(await git(home, ["rev-list", "--count", `${since}..@{u}`]))
   return {
     upstream,
     behind,
@@ -67,10 +71,21 @@ export async function inspect(home, { fetch = true, tags = false } = {}) {
     to: await git(home, ["rev-parse", "--short", "@{u}"]),
     fromFull: await git(home, ["rev-parse", "HEAD"]),
     toFull: await git(home, ["rev-parse", "@{u}"]),
-    commits: behind ? (await git(home, ["log", "--format=%s", "--max-count=6", "HEAD..@{u}"])).split("\n") : [],
+    commits: behind ? (await git(home, ["log", "--format=%s", "--max-count=6", `${since}..@{u}`])).split("\n") : [],
     pin: behind ? await pinChange(home) : undefined,
-    blocked: ahead ? "this checkout has local commits" : dirty ? "this checkout has uncommitted changes" : undefined,
+    rewritten: base !== undefined,
+    blocked: ahead && !base ? "this checkout has local commits" : dirty ? "this checkout has uncommitted changes" : undefined,
   }
+}
+
+// The newest upstream commit whose files are exactly the checkout's, if there is one.
+async function sameTree(home) {
+  const tree = await git(home, ["rev-parse", "HEAD^{tree}"])
+  for (const line of (await git(home, ["log", "--format=%H %T", "@{u}"])).split("\n")) {
+    const [commit, commitTree] = line.split(" ")
+    if (commitTree === tree) return commit
+  }
+  return undefined
 }
 
 // The pinned OpenCode tag (infiniteoc.json "upstream") before and after the update, when it changes.
@@ -234,8 +249,12 @@ export async function update({ home, saved, motion = true, explicit = false, str
     await ui.spin(`Fetching OpenCode ${info.pin.to}`, () => git(source, ["fetch", "--quiet", "--depth", "1", "--no-tags", "origin", "tag", info.pin.to], 180000)).catch((error) => {
       throw new Error(`InfiniteOC was not updated: fetching OpenCode ${info.pin.to} failed (${error.message}); try again when online`)
     })
-  // The exact commit that was inspected (and verified), not whatever the branch has since become.
-  await ui.spin(`Updating to ${info.to}`, () => git(home, ["merge", "--ff-only", "--quiet", info.toFull]))
+  // The exact commit that was inspected (and verified), not whatever the branch has since become. A rewritten
+  // history has no fast-forward; inspect found the checkout's files on upstream, so it moves over.
+  if (info.rewritten)
+    ui.write(`${ui.dim("InfiniteOC's history was rewritten upstream; this checkout has no changes of its own, so it moves to the new history.")}\n`)
+  const move = info.rewritten ? ["reset", "--hard", "--quiet", info.toFull] : ["merge", "--ff-only", "--quiet", info.toFull]
+  await ui.spin(`Updating to ${info.to}`, () => git(home, move))
   await writeState(home, { ...(await readState(home)), pending: { from: info.fromFull, to: info.toFull } })
   const summary = `${info.from} → ${info.to} (${info.behind} commit${info.behind === 1 ? "" : "s"})`
   ui.write(`${ui.ok(`Updated InfiniteOC ${summary}`)}\n`)

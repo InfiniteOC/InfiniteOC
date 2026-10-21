@@ -57,6 +57,39 @@ test("never updates over local edits or local commits", async (t) => {
   await assert.rejects(update({ home, saved: {}, explicit: true, stream: sink() }), /local commits/)
 })
 
+test("a rewritten upstream history moves over when the checkout has nothing of its own, never over local commits", async (t) => {
+  const { home, publish, upstream } = await checkouts(t)
+  await publish("Second")
+  await update({ home, saved: {}, explicit: true, stream: sink() })
+  // Upstream rewrites its history (same files, another author address), then adds a commit.
+  const rewrite = () => {
+    git(upstream, "commit", "--quiet", "--amend", "--no-edit", "--author=New <new@example.com>")
+    git(upstream, "push", "--quiet", "--force")
+  }
+  rewrite()
+  await publish("Third")
+  const info = await inspect(home)
+  assert.equal(info.rewritten, true)
+  assert.equal(info.blocked, undefined)
+  // Only what is really new counts, not the rewritten copies.
+  assert.equal(info.behind, 1)
+  assert.deepEqual(info.commits, ["Third"])
+  const stream = sink()
+  assert.match(await update({ home, saved: {}, explicit: true, stream }), /1 commit/)
+  assert.match(stream.text, /history was rewritten upstream/)
+  assert.equal(git(home, "rev-parse", "HEAD"), git(upstream, "rev-parse", "HEAD"))
+  assert.equal(await readFile(join(home, "README.md"), "utf8"), "Third\n")
+  // A commit of its own still blocks, rewritten upstream or not.
+  await writeFile(join(home, "notes.md"), "mine\n")
+  git(home, "add", "notes.md")
+  git(home, "commit", "--quiet", "-m", "Local")
+  rewrite()
+  await publish("Fourth")
+  assert.equal((await inspect(home)).rewritten, false)
+  await assert.rejects(update({ home, saved: {}, explicit: true, stream: sink() }), /local commits/)
+  assert.equal(await readFile(join(home, "notes.md"), "utf8"), "mine\n")
+})
+
 test("launch-time checks honor off, the interval, and stay quiet without a terminal", async (t) => {
   const { home, publish } = await checkouts(t)
   await publish("Remote change")
