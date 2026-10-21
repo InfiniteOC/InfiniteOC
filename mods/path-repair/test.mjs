@@ -52,7 +52,7 @@ test("anchors are unique in the pinned upstream and the guard runs before resolv
     if (!file.includes("tool/plugin/")) continue
     assert.ok(source.indexOf("pathProblem(") < source.indexOf("access.resolve({ path:"), `${file}: guard must precede resolve`)
   }
-  assert.match(sources.get("packages/core/src/plugin/tool-input-repair.ts"), /repairLeakedPath\(repair\(event\.input/)
+  assert.match(sources.get("packages/core/src/plugin/tool-input-repair.ts"), /stripHeredocTail\(repairLeakedPath\(repair\(event\.input/)
 })
 
 test("repairs a leaked body only when another argument echoes it", { skip: canStrip ? false : "needs module.stripTypeScriptTypes" }, async () => {
@@ -101,6 +101,26 @@ test("several tool calls packed into one are refused, never repaired into one fi
   for (const text of ["const END = '<|end|>'", "<|start|>user<|message|>hi<|end|>", '<rfl:parameter name="x">', 42, undefined])
     assert.equal(packedProblem(text), undefined, String(text))
   assert.equal(pathProblem("/p/app.js", "const END = '<|end|>'"), undefined)
+})
+
+test("a write whose content ends like a shell heredoc loses only that tail", { skip: canStrip ? false : "needs module.stripTypeScriptTypes" }, async () => {
+  const { stripHeredocTail } = await loadGuard()
+  const body = "export const total = (xs) => xs.length;\nexport const escapeCsv = csvEscape;"
+  // Eval run eval5/b-1 (six files), eval1/a-2 (LOGIC_EOF).
+  assert.deepEqual(stripHeredocTail({ path: "/p/logic.js", content: `${body}\nEOF\necho done` }), { path: "/p/logic.js", content: `${body}\n` })
+  assert.deepEqual(stripHeredocTail({ path: "t.mjs", content: `${body}\nLOGIC_EOF\necho done\n` }), { path: "t.mjs", content: `${body}\n` })
+  assert.deepEqual(stripHeredocTail({ path: "a.css", content: "a {}\r\nEOF\r\n" }), { path: "a.css", content: "a {}\n" })
+  // Left alone: shell scripts, files that open the heredoc themselves, a fenced example, EOF inside a word,
+  // other trailing commands, edits and non-objects.
+  for (const input of [
+    { path: "deploy.sh", content: "cat > x <<EOF\nhi\nEOF" },
+    { path: "gen.js", content: "const script = `cat > a <<'EOF'\nhello\nEOF`\nEOF" },
+    { path: "README.md", content: "```sh\ncat <<EOF\nhi\nEOF\n```" },
+    { path: "a.txt", content: "the parser stops at EOF" },
+    { path: "a.js", content: `${body}\nEOF\nrm -rf /` },
+    { path: "a.js", oldString: "x\nEOF", newString: "y\nEOF" },
+    "text",
+  ]) assert.equal(stripHeredocTail(input), input, JSON.stringify(input).slice(0, 60))
 })
 
 test("refuses paths that hold file text, accepts real paths", { skip: canStrip ? false : "needs module.stripTypeScriptTypes" }, async () => {

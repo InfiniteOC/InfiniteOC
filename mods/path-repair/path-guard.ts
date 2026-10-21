@@ -57,6 +57,22 @@ export function repairLeakedPath(input: unknown): unknown {
   return input
 }
 
+// A write whose content ends like a shell heredoc (`EOF`, then maybe `echo done`): the model wrote the file as
+// if through `cat <<'EOF'`, and the tail made the file unparseable (eval5/b-1 wrote six files this way).
+const HEREDOC_TAIL = /\r?\n([A-Z][A-Z0-9_]*_)?EOF[ \t]*(?:\r?\n[ \t]*echo\b[^\n]{0,60})?\s*$/
+const SHELL_FILE = /\.(?:sh|bash|zsh|ksh|fish)$/i
+
+/** The input with a heredoc tail removed from a write's content; anything else is returned unchanged. */
+export function stripHeredocTail(input: unknown): unknown {
+  if (!isRecord(input) || typeof input.path !== "string" || typeof input.content !== "string" || SHELL_FILE.test(input.path)) return input
+  const match = HEREDOC_TAIL.exec(input.content)
+  if (!match) return input
+  // A file that opens this heredoc itself (a script inside a template string, docs) keeps its text.
+  const delimiter = `${match[1] ?? ""}EOF`
+  if (new RegExp(`<<-?\\s*['"]?${delimiter}\\b`).test(input.content)) return input
+  return { ...input, content: `${input.content.slice(0, match.index)}\n` }
+}
+
 /** A model-facing error for paths that hold file text rather than a file name, or for calls packed together. */
 export function pathProblem(path: string, ...texts: unknown[]): string | undefined {
   const packed = packedProblem(path, ...texts)
