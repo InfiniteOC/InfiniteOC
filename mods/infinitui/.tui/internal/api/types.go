@@ -1,5 +1,5 @@
 // Package api is a client for the OpenCode v2 HTTP API (packages/protocol, packages/client in upstream).
-// Wire shapes follow packages/client/src/promise/generated/types.ts of OpenCode v2.0.32.
+// Wire shapes follow packages/client/src/promise/generated/types.ts of OpenCode v2.1.2.
 package api
 
 import (
