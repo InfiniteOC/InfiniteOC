@@ -40,9 +40,11 @@ test("upstream dist names spell win32 as windows and binaries end in .exe there"
   assert.equal(upstreamDistName("darwin-arm64"), "cli-darwin-arm64")
   assert.equal(binaryName("win32"), "opencode.exe")
   assert.equal(binaryName("linux"), "opencode")
-  const win = binaryCandidates("/home", "win32-x64")
+  // Candidates are joined with the host's separator, so compare with forward slashes.
+  const slashes = (files) => files.map((file) => file.replaceAll("\\", "/"))
+  const win = slashes(binaryCandidates("/home", "win32-x64"))
   assert.ok(win[0].endsWith("opencode.exe") && win.join("/").includes("cli-windows-x64"))
-  const lin = binaryCandidates("/home", "linux-x64")
+  const lin = slashes(binaryCandidates("/home", "linux-x64"))
   assert.ok(lin[0].endsWith("/opencode") && lin.join("/").includes("cli-linux-x64"))
 })
 

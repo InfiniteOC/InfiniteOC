@@ -17,7 +17,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # Tests that need the pinned upstream source skip themselves when .upstream is absent.
+      # The anchor and loader tests run against the pinned upstream source, as a local build does.
+      - name: Fetch the pinned upstream source
+        run: git clone --quiet --depth 1 --branch "$(node -p "require('./infiniteoc.json').upstream")" https://github.com/sst/opencode.git .upstream
       - run: npm test
   test-windows:
     # Shell-free coverage for Windows: platform helpers, path handling and the
