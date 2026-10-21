@@ -14,8 +14,8 @@ import { pathProblem } from "../path-guard.js"`]
 // Several calls packed into one (raw chat-stream markers in any argument) are refused, never written.
 export const patches = [
   [`${core}/plugin/tool-input-repair.ts`, `import { definition } from "../tool/runtime.js"`, `import { definition } from "../tool/runtime.js"
-import { repairLeakedPath } from "../tool/path-guard.js"`],
-  [`${core}/plugin/tool-input-repair.ts`, `event.input = repair(event.input, schema, schema, 0)`, `event.input = repairLeakedPath(repair(event.input, schema, schema, 0))`],
+import { repairLeakedPath, stripHeredocTail } from "../tool/path-guard.js"`],
+  [`${core}/plugin/tool-input-repair.ts`, `event.input = repair(event.input, schema, schema, 0)`, `event.input = stripHeredocTail(repairLeakedPath(repair(event.input, schema, schema, 0)))`],
   [`${core}/tool/plugin/write.ts`, ...guardImport],
   [`${core}/tool/plugin/write.ts`, `const target = yield* access.resolve({ path: input.path, kind: "file" })`, `${check("input.path", "input.content")}const target = yield* access.resolve({ path: input.path, kind: "file" })`],
   [`${core}/tool/plugin/edit.ts`, ...guardImport],

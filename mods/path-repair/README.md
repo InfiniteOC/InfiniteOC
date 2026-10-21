@@ -34,6 +34,12 @@ wall time, plus cleanup steps.
   and asks for one call per file. Either marker alone is ordinary text. Over
   136 leaked calls from all eval runs, this refuses 12 that were written as junk
   before, and changes no other call.
+- A write whose `content` ends like a shell heredoc (`EOF` or `X_EOF`, then at
+  most one `echo …` line) loses that tail: the model wrote the file as if
+  through `cat <<'EOF'`, and the tail made it unparseable. This does not apply
+  to shell scripts or to files that open that heredoc themselves. Over 374
+  write/edit calls from all eval runs, it strips exactly the 8 that ended this
+  way.
 - `tool/plugin/write.ts`, `edit.ts`, `patch.ts`: packed calls (see above), and
   any remaining path with a line break, markup or a name over 255 bytes, are
   refused before `access.resolve` with a short model-facing message that says
