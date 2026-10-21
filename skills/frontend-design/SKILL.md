@@ -88,7 +88,7 @@ These are measurable. Check each one.
 A UI is not done until it has been rendered and inspected.
 
 1. Run the project's lint, type check and build for the files you touched.
-2. Render the UI. With a `ui_check` tool, pass a static page's HTML file (it is served for the check; start no server yourself) or the URL of the dev server a framework app already runs. Otherwise use whatever is available: the dev server plus a browser tool, Playwright or another headless browser (see the `webapp-testing` skill), or a screenshot tool. Capture mobile (about 375 px) and desktop (about 1280 px) at minimum.
+2. Render the UI. With a `ui_check` tool, pass a static page's HTML file (it is served for the check; start no server yourself) or the URL of the dev server a framework app already runs, and render lists and tables filled as well as empty (its `storage` or `setup` input). Otherwise use whatever is available: the dev server plus a browser tool, Playwright or another headless browser (see the `webapp-testing` skill), or a screenshot tool. Capture mobile (about 375 px) and desktop (about 1280 px) at minimum.
 3. Inspect the screenshots against the plan and the quality floor: hierarchy, alignment, spacing rhythm, overflow, contrast, truncated text, focus rings (tab through), and every state you implemented.
 4. Fix what you find and look again. Critique your own work as a picky senior designer would.
 5. If you cannot render in this environment, say so plainly and list exactly what the user should check. Never claim a UI looks right without having seen it.

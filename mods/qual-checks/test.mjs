@@ -392,6 +392,39 @@ test("overflow culprits: the outermost element that sticks out, not content of a
   assert.deepEqual(shot.offenders, ["main > table.list (520px wide, right edge at 528px)"])
 })
 
+test("filled states: storage seeds the app, setup adds items once per capture, empty lists are flagged", { skip: !chrome && "no Chrome installed", timeout: 300000 }, async (t) => {
+  const dir = await tmp(t)
+  const page = path.join(dir, "index.html")
+  await writeFile(page, `<!doctype html><html lang="en"><head><title>l</title><meta name="viewport" content="width=device-width"></head><body>
+    <form id="f"><label>Item <input id="name"></label><button>Add</button></form><ul id="list"></ul>
+    <script>
+      const items = JSON.parse(localStorage.getItem("items") || "[]")
+      const render = () => { document.getElementById("list").innerHTML = items.map((i) => "<li>" + i + " <button>Delete</button></li>").join("") }
+      document.getElementById("f").addEventListener("submit", (e) => { e.preventDefault(); items.push(document.getElementById("name").value); localStorage.setItem("items", JSON.stringify(items)); render() })
+      render()
+    </script></body></html>`)
+  const plan = [{ viewport: viewportSpecs(["phone"])[0], scheme: "light" }, { viewport: viewportSpecs(["desktop"])[0], scheme: "light" }]
+  const server = await serveLocal(page)
+  try {
+    const empty = await runCheck({ chrome, url: server.url, plan, fullPage: false, basicAudit: true })
+    assert.equal(empty.emptyLists, true)
+    assert.match(formatReport(empty, "basic", "index.html"), /Lists on the page are empty[\s\S]*pass storage[\s\S]*or setup/)
+    // Seeded storage: the list renders filled, the note goes away, and the row audit sees same-named actions.
+    const seeded = await runCheck({ chrome, url: server.url, plan, fullPage: false, basicAudit: true, storage: { items: JSON.stringify(["Lunch", "Bus"]) } })
+    assert.equal(seeded.emptyLists, undefined)
+    assert.ok(seeded.violations.some((v) => v.id === "repeated-action-name"), JSON.stringify(seeded.violations.map((v) => v.id)))
+    // A setup that submits the form twice: two rows at every width, not two more per capture.
+    const setup = 'for (const name of ["a", "b"]) { document.getElementById("name").value = name; document.getElementById("f").requestSubmit() }'
+    const added = await runCheck({ chrome, url: server.url, plan, fullPage: false, basicAudit: true, setup })
+    assert.equal(added.emptyLists, undefined)
+    const rows = await runCheck({ chrome, url: server.url, plan, fullPage: false, setup: `${setup}; if (document.querySelectorAll("#list li").length !== 2) throw new Error("rows: " + document.querySelectorAll("#list li").length)` })
+    assert.equal(rows.shots.length, 2)
+    await assert.rejects(runCheck({ chrome, url: server.url, plan, fullPage: false, setup: "throw new Error('no such button')" }), /The setup script failed: .*no such button/)
+  } finally {
+    await server.close()
+  }
+})
+
 test("applies to the pinned source: files, plugin registration, guidance; fails closed", async (t) => {
   const root = await tmp(t)
   const write = async (file, text) => { await mkdir(path.dirname(path.join(root, file)), { recursive: true }); await writeFile(path.join(root, file), text) }

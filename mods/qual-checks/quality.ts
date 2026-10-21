@@ -70,7 +70,7 @@ export const Plugin = define({
           name: "ui_check",
           options: { codemode: false },
           description:
-            "Render a page in headless Chrome and look at it. Returns screenshots at phone (375), tablet (768) and desktop (1280) widths in light mode plus desktop in dark mode, a horizontal-overflow check, console errors, an axe-core accessibility audit (when axe-core is installed in the project), and a pixel diff against the previous capture of the same page. Use it after every UI change. Capture once BEFORE editing so the after-capture shows a diff. Optionally pass a mockup image to see how far the render is from it. Target: a dev server URL (http://localhost:...) or an HTML file path; a file is served from its folder over a temporary local http server, so ES modules, fetch and localStorage work without starting one yourself.",
+            "Render a page in headless Chrome and look at it. Returns screenshots at phone (375), tablet (768) and desktop (1280) widths in light mode plus desktop in dark mode, a horizontal-overflow check, console errors, an axe-core accessibility audit (when axe-core is installed in the project), and a pixel diff against the previous capture of the same page. Use it after every UI change. Capture once BEFORE editing so the after-capture shows a diff. Optionally pass a mockup image to see how far the render is from it. Target: a dev server URL (http://localhost:...) or an HTML file path; a file is served from its folder over a temporary local http server, so ES modules, fetch and localStorage work without starting one yourself. Lists and tables: also check them filled, with storage (localStorage the app loads) or setup (a script that adds items).",
           input: Schema.Struct({
             target: Schema.String.annotate({ description: "http://localhost URL of a running dev server, or the path of an HTML file" }),
             viewports: Schema.optionalKey(Viewports).annotate({ description: 'Subset of "phone", "tablet", "desktop" or pixel widths. Default: all three.' }),
@@ -79,6 +79,8 @@ export const Plugin = define({
             a11y: Schema.optionalKey(Schema.Boolean).annotate({ description: "Run the axe-core audit when available. Default true." }),
             save_baseline: Schema.optionalKey(Schema.Boolean).annotate({ description: "Store these captures as the new baseline for later diffs (a baseline is also created when none is fresh)." }),
             mockup: Schema.optionalKey(Schema.String).annotate({ description: "Path of a mockup image (png, jpg, webp); the page is rendered at its width and compared pixel by pixel." }),
+            storage: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)).annotate({ description: "localStorage entries (key to string value) set before the page's scripts run, to render a filled state." }),
+            setup: Schema.optionalKey(Schema.String).annotate({ description: "JavaScript run in the page after it loads and before it is measured (may await), e.g. to fill and submit the form a few times." }),
           }),
           execute: (input, context) =>
             Effect.gen(function* () {
@@ -96,13 +98,15 @@ export const Plugin = define({
               const mockup = input.mockup
                 ? yield* access.authorizeRead(input.mockup, context).pipe(Effect.flatMap((target) => attempt(() => ({ file: target.absolute, base64: readFileSync(target.absolute).toString("base64") }))))
                 : undefined
-              const key = createHash("sha1").update(url).digest("hex").slice(0, 10)
+              // A filled state gets its own baselines instead of diffing against the empty page.
+              const state = input.storage || input.setup ? JSON.stringify([input.storage ?? null, input.setup ?? null]) : ""
+              const key = createHash("sha1").update(url + state).digest("hex").slice(0, 10)
               const file = (label: string) => path.join(projectDir(dir), "shots", `${key}-${label}.png`)
               const axePath = input.a11y === false ? undefined : findAxe(dir)
               // Baselines stay keyed to the file URL; the page itself is rendered from a local http origin.
               const local = url.startsWith("file:") ? yield* attempt(() => serveLocal(fileURLToPath(url))) : undefined
               const result = yield* attempt(() =>
-                runCheck({ chrome, url: local?.url ?? url, plan, fullPage: input.full_page !== false, axeSource: axePath, basicAudit: input.a11y !== false && !axePath, mockup, baseline: (label) => readBaseline(file(label))?.toString("base64") }),
+                runCheck({ chrome, url: local?.url ?? url, plan, fullPage: input.full_page !== false, axeSource: axePath, basicAudit: input.a11y !== false && !axePath, mockup, storage: input.storage, setup: input.setup, baseline: (label) => readBaseline(file(label))?.toString("base64") }),
               ).pipe(Effect.ensuring(local ? Effect.promise(() => local.close()) : Effect.void))
               const saved: string[] = []
               for (const shot of result.shots)
