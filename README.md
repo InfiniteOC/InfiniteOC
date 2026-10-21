@@ -99,7 +99,7 @@ a progress ring and keyboard shortcuts."_
 | `/routing fallback opencode/beam-free` | When your model is rate limited or down (a free tier's limit included), the run continues on this one. |
 | `/ponytail auto` | Minimal-code mode: smallest change that solves it. |
 | `/yolo` | Auto-approve permission prompts for this session (asks first). |
-| `/classic` | Switch to the classic OpenCode interface on the same session. `"tui": "classic"` in settings makes it permanent. `/connect`, `/apps`, `/settings` and `/account` open there by themselves. |
+| `/classic` | Switch to the classic OpenCode interface on the same session. `"tui": "classic"` in settings makes it permanent. `/connect`, `/apps`, `/settings` and `/account` open their dialog there and come back by themselves. |
 
 From a shell:
 

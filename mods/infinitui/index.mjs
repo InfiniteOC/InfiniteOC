@@ -39,7 +39,8 @@ export const patches = [
 ]
 
 // The classic UI runs a slash command InfiniTUI handed over (/connect, /apps, /settings, /account) once it is
-// registered; plugin commands appear after the plugins load.
+// registered; plugin commands appear after the plugins load. Started only for that dialog
+// (INFINITEOC_CLASSIC_RETURN=1), it exits when the dialog closes, without an epilogue, and InfiniTUI comes back.
 export const CLASSIC_COMMAND = ["packages/tui/src/app.tsx", `  const paths = useTuiPaths()
   let highlighted = false
 `, `  const paths = useTuiPaths()
@@ -47,8 +48,10 @@ export const CLASSIC_COMMAND = ["packages/tui/src/app.tsx", `  const paths = use
   // InfiniteOC infinitui: a command InfiniTUI handed over runs here once, when it is reachable.
   const handedCommand = process.env.INFINITEOC_CLASSIC_COMMAND
   delete process.env.INFINITEOC_CLASSIC_COMMAND
+  const handedReturn = process.env.INFINITEOC_CLASSIC_RETURN === "1"
   const reachableCommands = Keymap.useCommands()
   let handedRan = !handedCommand
+  let handedOpened = false
   createEffect(() => {
     if (handedRan || !plugins.ready() || client.connection.status() !== "connected") return
     const command = reachableCommands().find(
@@ -57,8 +60,18 @@ export const CLASSIC_COMMAND = ["packages/tui/src/app.tsx", `  const paths = use
     if (!command) return
     handedRan = true
     command.run()
+    // A command that opened no dialog leaves nothing to wait for.
+    if (handedReturn) setTimeout(() => !handedOpened && exit(), 3000)
+  })
+  createEffect(() => {
+    const open = dialog.stack.length > 0
+    if (!handedReturn || !handedRan || !handedCommand) return
+    if (open) handedOpened = true
+    else if (handedOpened) exit()
   })
 `]
+export const QUIET_EPILOGUE = ["packages/tui/src/app.tsx", `    if (result.epilogue) process.stdout.write(result.epilogue + "\\n")`, `    // InfiniteOC infinitui: a classic UI started for one dialog hands the terminal straight back to InfiniTUI.
+    if (result.epilogue && process.env.INFINITEOC_CLASSIC_RETURN !== "1") process.stdout.write(result.epilogue + "\\n")`]
 
 const modDir = path.dirname(fileURLToPath(import.meta.url))
 
@@ -67,7 +80,7 @@ export default {
   version: "0.1.0",
   async setup(api) {
     await api.write("packages/cli/src/infiniteoc/infinitui.ts", await readFile(new URL("./launch.ts", import.meta.url), "utf8"))
-    for (const [file, before, after] of [...patches, CLASSIC_COMMAND]) await api.patchExact(file, before, after)
+    for (const [file, before, after] of [...patches, CLASSIC_COMMAND, QUIET_EPILOGUE]) await api.patchExact(file, before, after)
   },
   async beforeLaunch(context) {
     if (!(await wantsInfinitui(context))) return
