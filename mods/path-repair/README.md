@@ -24,9 +24,20 @@ wall time, plus cleanup steps.
   is left for the tool to refuse. Replaying all 99 leaked write/edit calls from 27
   beam-free runs: 97 land on the right file with the intended text, 2 packed calls
   are refused, none is repaired wrongly.
-- `tool/plugin/write.ts`, `edit.ts`, `patch.ts`: any remaining path with a line
-  break, markup or a name over 255 bytes is refused before `access.resolve` with
-  a short model-facing message that says how to retry. Nothing is written. The
-  message never suggests the shell, which would bypass the edit gates.
+- Several tool calls packed into one: the provider sometimes hands over one call
+  whose text holds the first file, the model's own notes, and then its raw chat
+  stream with the next calls (`<|end|><|start|>assistant to=write … <rfl:parameter
+  name="path">…`). Written as is, the junk went into the first file. In one eval
+  run the page rendered it as wide elements and the model spent about 20 steps
+  debugging. When any argument holds both `<|end|><|start|>` and
+  `<rfl:parameter name=`, the call is never repaired, and the tool refuses it
+  and asks for one call per file. Either marker alone is ordinary text. Over
+  136 leaked calls from all eval runs, this refuses 12 that were written as junk
+  before, and changes no other call.
+- `tool/plugin/write.ts`, `edit.ts`, `patch.ts`: packed calls (see above), and
+  any remaining path with a line break, markup or a name over 255 bytes, are
+  refused before `access.resolve` with a short model-facing message that says
+  how to retry. Nothing is written. The message never suggests the shell, which
+  would bypass the edit gates.
 
 No permission, approval or message text of the existing tools changes.

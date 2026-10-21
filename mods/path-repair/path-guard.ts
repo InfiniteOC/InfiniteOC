@@ -10,9 +10,23 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const normalize = (text: string) => text.replace(/\r\n/g, "\n").trim()
 
+// Several tool calls that reached us as one: after the first file's text and the model's own notes comes its
+// raw chat stream (`<|end|><|start|>assistant to=write ... <rfl:parameter name="path">`) with the next calls.
+// Seen in 8 of 30 eval runs; written as is, the junk broke the page and cost dozens of steps.
+const PACKED = [/<\|end\|>\s*<\|start\|>/, /<rfl:parameter name=/]
+
+/** A model-facing refusal when any text holds tool calls run together, or undefined. */
+export function packedProblem(...texts: unknown[]): string | undefined {
+  const packed = texts.some((text) => typeof text === "string" && PACKED.every((marker) => marker.test(text)))
+  if (!packed) return undefined
+  return 'Refused: this call holds several tool calls run together (raw "<|end|><|start|>" and "<rfl:parameter" text), so nothing was written. Make one tool call per file, each with only that file\'s path and text.'
+}
+
 /** Repair a `path` of the form `file">` + leaked text; anything else is returned unchanged. */
 export function repairLeakedPath(input: unknown): unknown {
   if (!isRecord(input) || typeof input.path !== "string") return input
+  // Packed calls are refused by the tool, never repaired into one file.
+  if (packedProblem(...Object.values(input))) return input
   // `">` never belongs in a real path, so its presence alone marks the leak.
   const match = /^([^\r\n"<>]+)"\s*>([\s\S]*)$/.exec(input.path)
   const path = match?.[1].trimEnd()
@@ -43,8 +57,10 @@ export function repairLeakedPath(input: unknown): unknown {
   return input
 }
 
-/** A model-facing error for paths that hold file text rather than a file name, or undefined. */
-export function pathProblem(path: string): string | undefined {
+/** A model-facing error for paths that hold file text rather than a file name, or for calls packed together. */
+export function pathProblem(path: string, ...texts: unknown[]): string | undefined {
+  const packed = packedProblem(path, ...texts)
+  if (packed) return packed
   const problem = /[\r\n\0]/.test(path)
     ? "contains a line break"
     : /<\/?[A-Za-z!]|["'`]\s*>/.test(path)

@@ -87,6 +87,22 @@ test("repairs a leaked body only when another argument echoes it", { skip: canSt
     assert.equal(repairLeakedPath(input), input)
 })
 
+test("several tool calls packed into one are refused, never repaired into one file", { skip: canStrip ? false : "needs module.stripTypeScriptTypes" }, async () => {
+  const { repairLeakedPath, pathProblem, packedProblem } = await loadGuard()
+  // Eval run eval4/b-2: logic.js, then the model's note, then its raw stream with the next write.
+  const stream = 'export const total = (xs) => xs.length;\n```\n\nNow index.html.<|end|><|start|><|start|>assistant to=write<|channel|>analysis <|constrain|>xml<|message|><rfl:parameter name="path">\n/p/index.html">\n<!DOCTYPE html>\n<html lang="en">'
+  const leaked = { path: `/p/logic.js">\n${stream}`, content: "@echo off" }
+  assert.equal(repairLeakedPath(leaked), leaked)
+  assert.match(pathProblem(leaked.path), /several tool calls run together.*nothing was written.*one tool call per file/s)
+  // The same stream in the content argument of an ordinary write (eval2/a-1), or in an edit's newString.
+  assert.match(pathProblem("/p/app.js", stream), /several tool calls run together/)
+  assert.match(pathProblem("/p/app.js", "old", stream), /several tool calls run together/)
+  // One chat-template token on its own is ordinary text (a tokenizer test, docs about a template).
+  for (const text of ["const END = '<|end|>'", "<|start|>user<|message|>hi<|end|>", '<rfl:parameter name="x">', 42, undefined])
+    assert.equal(packedProblem(text), undefined, String(text))
+  assert.equal(pathProblem("/p/app.js", "const END = '<|end|>'"), undefined)
+})
+
 test("refuses paths that hold file text, accepts real paths", { skip: canStrip ? false : "needs module.stripTypeScriptTypes" }, async () => {
   const { pathProblem } = await loadGuard()
   assert.match(pathProblem(leaked.path), /contains a line break.*No file was changed.*Retry with only the file path/s)
