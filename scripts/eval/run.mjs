@@ -27,7 +27,8 @@ function trial(name, home) {
   fs.mkdirSync(project, { recursive: true })
   execFileSync("git", ["init", "-q"], { cwd: project })
   const env = { ...process.env, INFINITEOC: "1", OPENCODE_CLIENT: "InfiniteOC", INFINITEOC_HOME: home, INFINITEOC_SKILLS: path.join(home, "skills") }
-  let command = binaryPath(home), args = ["run", "-m", model, "--format", "json", task]
+  // The task goes in on stdin: in argv it is visible to the agent's own `pkill -f <pattern>`, which then kills the harness.
+  let command = binaryPath(home), args = ["run", "-m", model, "--format", "json"]
   if (user) {
     execFileSync("chown", ["-R", user, dir])
     const keep = ["PATH", "HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "NO_PROXY", "no_proxy", "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS", "PLAYWRIGHT_BROWSERS_PATH", "INFINITEOC", "OPENCODE_CLIENT", "INFINITEOC_HOME", "INFINITEOC_SKILLS"]
@@ -37,7 +38,8 @@ function trial(name, home) {
   }
   const started = Date.now()
   return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd: project, env, stdio: ["ignore", fs.openSync(path.join(dir, "run.jsonl"), "w"), fs.openSync(path.join(dir, "run.err"), "w")] })
+    const child = spawn(command, args, { cwd: project, env, stdio: ["pipe", fs.openSync(path.join(dir, "run.jsonl"), "w"), fs.openSync(path.join(dir, "run.err"), "w")] })
+    child.stdin.end(task)
     const timer = setTimeout(() => child.kill("SIGKILL"), 25 * 60_000)
     child.on("close", (code) => {
       clearTimeout(timer)
