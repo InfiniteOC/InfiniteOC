@@ -3,14 +3,14 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import path from "node:path"
-import mod, { patches, RUN } from "./index.mjs"
+import mod, { patches, RUN, DEFAULT } from "./index.mjs"
 
 const upstream = path.resolve(import.meta.dirname, "../../.upstream")
 
 test("patches only the server process entry and the run handler", async () => {
   const files = []
   await mod.setup({ async write() { throw new Error("unexpected write") }, async patch() { throw new Error("unexpected patch") }, async patchExact(file) { files.push(file) }, tui: { command() {} }, on() {} })
-  assert.deepEqual([...new Set(files)], ["packages/cli/src/server-process.ts", "packages/cli/src/commands/handlers/run.ts"])
+  assert.deepEqual([...new Set(files)], ["packages/cli/src/server-process.ts", "packages/cli/src/commands/handlers/run.ts", "packages/cli/src/commands/handlers/default.ts"])
 })
 
 test("anchors are unique in the pinned upstream and leave the webui mod's anchor intact", { skip: existsSync(upstream) ? false : "run `node bin/infiniteoc.mjs setup` first" }, async () => {
@@ -32,4 +32,15 @@ test("inline only under InfiniteOC, never with --server, and INFINITEOC_RUN_SUBP
   assert.match(condition, /process\.env\.INFINITEOC === "1"/)
   assert.match(condition, /Option\.isNone\(input\.server\)/)
   assert.match(condition, /process\.env\.INFINITEOC_RUN_SUBPROCESS !== "1"/)
+})
+
+test("the default command runs the server inline only for InfiniTUI, never with --server, and stops it at the end", () => {
+  const condition = /const inline =([\s\S]*?)\n    const ready/.exec(DEFAULT[1])[1]
+  assert.match(condition, /process\.env\.INFINITEOC === "1"/)
+  assert.match(condition, /process\.env\.INFINITEOC_GO_TUI !== undefined/)
+  assert.match(condition, /requestedServer === undefined/)
+  assert.match(condition, /process\.env\.INFINITEOC_RUN_SUBPROCESS !== "1"/)
+  assert.match(DEFAULT[1], /if \(serving\) yield\* Effect\.addFinalizer\(\(\) => Fiber\.interrupt\(serving\)\)/)
+  // Otherwise the upstream call is untouched.
+  assert.ok(DEFAULT[1].endsWith(DEFAULT[0].replace("    const server = yield* ServerConnection.resolve({", "      : yield* ServerConnection.resolve({")))
 })
