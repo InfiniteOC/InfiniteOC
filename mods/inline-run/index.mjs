@@ -66,6 +66,48 @@ export const RUN_END = [`        auto: input.auto || input.yolo || input.dangero
   }),
 )`]
 
+// The default command with InfiniTUI: the Go TUI draws the interface in its own process, so this process only
+// held the lease on a second (`serve --stdio`) process. It now runs that server itself. The classic UI renders
+// in this process, so it keeps its separate server, except after InfiniTUI hands over (/classic or a crash): it
+// then uses the same server, so work already running keeps running.
+export const DEFAULT_IMPORT = [`import { Context, Effect, FileSystem, Option, Queue, Schedule, Semaphore } from "effect"
+import { ServerConnection } from "../../services/server-connection"`, `import { Context, Deferred, Effect, Exit, Fiber, FileSystem, Option, Queue, Schedule, Semaphore } from "effect"
+import { ServerProcess } from "../../server-process"
+import { ServerConnection } from "../../services/server-connection"`]
+export const DEFAULT = [`    const server = yield* ServerConnection.resolve({
+      server: requestedServer,
+      standalone: input.standalone,
+      mismatch: "replace",`, `    // InfiniteOC inline-run: with InfiniTUI, this process runs the private server instead of a child process.
+    const inline =
+      process.env.INFINITEOC === "1" &&
+      process.env.INFINITEOC_GO_TUI !== undefined &&
+      requestedServer === undefined &&
+      process.env.INFINITEOC_RUN_SUBPROCESS !== "1"
+    const ready = inline ? yield* Deferred.make<ServerConnection.Resolved>() : undefined
+    const serving = ready
+      ? yield* (
+          ServerProcess.run({
+            mode: "inline",
+            onReady: (url, password) =>
+              void Deferred.doneUnsafe(
+                ready,
+                Exit.succeed({ endpoint: { url, auth: { type: "basic" as const, username: "opencode", password } } }),
+              ),
+          }) as Effect.Effect<void, unknown>
+        ).pipe(Effect.forkDetach)
+      : undefined
+    // The server stops when this command ends, however it ends.
+    if (serving) yield* Effect.addFinalizer(() => Fiber.interrupt(serving))
+    const server = ready && serving
+      ? yield* Effect.raceFirst(
+          Deferred.await(ready),
+          Fiber.join(serving).pipe(Effect.andThen(Effect.fail(new Error("The InfiniteOC server stopped before it was ready")))),
+        )
+      : yield* ServerConnection.resolve({
+      server: requestedServer,
+      standalone: input.standalone,
+      mismatch: "replace",`]
+
 export const patches = [
   [`${cli}/server-process.ts`, ...MODE],
   [`${cli}/server-process.ts`, ...OPTIONS],
@@ -73,11 +115,13 @@ export const patches = [
   [`${cli}/commands/handlers/run.ts`, ...RUN_IMPORT],
   [`${cli}/commands/handlers/run.ts`, ...RUN],
   [`${cli}/commands/handlers/run.ts`, ...RUN_END],
+  [`${cli}/commands/handlers/default.ts`, ...DEFAULT_IMPORT],
+  [`${cli}/commands/handlers/default.ts`, ...DEFAULT],
 ]
 
 export default {
   id: "inline-run",
-  version: "0.1.0",
+  version: "0.2.0",
   async setup(api) {
     for (const [file, before, after] of patches) await api.patchExact(file, before, after)
   },
