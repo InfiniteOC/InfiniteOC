@@ -266,7 +266,10 @@ test("serveLocal serves one folder on 127.0.0.1: types, index, no dotfiles, no e
     assert.match((await get("/app.mjs")).headers.get("content-type"), /^text\/javascript/)
     assert.equal(await (await get("/sub/")).text(), "sub")
     assert.equal(await (await get("/my%20file.css")).text(), "body{}")
-    for (const blocked of ["/.env", "/.git/config", "/%2e%2e/outside.txt", "/..%2foutside.txt", "/missing.js"]) assert.equal((await get(blocked)).status, 404, blocked)
+    for (const blocked of ["/.env", "/.git/config", "/%2e%2e/outside.txt", "/..%2foutside.txt", "/missing.js", "/favicon.ico", "/missing.js"]) assert.equal((await get(blocked)).status, 404, blocked)
+    // Requested files that do not exist are listed once; refused paths and favicon.ico are not. The URL parser
+    // already resolves /%2e%2e/outside.txt to /outside.txt inside the folder, a plain missing file.
+    assert.deepEqual(server.missing, ["outside.txt", "missing.js"])
     assert.equal((await get("/index.html", { method: "POST" })).status, 405)
     const head = await get("/index.html", { method: "HEAD" })
     assert.equal(head.status, 200)
@@ -341,7 +344,9 @@ test("browser check: screenshots, overflow, dark mode, diff and mockup against r
   const first = await runCheck({ chrome, url, plan, fullPage: true })
   assert.equal(first.shots.length, 2)
   assert.equal(first.shots[0].overflow, 225)
+  assert.deepEqual(first.shots[0].offenders, ["div.wide (600px wide, right edge at 600px)"])
   assert.equal(first.shots[1].overflow, undefined)
+  assert.equal(first.shots[1].offenders, undefined)
   assert.ok(first.consoleErrors.some((line) => line.includes("boom")), JSON.stringify(first.consoleErrors))
   for (const shot of first.shots) assert.equal(Buffer.from(shot.png, "base64").subarray(1, 4).toString(), "PNG")
   assert.notEqual(first.shots[0].png, first.shots[1].png)
@@ -375,6 +380,18 @@ test("an ES-module page that file:// blocks renders cleanly when served from its
   }
 })
 
+test("overflow culprits: the outermost element that sticks out, not content of a scrolling box", { skip: !chrome && "no Chrome installed", timeout: 300000 }, async (t) => {
+  const dir = await tmp(t)
+  const page = path.join(dir, "wide.html")
+  await writeFile(page, `<!doctype html><html lang="en"><head><title>w</title><meta name="viewport" content="width=device-width"><style>
+    body { margin: 0 } .scroll { overflow-x: auto } .scroll div { width: 900px; height: 10px }
+    main { padding: 8px } table { width: 520px } td { height: 10px }
+    </style></head><body><div class="scroll"><div></div></div><main><table class="list"><tr><td>x</td></tr></table></main></body></html>`)
+  const [shot] = (await runCheck({ chrome, url: toUrl(page, false), plan: [{ viewport: viewportSpecs(["phone"])[0], scheme: "light" }], fullPage: false })).shots
+  assert.equal(shot.overflow, 528 - 375)
+  assert.deepEqual(shot.offenders, ["main > table.list (520px wide, right edge at 528px)"])
+})
+
 test("applies to the pinned source: files, plugin registration, guidance; fails closed", async (t) => {
   const root = await tmp(t)
   const write = async (file, text) => { await mkdir(path.dirname(path.join(root, file)), { recursive: true }); await writeFile(path.join(root, file), text) }
@@ -403,6 +420,9 @@ test("formatReport: built-in audit wording, and nothing about accessibility when
   assert.doesNotMatch(formatReport(base, "off", "x.html"), /Accessibility/)
   const found = { ...base, violations: [{ id: "color-contrast", impact: "serious", help: "Text contrast below 4.5:1", nodes: ["button"], seen: ["phone-light"] }] }
   assert.match(formatReport(found, "basic", "x.html"), /built-in checks.*1 violation[\s\S]*\[serious\] color-contrast/)
+  // Overflow names the elements that stick out, so the model does not script its own browser to find them.
+  const wide = { ...base, shots: [{ ...base.shots[0], overflow: 233, offenders: ["main > canvas#chart (608px wide, right edge at 608px)"] }] }
+  assert.match(formatReport(wide, "basic", "x.html"), /phone-light by 233px\. Fix it\.\n  Sticking out at phone-light: main > canvas#chart \(608px wide, right edge at 608px\)/)
 })
 
 test("built-in audit finds labels, names, repeated actions, contrast, alt and lang without axe-core", { skip: !chrome && "no Chrome installed", timeout: 300000 }, async (t) => {

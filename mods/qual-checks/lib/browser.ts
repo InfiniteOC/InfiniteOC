@@ -122,6 +122,8 @@ export interface LocalServer {
   origin: string
   /** The served folder: the HTML file's own directory. */
   root: string
+  /** Files the page requested that do not exist (relative to root), favicon.ico aside. */
+  missing: string[]
   close: () => Promise<void>
 }
 
@@ -132,6 +134,7 @@ export interface LocalServer {
  */
 export async function serveLocal(file: string): Promise<LocalServer> {
   const root = path.dirname(path.resolve(file))
+  const missing: string[] = []
   const server = http.createServer((req, res) => {
     if (req.method !== "GET" && req.method !== "HEAD") return void res.writeHead(405).end()
     let pathname: string
@@ -147,7 +150,11 @@ export async function serveLocal(file: string): Promise<LocalServer> {
       if (statSync(full).isDirectory()) full = path.join(full, "index.html")
     } catch {}
     readFile(full, (error, body) => {
-      if (error) return void res.writeHead(404).end()
+      if (error) {
+        const name = path.relative(root, full)
+        if (name !== "favicon.ico" && !missing.includes(name)) missing.push(name)
+        return void res.writeHead(404).end()
+      }
       res.writeHead(200, { "content-type": TYPES[path.extname(full).toLowerCase()] ?? "application/octet-stream", "cache-control": "no-store" })
       res.end(req.method === "HEAD" ? undefined : body)
     })
@@ -162,6 +169,7 @@ export async function serveLocal(file: string): Promise<LocalServer> {
     url: `${origin}/${relative}`,
     origin,
     root,
+    missing,
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve())
@@ -422,6 +430,26 @@ export interface Diff {
   png: string
 }
 
+// Which elements make the page wider than the viewport: those whose right edge passes it while their parent's
+// does not (the outermost offender of each chain), skipping anything inside a scrolling or clipping container.
+export const OFFENDERS = `(() => {
+  const vw = window.innerWidth
+  const label = (el) => el.tagName.toLowerCase() + (el.id ? "#" + el.id : [...el.classList].slice(0, 2).map((c) => "." + c).join(""))
+  const where = (el) => { const parts = []; for (let e = el; e && e !== document.documentElement && (e !== document.body || e === el) && parts.length < 3; e = e.parentElement) parts.unshift(label(e)); return parts.join(" > ") }
+  const contained = (el) => { for (let e = el.parentElement; e && e !== document.body && e !== document.documentElement; e = e.parentElement) if (/^(auto|scroll|hidden|clip)$/.test(getComputedStyle(e).overflowX)) return true; return false }
+  const found = []
+  const all = document.body ? [document.body, ...document.body.querySelectorAll("*")] : []
+  for (const el of all.slice(0, 5000)) {
+    const r = el.getBoundingClientRect()
+    if (r.width === 0 || r.right <= vw + 1 || getComputedStyle(el).position === "fixed") continue
+    const parent = el.parentElement
+    if (parent && parent !== document.documentElement && parent.getBoundingClientRect().right > vw + 1) continue
+    if (contained(el)) continue
+    found.push({ at: where(el), right: Math.round(r.right), width: Math.round(r.width) })
+  }
+  return found.sort((a, b) => b.right - a.right).slice(0, 3).map((f) => f.at + " (" + f.width + "px wide, right edge at " + f.right + "px)")
+})()`
+
 const dataUrl = (png: string) => `data:image/png;base64,${png}`
 const mimeOf = (file: string) => (/\.jpe?g$/i.test(file) ? "image/jpeg" : /\.webp$/i.test(file) ? "image/webp" : "image/png")
 
@@ -432,6 +460,8 @@ export interface Shot {
   width: number
   png: string
   overflow?: number
+  /** The outermost elements that stick out past the viewport, when the page overflows. */
+  offenders?: string[]
   baseline?: string
   diff?: Diff
 }
@@ -489,10 +519,11 @@ export async function runCheck(opts: CheckOptions): Promise<CheckResult> {
       // Fonts and a short settle for entry animations and client rendering.
       await evaluate("document.fonts ? document.fonts.ready.then(() => new Promise((r) => setTimeout(r, 400))) : new Promise((r) => setTimeout(r, 400))")
       const overflow: number = await evaluate("Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0) - window.innerWidth")
+      const offenders: string[] | undefined = overflow > 1 ? await evaluate(OFFENDERS) : undefined
       const content: number = await evaluate("Math.ceil(Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0))")
       const tall = opts.fullPage || height ? Math.min(Math.max(content, height ?? viewport.height), MAX_HEIGHT) : viewport.height
       const image = await cdp.send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true, clip: { x: 0, y: 0, width: viewport.width, height: tall, scale: 1 } })
-      return { label: `${viewport.name}-${scheme}`, viewport: viewport.name, scheme, width: viewport.width, png: image.data, overflow: overflow > 1 ? overflow : undefined }
+      return { label: `${viewport.name}-${scheme}`, viewport: viewport.name, scheme, width: viewport.width, png: image.data, overflow: overflow > 1 ? overflow : undefined, offenders: offenders?.length ? offenders : undefined }
     }
 
     const shots: Shot[] = []
@@ -547,6 +578,8 @@ export function formatReport(result: CheckResult, axe: "ran" | "missing" | "basi
   const out = [`UI check of ${target}: ${result.shots.map((shot) => shot.label).join(", ")}.`]
   const overflowing = result.shots.filter((shot) => shot.overflow)
   out.push(overflowing.length ? `Horizontal overflow (page wider than the viewport): ${overflowing.map((shot) => `${shot.label} by ${shot.overflow}px`).join(", ")}. Fix it.` : "No horizontal overflow at any width.")
+  const culprits = overflowing.find((shot) => shot.offenders?.length)
+  if (culprits) out.push(`  Sticking out at ${culprits.label}: ${culprits.offenders!.join("; ")}`)
   if (result.consoleErrors.length) out.push(`Console errors:\n${result.consoleErrors.map((line) => `  ${line}`).join("\n")}`)
   const source = axe === "basic" ? "built-in checks; add axe-core as a devDependency for a full audit" : "axe-core"
   if (axe === "off") {}
