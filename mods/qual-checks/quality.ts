@@ -7,7 +7,7 @@ import { Tool } from "@opencode/schema/tool"
 import { TuiEvent } from "@opencode/schema/tui-event"
 import { Effect, Schema, Stream } from "effect"
 import { spawnSync } from "node:child_process"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { Bus } from "../bus.js"
@@ -22,6 +22,7 @@ import { run, tail } from "../infiniteoc/quality/exec.js"
 import { formatLicense, scanLicense } from "../infiniteoc/quality/license.js"
 import { formatPrune, prune } from "../infiniteoc/quality/prune.js"
 import { load } from "../infiniteoc/quality/scan.js"
+import { checkable, syntaxProblem } from "../infiniteoc/quality/syntax.js"
 import { networkAllowed, projectDir, readBaseline, readConfig, readJson, writeBaseline } from "../infiniteoc/quality/store.js"
 import { compareBench, eventsFromMessages, flakyVerdict, isSourceFile, isTestCommand, MARK, mutate, reminderCount, targets, testFirstEnd, testFirstPhase, testFirstRefusal } from "../infiniteoc/quality/tests.js"
 import { extractTokens, formatTokens } from "../infiniteoc/quality/tokens.js"
@@ -305,6 +306,15 @@ export const Plugin = define({
         if (files.some((file) => UI_FILE.test(file)) && !reminded.has(event.sessionID)) {
           reminded.add(event.sessionID)
           notes.push("UI file changed. Before reporting done, render it with the ui_check tool (the HTML file of a static page, no server needed; or the URL of a framework's running dev server) to see phone, tablet, desktop and dark mode plus an accessibility audit; design_tokens and component_catalog show what to reuse.")
+        }
+
+        // A file the call left unparseable is reported now, not steps later when something imports it.
+        for (const file of files.filter(checkable)) {
+          const absolute = path.resolve(dir, file)
+          try {
+            const problem = statSync(absolute).size <= 2_000_000 ? syntaxProblem(path.relative(dir, absolute) || file, readFileSync(absolute, "utf8")) : undefined
+            if (problem) notes.push(problem)
+          } catch {}
         }
 
         const manifests = files.filter((file) => MANIFEST.test(file)).map((file) => path.resolve(dir, file))
