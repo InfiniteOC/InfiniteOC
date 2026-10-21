@@ -960,6 +960,64 @@ test("a rate limit waits 5 s doubling to a minute, never under the provider's re
   assert.equal(total, 435000)
 })
 
+test("a swarm plan parses from the planner's reply, capped, with kinds kept honest", () => {
+  const reply = 'Here is the plan:\n```json\n{"contract": "src/api.ts exports get()", "tasks": [{"title": "API", "prompt": "write src/api.ts", "files": ["src/api.ts"], "kind": "implement"}, {"title": "UI", "prompt": "write src/ui.ts", "files": ["src/ui.ts"]}, {"prompt": "  "}, {"title": "Docs", "prompt": "write README", "kind": "bogus"}]}\n```'
+  const plan = D.parseSwarmPlan(reply, 10)
+  assert.equal(plan.contract, "src/api.ts exports get()")
+  assert.deepEqual(plan.tasks.map((task) => task.title), ["API", "UI", "Docs"])
+  assert.deepEqual(plan.tasks[0].files, ["src/api.ts"])
+  assert.equal(plan.tasks[2].kind, undefined)
+  assert.equal(D.parseSwarmPlan(reply, 2).tasks.length, 2)
+  // A bare array works too; no JSON or no tasks is an error.
+  assert.equal(D.parseSwarmPlan('[{"prompt": "a"}, {"prompt": "b"}]', 5).tasks.length, 2)
+  assert.throws(() => D.parseSwarmPlan("I could not plan this.", 5), /did not reply with the JSON plan/)
+  assert.throws(() => D.parseSwarmPlan('{"tasks": []}', 5), /no tasks/)
+  // Read-only swarms only search, summarize, review or reason; edit swarms default to implement.
+  assert.equal(D.swarmKind({ kind: "implement" }, false), "search")
+  assert.equal(D.swarmKind({ kind: "review" }, false), "review")
+  assert.equal(D.swarmKind({}, true), "implement")
+})
+
+test("a swarm task prompt carries the goal, contract, owned files and the other agents", () => {
+  const text = D.swarmTaskPrompt({
+    id: "task-2",
+    goal: "build a todo app",
+    contract: "store.ts exports add()",
+    task: { title: "UI", prompt: "write ui.ts", files: ["ui.ts"] },
+    edits: true,
+    others: [{ id: "task-1", title: "Store", files: ["store.ts"] }],
+  })
+  assert.match(text, /You are task-2/)
+  assert.match(text, /Contract[^\n]*\nstore\.ts exports add\(\)/)
+  assert.match(text, /Files you own: ui\.ts\. Create or edit only these/)
+  assert.match(text, /- task-1: Store \[store\.ts\]/)
+  assert.match(text, /swarm_add/)
+  assert.match(D.swarmPlannerPrompt({ goal: "g", size: 24, edits: true }), /up to 24 agents[\s\S]*"contract"/)
+  assert.match(D.swarmPlanSummary({ contract: "", tasks: [{ title: "A", prompt: "a", files: [] }] }, ["task-1"]), /Split into 1 tasks\.\nTasks:\n- task-1: A/)
+})
+
+test("swarm size is a setting, 2-64", () => {
+  assert.equal(S.normalize({}).swarmSize, 16)
+  assert.equal(S.normalize({ swarmSize: 100 }).swarmSize, 16)
+  assert.deepEqual(S.applyChange({}, "swarmSize", "32").next, { swarmSize: 32 })
+  assert.match(S.applyChange({}, "swarmSize", "1").error, /2–64/)
+})
+
+test("a fleet orchestrator's work tools are refused after FLEET_BLOCK_AT direct calls, until it delegates", () => {
+  const counts = new Map()
+  for (let i = 0; i < D.FLEET_BLOCK_AT; i++) {
+    assert.equal(D.fleetBlock(counts, "s", "read"), undefined)
+    D.fleetNudge(counts, "s", "read")
+  }
+  assert.match(D.fleetBlock(counts, "s", "edit"), /Refused: fleet mode.*action "swarm"/)
+  // Non-work tools and delegating stay allowed; delegating resets the count.
+  assert.equal(D.fleetBlock(counts, "s", "workflow"), undefined)
+  assert.equal(D.fleetBlock(counts, "s", "question"), undefined)
+  D.fleetNudge(counts, "s", "workflow")
+  assert.equal(D.fleetBlock(counts, "s", "read"), undefined)
+  assert.match(D.swarmPlannerPrompt({ goal: "g", size: 8, edits: false }), new RegExp(`at most ${D.PLANNER_TOOL_BUDGET} tool calls`))
+})
+
 test("fleet mode is a setting that also turns workflows on", () => {
   assert.equal(S.normalize({}).fleet, false)
   assert.equal(S.normalize({ fleet: "yes" }).fleet, false)

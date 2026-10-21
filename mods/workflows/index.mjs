@@ -42,6 +42,7 @@ const READONLY_WORKFLOW = `        // mods/workflows: every workflow step is a s
           const steps = (event.input as { steps?: unknown })?.steps
           const editing = Array.isArray(steps) ? steps.map((step) => String((step as { agent?: unknown })?.agent ?? "general")).find((name) => !["explore", "reviewer", "researcher"].includes(name)) : undefined
           if (editing) return Effect.fail(new Tool.Error({ message: readonlyRefusal(\`a workflow with the \${editing} subagent (it can edit)\`) }))
+          if ((event.input as { action?: unknown; edits?: unknown })?.action === "swarm" && (event.input as { edits?: unknown }).edits === true) return Effect.fail(new Tool.Error({ message: readonlyRefusal("an editing swarm") }))
         }
 `
 

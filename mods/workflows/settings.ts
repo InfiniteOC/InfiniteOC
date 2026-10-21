@@ -26,6 +26,8 @@ export type Settings = {
   claudeMode: ClaudeMode
   /** Steps per workflow, after `each` fan-outs are expanded. */
   maxSteps: number
+  /** Agents a swarm's planner aims for when the call names no size (2-64). */
+  swarmSize: number
   /** Characters of a step's result passed to dependent steps and the final notification. */
   maxOutputChars: number
   /** "end": one notification when the workflow finishes; "each": also a short note per finished step. */
@@ -53,6 +55,7 @@ export const DEFAULTS: Settings = Object.freeze({
   claudeParallel: 4,
   claudeMode: "readonly",
   maxSteps: 500,
+  swarmSize: 16,
   maxOutputChars: 12000,
   notify: "end",
   models: { fast: "auto", strong: "auto", default: "inherit", strongMaxCostRatio: 4 },
@@ -130,6 +133,7 @@ export function normalize(raw: unknown, buildDefault = DEFAULTS.enabled): Settin
     claudeParallel: int(input.claudeParallel, DEFAULTS.claudeParallel, 1, 16),
     claudeMode: CLAUDE_MODES.includes(input.claudeMode as ClaudeMode) ? (input.claudeMode as ClaudeMode) : DEFAULTS.claudeMode,
     maxSteps: int(input.maxSteps, DEFAULTS.maxSteps, 1, 1000),
+    swarmSize: int(input.swarmSize, DEFAULTS.swarmSize, 2, 64),
     maxOutputChars: int(input.maxOutputChars, DEFAULTS.maxOutputChars, 500, 100000),
     notify: input.notify === "each" ? "each" : "end",
     models: {
@@ -155,7 +159,7 @@ export function normalize(raw: unknown, buildDefault = DEFAULTS.enabled): Settin
 
 /**
  * One settings change as the UIs offer it: enabled, fleet (on also enables workflows at full parallelism), maxParallel, notify, models.fast,
- * models.strong, models.default, preset, claudeMode, claudeParallel. Returns the next raw `workflows` object (other keys kept)
+ * models.strong, models.default, preset, claudeMode, claudeParallel, swarmSize. Returns the next raw `workflows` object (other keys kept)
  * or an error message for the dialog.
  */
 export function applyChange(raw: unknown, key: string, value: string): { next: Record<string, unknown> } | { error: string } {
@@ -180,6 +184,11 @@ export function applyChange(raw: unknown, key: string, value: string): { next: R
     const n = Number(text)
     if (!Number.isInteger(n) || n < 1 || n > 16) return { error: "Claude Code workers must be 1–16 (each is a ~300 MB process)" }
     return { next: { ...current, claudeParallel: n } }
+  }
+  if (key === "swarmSize") {
+    const n = Number(text)
+    if (!Number.isInteger(n) || n < 2 || n > 64) return { error: "Swarm size must be 2–64" }
+    return { next: { ...current, swarmSize: n } }
   }
   if (key === "claudeMode") {
     if (!CLAUDE_MODES.includes(text as ClaudeMode)) return { error: `Use ${CLAUDE_MODES.join(", ")}` }

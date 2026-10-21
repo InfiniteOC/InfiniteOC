@@ -570,6 +570,15 @@ export const DIRECT_TOOLS = new Set(["read", "grep", "glob", "edit", "write", "p
 export const FLEET_FREE = 2
 export const FLEET_EVERY = 4
 
+/** Direct work calls after which a fleet orchestrator's work tools are refused until it delegates. */
+export const FLEET_BLOCK_AT = 4
+
+/** The refusal for a fleet orchestrator's direct work call once it made FLEET_BLOCK_AT of them, or undefined. */
+export function fleetBlock(counts: Map<string, number>, sessionID: string, tool: string): string | undefined {
+  if (!DIRECT_TOOLS.has(tool) || (counts.get(sessionID) ?? 0) < FLEET_BLOCK_AT) return undefined
+  return `Refused: fleet mode, and you already made ${FLEET_BLOCK_AT} direct tool calls since you last delegated. Start a swarm now (workflow action "swarm" with the goal and everything you learned, edits: true if files change) and answer from its results.`
+}
+
 /**
  * Fleet mode: counts the primary agent's direct work calls since its last delegation. Returns a note for
  * the call's result once it does more than FLEET_FREE of them itself, and every FLEET_EVERY calls after.
@@ -586,5 +595,128 @@ export function fleetNudge(counts: Map<string, number>, sessionID: string, tool:
   counts.set(sessionID, count)
   if (counts.size > 500) counts.delete(counts.keys().next().value!)
   if (count <= FLEET_FREE || (count - FLEET_FREE - 1) % FLEET_EVERY !== 0) return undefined
-  return `[Fleet] Fleet mode is on and you made ${count} direct tool calls yourself (${tool} last). You are the orchestrator: stop here and hand the remaining reading, editing and checking to a workflow (one step with wait: true is fine), then answer from its results.`
+  return `[Fleet] Fleet mode is on and you made ${count} direct tool calls yourself (${tool} last). You are the orchestrator: stop here and hand the remaining reading, editing and checking to a swarm (workflow action "swarm" with the goal, edits: true if files change), then answer from its results.`
+}
+
+// ---- swarms: a planner splits one goal into many tasks, all run at once, and workers add more ---------
+
+/** The group every swarm task belongs to: the fleet view shows it as one card with a cell per agent. */
+export const SWARM_GROUP = "task"
+export const SWARM_PLANNER = "plan"
+export const SWARM_REVIEW = "review"
+/** Tasks one worker may add with swarm_add. */
+export const SWARM_ADD_LIMIT = 5
+/**
+ * Tool calls the planner may make before it must reply with the plan. Measured: a free model told to "look
+ * only as much as splitting needs" still read for 13 rounds (454 s), each slower as its context grew.
+ */
+export const PLANNER_TOOL_BUDGET = 3
+
+export type SwarmTask = { title: string; prompt: string; files: string[]; kind?: string }
+export type SwarmPlan = { contract: string; tasks: SwarmTask[] }
+
+const SWARM_KINDS = new Set(["search", "summarize", "plan", "review", "reason", "implement", "test", "other"])
+const READ_KINDS = new Set(["search", "summarize", "review", "reason"])
+
+export function swarmPlannerPrompt(input: { goal: string; size: number; edits: boolean }) {
+  return [
+    `You plan the work of an agent swarm: up to ${input.size} agents run at the same time, one task each, and can message each other.`,
+    "",
+    "Goal:",
+    "<goal>",
+    input.goal,
+    "</goal>",
+    "",
+    `Split the goal into independent tasks, as many as it naturally allows up to ${input.size}: many small tasks finish faster than a few big ones. Every agent starts with no context, so each task prompt must say exactly what to do, where, and what to report.`,
+    input.edits
+      ? 'The agents write code. First decide what they must agree on and put it in "contract": the file layout, module and function names, interfaces and data shapes between parts, the commands that build and test, and conventions. Give every task the files it owns ("files"); no file belongs to two tasks. Parts that depend on each other are built against the contract at the same time instead of waiting for each other.'
+      : 'The agents only search and read, then report. Give each its own question or area, so no two read the same thing; "files" names where to look.',
+    `Look at the project only as much as splitting needs: at most ${PLANNER_TOOL_BUDGET} tool calls (a listing, one or two reads), then reply. Do not do the tasks yourself.`,
+    "Keep it compact, every agent reads it: each task prompt 2-5 sentences, the contract at most 20 lines.",
+    "",
+    "Reply with only this JSON, no prose around it:",
+    '{"contract": "shared decisions every agent follows (empty when none)", "tasks": [{"title": "3-6 words", "prompt": "the full task", "files": ["paths it owns"], "kind": "search|summarize|implement|test|review|reason"}]}',
+  ].join("\n")
+}
+
+/** The planner's reply as a plan: the JSON object (or a bare task array) inside it, at most `max` tasks. */
+export function parseSwarmPlan(text: string, max: number): SwarmPlan {
+  const candidates = [text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1), text.slice(text.indexOf("["), text.lastIndexOf("]") + 1)]
+  let raw: unknown
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    try {
+      raw = JSON.parse(candidate)
+      break
+    } catch {}
+  }
+  const object = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : undefined
+  const list = Array.isArray(raw) ? raw : Array.isArray(object?.tasks) ? (object.tasks as unknown[]) : undefined
+  if (!list) throw new Error("the planner did not reply with the JSON plan")
+  const tasks: SwarmTask[] = []
+  for (const item of list) {
+    const task = (item ?? {}) as Record<string, unknown>
+    const prompt = typeof task.prompt === "string" ? task.prompt.trim() : ""
+    if (!prompt) continue
+    const kind = typeof task.kind === "string" ? task.kind.trim().toLowerCase() : ""
+    tasks.push({
+      title: (typeof task.title === "string" && task.title.trim() ? task.title.trim() : prompt).slice(0, 60),
+      prompt: prompt.slice(0, 20000),
+      files: Array.isArray(task.files) ? task.files.filter((file): file is string => typeof file === "string" && !!file.trim()).map((file) => file.trim()) : [],
+      ...(SWARM_KINDS.has(kind) ? { kind } : {}),
+    })
+    if (tasks.length >= max) break
+  }
+  if (tasks.length === 0) throw new Error("the planner's plan has no tasks")
+  return { contract: typeof object?.contract === "string" ? object.contract.trim().slice(0, 20000) : "", tasks }
+}
+
+/** The kind a swarm task runs as: read-only swarms only search, summarize, review or reason (fast by default). */
+export const swarmKind = (task: Pick<SwarmTask, "kind">, edits: boolean) =>
+  edits ? (task.kind ?? "implement") : task.kind && READ_KINDS.has(task.kind) ? task.kind : "search"
+
+/** A swarm worker's task: the goal, the contract, its own task and files, and who owns what. */
+export function swarmTaskPrompt(input: {
+  id: string
+  goal: string
+  contract: string
+  task: SwarmTask
+  edits: boolean
+  others: ReadonlyArray<{ id: string; title: string; files: string[] }>
+}) {
+  const owned = input.task.files.join(", ")
+  const others = input.others.slice(0, 80).map((other) => `- ${other.id}: ${other.title}${other.files.length ? ` [${other.files.slice(0, 6).join(", ")}]` : ""}`)
+  return [
+    `You are ${input.id}, one agent of a swarm working on one goal; the others run at the same time.`,
+    `Goal: ${input.goal}`,
+    ...(input.contract ? ["", "Contract (shared decisions every agent follows; build against it, do not change it):", input.contract] : []),
+    "",
+    "Your task:",
+    input.task.prompt,
+    ...(owned
+      ? ["", input.edits ? `Files you own: ${owned}. Create or edit only these; for a change in another agent's file, message its owner.` : `Where to look: ${owned}.`]
+      : []),
+    ...(others.length ? ["", "The other agents (id: task [files]):", ...others, ...(input.others.length > 80 ? [`…and ${input.others.length - 80} more`] : [])] : []),
+    "",
+    "Work found that the goal needs and no agent covers: add it with swarm_add (it starts on a new agent at once) instead of doing it yourself, and keep to your task. Message an agent (send_message to its id, or \"all\") only when your work changes theirs: an interface you had to adjust, a file of theirs that needs a change.",
+  ].join("\n")
+}
+
+/** What the planner step reports once its plan is in place (instead of the raw JSON). */
+export const swarmPlanSummary = (plan: SwarmPlan, ids: readonly string[]) =>
+  [
+    `Split into ${plan.tasks.length} tasks.`,
+    ...(plan.contract ? ["Contract:", plan.contract] : []),
+    "Tasks:",
+    ...plan.tasks.map((task, index) => `- ${ids[index]}: ${task.title}${task.files.length ? ` [${task.files.join(", ")}]` : ""}`),
+  ].join("\n")
+
+export function swarmReviewPrompt(goal: string) {
+  return [
+    "A swarm of agents just worked on this goal, each on its own files, at the same time:",
+    goal,
+    "",
+    "Check the whole: read the changed files, run the build and tests the contract names (or the project's usual ones), and look for parts that do not fit together (names, interfaces, imports, missing pieces).",
+    "Report concrete problems (file:line, what is wrong, which task's files) or that the goal is done. Do not fix anything.",
+  ].join("\n")
 }

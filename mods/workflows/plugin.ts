@@ -14,6 +14,7 @@ import { spawn, spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import path from "node:path"
 import { SystemPart, ToolFailure } from "@opencode/ai"
+import { Tool } from "@opencode/schema/tool"
 import { define } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import { TuiEvent } from "@opencode/schema/tui-event"
@@ -41,6 +42,7 @@ import * as Store from "./store.ts"
 export const TOOL = "workflow"
 export const SEND = "send_message"
 export const READ = "read_messages"
+export const SWARM_ADD = "swarm_add"
 const MAX_STORED_OUTPUT = 100_000
 // A fan-out item keeps less: 500 of them at the full size would make a 50 MB state file.
 const MAX_ITEM_OUTPUT = 20_000
@@ -54,17 +56,18 @@ The workflow tool is your default way to delegate more than one task. Use it whe
 - When its result is the only thing you need next, start it with wait: true: the results come back in that call, with no extra wake-up turn. Otherwise it runs in the background: keep working on non-overlapping tasks, or tell the user what you launched and end your turn; that notification wakes you, also under /goal. Do not poll: a status check that finds nothing new only says so.
 - Check status only for a reason: the user asks, it has been silent far longer than its steps should take, or you need one step's result early (then status with wait: true blocks once until something changes, instead of repeated checks). "cancel" stops it.
 - Many similar tasks (per file, per item, up to hundreds): one step with glob: "src/**/*.ts" (or each: [...items]), not one step per item. Put {{file}} in its prompt to inline each file (the step answers in one model call, no read), or {{item}} for the path or item. Keep those prompts short and ask for a short answer; a step that needs the group gets a digest of every result.
+- One goal, many agents: action "swarm" with goal (and edits: true when files must change). A planner splits it into up to size tasks with a shared contract (layout, interfaces, names), they all run at once, workers message each other and add tasks they discover (swarm_add), and an edit swarm ends with a reviewer step. Use it whenever the work splits but you have not split it yourself.
 - Steps can talk: send_message(to, text) to a step id, "main" (you) or "all", and read_messages.
 - Results are the steps' reports: answer from them. Do not re-read files or re-run checks to confirm them unless the user asked for verification or reports contradict each other; never redo a step's work.`
 
 /** Added for primary agents while fleet mode is on; it overrides the "one quick task: subagent" rule above. */
 export const FLEET_GUIDANCE = `[Fleet mode]
-The user turned on fleet mode: you are the orchestrator, not the worker. Do the work through the workflow tool, almost always, even for one task (a one-step workflow, wait: true when you need its result next).
-- Reading code, searching, editing, running commands, tests and research all go to workflow steps. Do not read, grep, edit, write or run shell commands yourself; a look-up or two to plan the steps is the most you do directly.
-- Plan first, then delegate wide: split the task into many narrow steps that run at once (10 to 50 is normal; one question, one file area or one change each) rather than a few broad ones. Per-file work is one step with glob or each and {{file}}. Explore steps on separate questions, implement steps on disjoint files, a reviewer step after them.
-- Speed: set kind search or summarize on every step that only reads (the fast model), keep the dependency chain at most two or three levels deep, keep step prompts short, ask each step for a short answer, and start with wait: true when you need the results next.
-- Your own turns are for planning, talking to the user and answering from the steps' results. When a result shows more work, start the next workflow; never finish or redo a step's work by hand.
-- Work yourself only for a pure chat answer that needs no tools, or when the user explicitly asks you to do it yourself.`
+The user turned on fleet mode: you are the orchestrator of a swarm, not the worker. Hand the work to many agents at once.
+- Default for every task that needs tools: workflow action "swarm" with goal (the task with everything the user said: paths, constraints, what done looks like) and edits: true when files must change, from a one-file fix to a whole new project. The planner splits it across many agents with a shared contract; they run at once, message each other, add tasks they discover, and an edit swarm ends with a reviewer. Start it with wait: true when you need the results next.
+- Hand-written steps (action start) only when you already know the exact split; a one-step workflow is refused.
+- Do not read, grep, edit, write or run shell commands yourself; a look-up or two to write a good goal is the most you do directly.
+- Your own turns are for planning, talking to the user and answering from the results. When a result shows more work (a reviewer's finding, a failed task), start the next swarm for exactly that; never finish or redo the work by hand.
+- Work yourself only for a pure chat answer that needs no tools, or when the user explicitly asks you to.`
 
 const Step = Schema.Struct({
   id: Schema.String.annotate({ description: 'Short unique id (letters, digits, "-", "_"); used in needs, {{steps.<id>}} and messages.' }),
@@ -94,9 +97,14 @@ const Step = Schema.Struct({
 })
 
 export const Input = Schema.Struct({
-  action: Schema.Literals(["start", "status", "result", "cancel", "list"]).annotate({
-    description: "start a workflow; status / result / cancel one (workflowID); list this session's workflows.",
+  action: Schema.Literals(["start", "swarm", "status", "result", "cancel", "list"]).annotate({
+    description: "start a workflow from your steps; swarm: many agents on one goal (goal, edits, size); status / result / cancel one (workflowID); list this session's workflows.",
   }),
+  goal: Schema.optionalKey(Schema.String).annotate({
+    description: "swarm: the whole task, self-contained (the planner starts with no context): what to build or find, paths, constraints, what done looks like.",
+  }),
+  edits: Schema.optionalKey(Schema.Boolean).annotate({ description: "swarm: true when the agents must change files (build, fix, refactor); default false (search and report)." }),
+  size: Schema.optionalKey(Schema.Number).annotate({ description: "swarm: the most agents the planner splits the goal into (2-64). Leave unset for the configured size." }),
   name: Schema.optionalKey(Schema.String).annotate({ description: "start: a short name for the workflow." }),
   steps: Schema.optionalKey(Schema.Array(Step)).annotate({ description: "start: the steps." }),
   wait: Schema.optionalKey(Schema.Boolean).annotate({
@@ -114,6 +122,11 @@ const SendInput = Schema.Struct({
   to: Schema.String.annotate({ description: 'A step id of your workflow, "main" (the agent that started it) or "all".' }),
   text: Schema.String.annotate({ description: "The message. Short and specific: what changed, what you need, or a decision." }),
   workflowID: Schema.optionalKey(Schema.String).annotate({ description: "Only needed by the starting agent when several of its workflows run." }),
+})
+const SwarmAddInput = Schema.Struct({
+  title: Schema.String.annotate({ description: "A 3-6 word label." }),
+  prompt: Schema.String.annotate({ description: "The full task, self-contained: the new agent starts with no context beyond the goal and the contract." }),
+  files: Schema.optionalKey(Schema.Array(Schema.String)).annotate({ description: "Files it owns (edit swarms) or where to look; none owned by another agent." }),
 })
 const ReadInput = Schema.Struct({
   workflowID: Schema.optionalKey(Schema.String).annotate({ description: "Limit to one workflow (starting agent only)." }),
@@ -135,6 +148,10 @@ type Run = {
   messaging: Set<string>
   /** Agents that cannot use the edit tools: their steps skip per-step git snapshots. */
   readOnly: Set<string>
+  /** Picks the model of a step added after the start (a swarm's tasks); returns an error message or undefined. */
+  place: (step: D.StepSpec, state: D.StepState) => string | undefined
+  /** A swarm: its planner's step grows into tasks, and workers add more with swarm_add. */
+  swarm?: { goal: string; edits: boolean; size: number; worker: string; contract: string; next: number; added: Map<string, number>; owners: Map<string, { title: string; files: string[] }> }
 }
 
 // Process-wide: workflows started in any location of this server, and which child session is which step.
@@ -526,6 +543,68 @@ export const Plugin = define({
         while (Date.now() - started < hedgeAfter(run, step, model)) yield* Effect.sleep("250 millis")
       })
 
+    /** Adds one task to a running swarm (before its review step); returns the new step id or an error. */
+    const addTask = (run: Run, task: D.SwarmTask, id = `${D.SWARM_GROUP}-${run.swarm!.next + 1}`): string | { error: string } => {
+      const swarm = run.swarm!
+      if (run.wf.steps.length >= run.settings.maxSteps) return { error: `the swarm reached its limit of ${run.settings.maxSteps} steps` }
+      swarm.next = Math.max(swarm.next, Number(id.slice(D.SWARM_GROUP.length + 1)) || 0)
+      swarm.owners.set(id, { title: task.title, files: task.files })
+      const others = [...swarm.owners].filter(([other]) => other !== id).map(([other, owner]) => ({ id: other, ...owner }))
+      const step: D.StepSpec = {
+        id,
+        title: task.title,
+        agent: swarm.worker,
+        prompt: D.swarmTaskPrompt({ id, goal: swarm.goal, contract: swarm.contract, task, edits: swarm.edits, others }),
+        needs: [],
+        kind: D.swarmKind(task, swarm.edits),
+        // Best effort like a fan-out item: one failed agent does not sink the swarm, the review sees it.
+        optional: true,
+        group: D.SWARM_GROUP,
+        item: task.title,
+      }
+      const state: D.StepState = { id, status: "pending" }
+      const error = run.place(step, state)
+      if (error) {
+        swarm.owners.delete(id)
+        return { error }
+      }
+      const review = run.wf.steps.findIndex((item) => item.id === D.SWARM_REVIEW)
+      if (review === -1) run.wf.steps.push(step)
+      else {
+        run.wf.steps.splice(review, 0, step)
+        run.wf.steps[review + 1].needs.push(id)
+      }
+      run.wf.state[id] = state
+      run.members.push(id)
+      run.dirty = true
+      return id
+    }
+    /** The planner finished: its JSON plan becomes the swarm's tasks, all ready at once. */
+    const grow = (run: Run, state: D.StepState) =>
+      Effect.gen(function* () {
+        const swarm = run.swarm!
+        let plan: D.SwarmPlan
+        try {
+          plan = D.parseSwarmPlan(state.output ?? "", Math.max(1, Math.min(swarm.size, run.settings.maxSteps - run.wf.steps.length)))
+        } catch (error) {
+          state.status = "failed"
+          state.error = message(error)
+          return
+        }
+        swarm.contract = plan.contract
+        const ids = plan.tasks.map((_, index) => `${D.SWARM_GROUP}-${swarm.next + index + 1}`)
+        // Every task's prompt lists all the others, so ownership is known before any of them is built.
+        plan.tasks.forEach((task, index) => swarm.owners.set(ids[index], { title: task.title, files: task.files }))
+        const errors = plan.tasks.map((task, index) => addTask(run, task, ids[index])).filter((result) => typeof result !== "string")
+        if (errors.length === plan.tasks.length) {
+          state.status = "failed"
+          state.error = `no task could start: ${errors[0].error}`
+          return
+        }
+        state.output = D.swarmPlanSummary(plan, ids)
+        yield* toast(`Swarm "${run.wf.name}": ${plan.tasks.length - errors.length} agents started`)
+      })
+
     const runStep = (run: Run, id: string): Effect.Effect<void> => {
       const step = run.wf.steps.find((item) => item.id === id)!
       const state = run.wf.state[id]
@@ -603,6 +682,7 @@ export const Plugin = define({
                 `step ${id} of workflow ${run.wf.id} ${state.status} (its output: workflow action "result" with stepID ${id})`,
               )
             }
+            if (run.swarm && id === D.SWARM_PLANNER && state.status === "completed") yield* grow(run, state)
             yield* pump(run)
           }),
         ),
@@ -677,7 +757,8 @@ export const Plugin = define({
       }
     }
 
-    const start = (input: typeof Input.Type, context: { sessionID: SessionSchema.ID; agent: Agent.ID; messageID: any; id: any }) =>
+    type SwarmSpec = { goal: string; edits: boolean; size: number; worker: string }
+    const start = (input: typeof Input.Type, context: { sessionID: SessionSchema.ID; agent: Agent.ID; messageID: any; id: any }, swarm?: SwarmSpec) =>
       Effect.gen(function* () {
         const current = settings()
         if (!current.enabled)
@@ -686,6 +767,8 @@ export const Plugin = define({
           try: () => D.validatePlan(withGlobs(input, current.maxSteps), { maxSteps: current.maxSteps }),
           catch: (error) => failure(message(error)),
         })
+        if (current.fleet && !swarm && plan.steps.length < 2)
+          return yield* failure('Fleet mode: a one-step workflow is not a fleet. Use action "swarm" with goal: the task (and edits: true if files change); the swarm splits it across many agents.')
         const parent = yield* sessions
           .get(context.sessionID)
           .pipe(Effect.mapError((error) => failure(`Parent session not found: ${context.sessionID}`, error)))
@@ -707,6 +790,11 @@ export const Plugin = define({
           if (agent === undefined) return yield* failure(`Unknown agent "${step.agent}" in step "${step.id}".`)
           if (agent.mode === "primary") return yield* failure(`Agent ${step.agent} cannot run as a subagent (step "${step.id}").`)
           resolved.set(step.agent, agent)
+        }
+        if (swarm && !resolved.has(swarm.worker)) {
+          const agent = yield* agents.resolve(swarm.worker)
+          if (agent === undefined || agent.mode === "primary") return yield* failure(`The swarm's ${swarm.worker} agent is not available as a subagent.`)
+          resolved.set(swarm.worker, agent)
         }
         for (const agent of resolved.values())
           yield* permission
@@ -759,9 +847,8 @@ export const Plugin = define({
           state: D.initialState(plan.steps),
           messages: [],
         }
-        for (const step of plan.steps) {
-          if (current.fleet && step.model?.includes(`${C.PROVIDER}/`))
-            return yield* failure(`Step "${step.id}": fleet mode does not use Claude Code. Leave model unset.`)
+        const place = (step: D.StepSpec, state: D.StepState) => {
+          if (current.fleet && step.model?.includes(`${C.PROVIDER}/`)) return "fleet mode does not use Claude Code. Leave model unset."
           const choice = Models.chooseModel({
             step,
             policy: current,
@@ -772,14 +859,19 @@ export const Plugin = define({
             claudeCode,
             claudeEdits: current.claudeMode !== "readonly",
           })
-          if ("error" in choice) return yield* failure(`Step "${step.id}": ${choice.error}`)
-          Object.assign(workflow.state[step.id], {
+          if ("error" in choice) return choice.error
+          Object.assign(state, {
             ...(choice.ref ? { model: Models.formatRef(choice.ref) } : {}),
             ...(choice.pool && choice.pool.length > 1 ? { pool: choice.pool } : {}),
             tier: choice.tier,
             kind: choice.kind,
             modelReason: choice.reason,
           })
+          return undefined
+        }
+        for (const step of plan.steps) {
+          const error = place(step, workflow.state[step.id])
+          if (error) return yield* failure(`Step "${step.id}": ${error}`)
         }
 
         const run: Run = {
@@ -800,10 +892,12 @@ export const Plugin = define({
               .filter((agent) => Permission.evaluate("edit", "*", agent.permissions).effect === "deny")
               .map((agent) => agent.id as string),
           ),
+          place,
+          ...(swarm ? { swarm: { ...swarm, contract: "", next: 0, added: new Map(), owners: new Map() } } : {}),
         }
         runs.set(workflow.id, run)
         yield* save(run)
-        yield* toast(`Started "${workflow.name}" with ${plan.steps.length} steps`)
+        yield* toast(swarm ? `Swarm "${workflow.name}": planning up to ${swarm.size} agents` : `Started "${workflow.name}" with ${plan.steps.length} steps`)
         yield* watch(run).pipe(Effect.forkIn(scope, { startImmediately: true }))
         yield* pump(run)
 
@@ -856,6 +950,22 @@ export const Plugin = define({
         const sessionID = context.sessionID as string
         if (input.action === "start") {
           const started = yield* start(input, context)
+          return { content: started.text, metadata: { workflowID: started.id } }
+        }
+        if (input.action === "swarm") {
+          const goal = input.goal?.trim()
+          if (!goal) return yield* failure("swarm needs goal: the whole task, self-contained.")
+          const size = Math.max(2, Math.min(64, Math.floor(input.size ?? settings().swarmSize)))
+          const edits = input.edits === true
+          const steps = [
+            { id: D.SWARM_PLANNER, title: "Split the goal", agent: "explore", kind: "plan" as const, prompt: D.swarmPlannerPrompt({ goal, size, edits }) },
+            ...(edits ? [{ id: D.SWARM_REVIEW, title: "Review the whole", agent: "reviewer", kind: "review" as const, needs: [D.SWARM_PLANNER], prompt: D.swarmReviewPrompt(goal) }] : []),
+          ]
+          const started = yield* start(
+            { action: "start", name: input.name ?? "swarm", steps, ...(input.wait === undefined ? {} : { wait: input.wait }) },
+            context,
+            { goal, edits, size, worker: edits ? "general" : "explore" },
+          )
           return { content: started.text, metadata: { workflowID: started.id } }
         }
         if (input.action === "list" || input.action === "status") return yield* status(sessionID, input)
@@ -913,6 +1023,28 @@ export const Plugin = define({
           })
           .filter(Boolean)
         return { content: [`Sent message #${sent.id} to ${sent.to}.`, ...notes].join("\n") }
+      })
+
+    const swarmAddTool = (input: typeof SwarmAddInput.Type, context: any) =>
+      Effect.gen(function* () {
+        const entry = membership.get(context.sessionID)
+        const run = entry?.run
+        if (!entry || !run?.swarm || run.finalized) return yield* failure("You are not an agent of a running swarm.")
+        const swarm = run.swarm
+        const count = swarm.added.get(entry.member) ?? 0
+        if (count >= D.SWARM_ADD_LIMIT)
+          return yield* failure(`You already added ${D.SWARM_ADD_LIMIT} tasks. Finish your own task and list what is left in your reply.`)
+        const prompt = input.prompt.trim()
+        if (!prompt) return yield* failure("The task has no prompt.")
+        const files = (input.files ?? []).map((file) => file.trim()).filter(Boolean)
+        const taken = swarm.edits ? files.filter((file) => [...swarm.owners].some(([id, owner]) => id !== entry.member && owner.files.includes(file))) : []
+        if (taken.length) return yield* failure(`Already owned by another agent: ${taken.join(", ")}. Message its owner instead.`)
+        const title = (input.title.trim() || prompt).slice(0, 60)
+        const result = addTask(run, { title, prompt, files })
+        if (typeof result !== "string") return yield* failure(result.error)
+        swarm.added.set(entry.member, count + 1)
+        yield* pump(run)
+        return { content: `Added ${result} ("${title}"); it starts on a new agent now. Message it as ${result}.` }
       })
 
     const readTool = (input: typeof ReadInput.Type, context: any) =>
@@ -1048,6 +1180,7 @@ export const Plugin = define({
             "The preferred way to delegate two or more tasks (instead of several subagent calls): runs subagent steps with dependencies (a DAG). Independent steps run in parallel, dependent steps in order, and each step gets the results of the steps it needs.",
             "It runs in the background by default and you are notified when it finishes, so do not poll it (wait: true returns the results in this call instead); the steps can message each other and you.",
             "Each step gets a model chosen for its kind of work unless you set one.",
+            'action "swarm" with a goal runs many agents on it without you writing steps: a planner splits the goal into up to size tasks with a shared contract, all run at once, they message each other and add tasks they find; edits: true for work that changes files (then a reviewer checks the whole).',
             'Per-file or per-item work (summarize, review, check or extract from each of many files or items): ONE step with glob (e.g. "src/**/*.ts") or each: [...], and {{file}} in its prompt. Every file then gets its own small step with the file already inlined, all in parallel, done in seconds. Never split such work into a few steps that each read several files: those read one file per model round trip and are many times slower.',
           ].join("\n"),
           input: Input,
@@ -1059,6 +1192,13 @@ export const Plugin = define({
           description: "Send a message to another member of your workflow: a step id, \"main\" (the agent that started it) or \"all\". Running recipients see it at their next step.",
           input: SendInput,
           execute: sendTool,
+        })
+        editor.add({
+          name: SWARM_ADD,
+          options: { codemode: false, permission: "workflow_message" },
+          description: "Swarm agents only: add a task the goal needs that no agent covers. It starts at once on a new agent, with the goal and the contract.",
+          input: SwarmAddInput,
+          execute: swarmAddTool,
         })
         editor.add({
           name: READ,
@@ -1084,6 +1224,7 @@ export const Plugin = define({
           delete event.tools[SEND]
           delete event.tools[READ]
         }
+        if (!membership.get(sessionID)?.run.swarm) delete event.tools[SWARM_ADD]
         const tool = event.tools[TOOL]
         if (!tool) return
         const selected = yield* agents.resolve(event.agent)
@@ -1121,6 +1262,23 @@ export const Plugin = define({
           fleetSessions.add(sessionID)
         } else fleetSessions.delete(sessionID)
       })
+    // Budgets the prompts alone do not hold on small models: a swarm planner gets PLANNER_TOOL_BUDGET tool
+    // calls, and a fleet orchestrator's work tools are refused after FLEET_BLOCK_AT calls until it delegates.
+    const plannerCalls = new Map<string, number>()
+    yield* ctx.tool.hook("execute.before", (event) => {
+      const sessionID = event.sessionID as string
+      const entry = membership.get(sessionID)
+      if (entry?.run.swarm && entry.member === D.SWARM_PLANNER) {
+        const calls = (plannerCalls.get(sessionID) ?? 0) + 1
+        plannerCalls.set(sessionID, calls)
+        if (calls > D.PLANNER_TOOL_BUDGET)
+          return Effect.fail(new Tool.Error({ message: `Refused: your planning budget of ${D.PLANNER_TOOL_BUDGET} tool calls is used. Reply now with only the JSON plan.` }))
+        return Effect.void
+      }
+      if (!fleetSessions.has(sessionID) || !settings().fleet) return Effect.void
+      const refusal = D.fleetBlock(fleetCounts, sessionID, event.tool)
+      return refusal ? Effect.fail(new Tool.Error({ message: refusal })) : Effect.void
+    })
     yield* ctx.tool.hook("execute.after", (event) => {
       if (event.status !== "completed" || !fleetSessions.has(event.sessionID) || !settings().fleet) return Effect.void
       const note = D.fleetNudge(fleetCounts, event.sessionID, event.tool)

@@ -37,6 +37,28 @@ dependencies, no cycles, at most `maxSteps` steps.
 ]}
 ```
 
+### Swarms: many agents on one goal
+
+`workflow {action: "swarm", goal, edits?, size?}` runs a workflow that writes itself:
+
+1. `plan` (explore, strong tier) gets `D.swarmPlannerPrompt`: split the goal into as many independent tasks as it
+   allows, up to `size` (default `swarmSize`, 16; 2–64), and for edit swarms a **contract** every agent builds
+   against: file layout, names, interfaces and data shapes, build and test commands. Each task owns its files; no
+   file belongs to two tasks, so parts that depend on each other are built at the same time.
+2. When `plan` completes, `D.parseSwarmPlan` reads its JSON and the plugin adds `task-1…task-N` to the running
+   workflow (`addTask`, one group, so the fleet panel shows one card with a cell per agent). They start at once on
+   models placed like any step (`run.place`); read-only swarms run on `explore` with search-class kinds (fast tier),
+   edit swarms on `general`. Each prompt (`D.swarmTaskPrompt`) has the goal, the contract, the task, its files and
+   every other agent with its files. `plan`'s stored result becomes a short summary instead of the JSON.
+3. Agents talk with `send_message` (a task id or `all`) and grow the swarm with **`swarm_add {title, prompt,
+   files?}`** (visible only to members of a swarm): a new task that starts at once, joins the mailbox and the
+   review's needs, at most `SWARM_ADD_LIMIT` (5) per agent, files already owned refused.
+4. Edit swarms end with `review` (reviewer, strong tier): it needs every task, including added ones, runs the
+   build and tests and reports what does not fit together. Tasks are optional (best effort), like fan-out items.
+
+Fleet mode makes `swarm` the default for every task that needs tools and refuses a one-step `start`. `/readonly`
+refuses an editing swarm.
+
 ### Fan-out: hundreds of steps from one template
 
 `each: [...]` turns one step into one step per item: the prompt is a template with `{{item}}`, the ids become
@@ -100,7 +122,7 @@ Delegation goes through workflows by default rather than by exception:
 - `infiniteoc.json` turns workflows on for the build (`options.workflows.enabled`); `settings.json` still wins.
 - **Fleet mode** (`fleet: true`; `/fleet on|off` in InfiniTUI, or `/workflows` → Settings) makes delegation the rule
   instead of the preference. Primary agents get a `[Fleet mode]` system part (`FLEET_GUIDANCE`): they are the
-  orchestrator, even one task goes to a one-step workflow, and they do not read, grep, edit or run commands themselves
+  orchestrator, every task that needs tools goes to a swarm (a one-step `start` is refused), and they do not read, grep, edit or run commands themselves
   beyond a look-up or two to plan. Their own direct work calls (`read grep glob edit write patch shell`) are counted
   since their last `workflow` or `subagent` call; the third and every fourth after it get a `[Fleet]` note in the
   result telling them to hand the rest to a workflow (`D.fleetNudge`). Workflow steps and subagents never see either.
@@ -225,6 +247,7 @@ Invalid values fall back field by field.
 | `claudeParallel` | `4` | Claude Code worker processes at once, across all workflows (1–16) |
 | `claudeMode` | `"readonly"` | What Claude Code workers may do: `readonly`, `auto` or `bypass` (see above) |
 | `maxSteps` | `500` | Steps per workflow after expanding `each` (1–1000) |
+| `swarmSize` | `16` | Agents a swarm's planner aims for when the call names no `size` (2–64; `/fleet swarm N`) |
 | `maxOutputChars` | `12000` | Result characters passed to dependents and notifications |
 | `notify` | `"end"` | `"each"` also notes every finished step to a running starter |
 | `models.fast` / `models.strong` | `"auto"` | `auto`, `inherit`, `provider/model[#variant]`, `claude-code/haiku|sonnet|opus`, or a pool: several models separated by commas |
