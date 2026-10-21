@@ -42,7 +42,9 @@ jobs:
           cache-dependency-path: mods/infinitui/.tui/go.sum
       - run: node bin/infiniteoc.mjs setup
       # mods/infinitui: build the Go TUI so release installs need no Go toolchain.
-      - run: node -e "import('./mods/infinitui/build.mjs').then((m) => m.ensureBuilt({ modDir: 'mods/infinitui', home: '.' }))"
+      # A block scalar: as a plain scalar the ": " inside the script made the whole file invalid YAML.
+      - run: |
+          node -e "import('./mods/infinitui/build.mjs').then((m) => m.ensureBuilt({ modDir: 'mods/infinitui', home: '.' }))"
       - run: node scripts/package-release.mjs --out dist
       - uses: actions/upload-artifact@v4
         with:
