@@ -9,11 +9,12 @@ import { Effect, Schema, Stream } from "effect"
 import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { Bus } from "../bus.js"
 import { FileAccess } from "../file-access.js"
 import { Location } from "../location.js"
 import { Permission } from "../permission.js"
-import { formatReport, findAxe, findChrome, runCheck, toUrl, viewportSpecs, type Scheme } from "../infiniteoc/quality/browser.js"
+import { formatReport, findAxe, findChrome, runCheck, serveLocal, toUrl, viewportSpecs, type Scheme } from "../infiniteoc/quality/browser.js"
 import { catalog, formatCatalog } from "../infiniteoc/quality/catalog.js"
 import { detectCommand, fmtDelta, parseCoverage, readReport, type Totals } from "../infiniteoc/quality/coverage.js"
 import { addedDeps, describeAdded } from "../infiniteoc/quality/deps.js"
@@ -68,7 +69,7 @@ export const Plugin = define({
           name: "ui_check",
           options: { codemode: false },
           description:
-            "Render a page in headless Chrome and look at it. Returns screenshots at phone (375), tablet (768) and desktop (1280) widths in light mode plus desktop in dark mode, a horizontal-overflow check, console errors, an axe-core accessibility audit (when axe-core is installed in the project), and a pixel diff against the previous capture of the same page. Use it after every UI change. Capture once BEFORE editing so the after-capture shows a diff. Optionally pass a mockup image to see how far the render is from it. Target: a dev server URL (http://localhost:...) or an HTML file path.",
+            "Render a page in headless Chrome and look at it. Returns screenshots at phone (375), tablet (768) and desktop (1280) widths in light mode plus desktop in dark mode, a horizontal-overflow check, console errors, an axe-core accessibility audit (when axe-core is installed in the project), and a pixel diff against the previous capture of the same page. Use it after every UI change. Capture once BEFORE editing so the after-capture shows a diff. Optionally pass a mockup image to see how far the render is from it. Target: a dev server URL (http://localhost:...) or an HTML file path; a file is served from its folder over a temporary local http server, so ES modules, fetch and localStorage work without starting one yourself.",
           input: Schema.Struct({
             target: Schema.String.annotate({ description: "http://localhost URL of a running dev server, or the path of an HTML file" }),
             viewports: Schema.optionalKey(Viewports).annotate({ description: 'Subset of "phone", "tablet", "desktop" or pixel widths. Default: all three.' }),
@@ -83,7 +84,9 @@ export const Plugin = define({
               const dir = cwd()
               const chrome = findChrome()
               if (!chrome) return text("ui_check cannot render here: no Chrome, Chromium or Edge was found (set INFINITEOC_CHROME to a browser binary). Nothing was installed. Tell the user the UI was not rendered and list what they should check by hand.")
-              const url = toUrl(input.target, networkAllowed(dir))
+              // A relative path means the session directory, not the server process's working directory.
+              const target = /^[a-z][a-z0-9+.-]*:\/\//i.test(input.target) || path.isAbsolute(input.target) ? input.target : path.join(dir, input.target)
+              const url = toUrl(target, networkAllowed(dir))
               const viewports = viewportSpecs(input.viewports)
               const wide = viewports.reduce((a, b) => (b.width > a.width ? b : a))
               const plan = input.schemes?.length
@@ -95,16 +98,20 @@ export const Plugin = define({
               const key = createHash("sha1").update(url).digest("hex").slice(0, 10)
               const file = (label: string) => path.join(projectDir(dir), "shots", `${key}-${label}.png`)
               const axePath = input.a11y === false ? undefined : findAxe(dir)
+              // Baselines stay keyed to the file URL; the page itself is rendered from a local http origin.
+              const local = url.startsWith("file:") ? yield* attempt(() => serveLocal(fileURLToPath(url))) : undefined
               const result = yield* attempt(() =>
-                runCheck({ chrome, url, plan, fullPage: input.full_page !== false, axeSource: axePath, basicAudit: input.a11y !== false && !axePath, mockup, baseline: (label) => readBaseline(file(label))?.toString("base64") }),
-              )
+                runCheck({ chrome, url: local?.url ?? url, plan, fullPage: input.full_page !== false, axeSource: axePath, basicAudit: input.a11y !== false && !axePath, mockup, baseline: (label) => readBaseline(file(label))?.toString("base64") }),
+              ).pipe(Effect.ensuring(local ? Effect.promise(() => local.close()) : Effect.void))
               const saved: string[] = []
               for (const shot of result.shots)
                 if (input.save_baseline || !shot.baseline) {
                   writeBaseline(file(shot.label), Buffer.from(shot.png, "base64"))
                   saved.push(shot.label)
                 }
-              const report = formatReport(result, input.a11y === false ? "off" : axePath ? "ran" : "basic", input.target)
+              const formatted = formatReport(result, input.a11y === false ? "off" : axePath ? "ran" : "basic", input.target)
+              // Console errors name the temporary origin; show the files they mean instead.
+              const report = local ? formatted.split(`${local.origin}/`).join(`${local.root}${path.sep}`) : formatted
               const parts: Tool.Content[] = [{ type: "text", text: report + (saved.length ? `\nSaved as the baseline for later diffs: ${saved.join(", ")}.` : "") }]
               for (const shot of result.shots) {
                 parts.push(image(`${shot.label}.png`, shot.png))

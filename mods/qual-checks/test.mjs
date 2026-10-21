@@ -13,7 +13,7 @@ import { parseDeps, addedDeps, inspectInstalled } from "./lib/deps.ts"
 import { classifyText, risk, scanLicense, formatLicense } from "./lib/license.ts"
 import { parseCoverage, readReport, detectCommand, fmtDelta } from "./lib/coverage.ts"
 import { isTestCommand, isTestFile, isSourceFile, testFirstPhase, eventsFromMessages, testFirstEnd, mutate, compareBench, flakyVerdict, targets, MARK } from "./lib/tests.ts"
-import { findChrome, findAxe, playwrightChromium, toUrl, viewportSpecs, runCheck, formatReport } from "./lib/browser.ts"
+import { findChrome, findAxe, playwrightChromium, toUrl, viewportSpecs, runCheck, formatReport, serveLocal } from "./lib/browser.ts"
 import { run } from "./lib/exec.ts"
 
 const src = (p, text) => ({ path: p, text })
@@ -241,6 +241,40 @@ test("finds Playwright's newest downloaded Chromium when no system Chrome is con
   assert.equal(playwrightChromium({ PLAYWRIGHT_BROWSERS_PATH: "0", HOME: path.join(dir, "nowhere") }), undefined)
 })
 
+test("serveLocal serves one folder on 127.0.0.1: types, index, no dotfiles, no escape, GET/HEAD only", async (t) => {
+  const dir = await tmp(t)
+  await mkdir(path.join(dir, "site", "sub"), { recursive: true })
+  await mkdir(path.join(dir, "site", ".git"), { recursive: true })
+  await writeFile(path.join(dir, "site", "index.html"), "<!doctype html><title>home</title>")
+  await writeFile(path.join(dir, "site", "app.mjs"), "export const x = 1")
+  await writeFile(path.join(dir, "site", "sub", "index.html"), "sub")
+  await writeFile(path.join(dir, "site", "my file.css"), "body{}")
+  await writeFile(path.join(dir, "site", ".env"), "SECRET=1")
+  await writeFile(path.join(dir, "site", ".git", "config"), "[core]")
+  await writeFile(path.join(dir, "outside.txt"), "outside")
+  const server = await serveLocal(path.join(dir, "site", "index.html"))
+  try {
+    assert.match(server.url, /^http:\/\/127\.0\.0\.1:\d+\/index\.html$/)
+    assert.equal(server.root, path.join(dir, "site"))
+    const get = (p, init) => fetch(`${server.origin}${p}`, init)
+    const page = await get("/index.html")
+    assert.equal(page.status, 200)
+    assert.match(page.headers.get("content-type"), /^text\/html/)
+    assert.equal(page.headers.get("cache-control"), "no-store")
+    assert.match((await get("/app.mjs")).headers.get("content-type"), /^text\/javascript/)
+    assert.equal(await (await get("/sub/")).text(), "sub")
+    assert.equal(await (await get("/my%20file.css")).text(), "body{}")
+    for (const blocked of ["/.env", "/.git/config", "/%2e%2e/outside.txt", "/..%2foutside.txt", "/missing.js"]) assert.equal((await get(blocked)).status, 404, blocked)
+    assert.equal((await get("/index.html", { method: "POST" })).status, 405)
+    const head = await get("/index.html", { method: "HEAD" })
+    assert.equal(head.status, 200)
+    assert.equal(await head.text(), "")
+  } finally {
+    await server.close()
+  }
+  await assert.rejects(fetch(`${server.origin}/index.html`))
+})
+
 const chrome = findChrome()
 test("browser check: screenshots, overflow, dark mode, diff and mockup against real Chrome", { skip: !chrome && "no Chrome installed", timeout: 600000 }, async (t) => {
   const dir = await tmp(t)
@@ -268,6 +302,25 @@ test("browser check: screenshots, overflow, dark mode, diff and mockup against r
   assert.ok(changed.shots[0].diff.box)
   assert.equal(changed.mockup.shot.width, 1280)
   assert.ok(changed.mockup.diff.changedPct > 0 && changed.mockup.diff.hot.length > 0)
+})
+
+test("an ES-module page that file:// blocks renders cleanly when served from its folder", { skip: !chrome && "no Chrome installed", timeout: 300000 }, async (t) => {
+  const dir = await tmp(t)
+  const page = path.join(dir, "index.html")
+  await writeFile(page, '<!doctype html><html lang="en"><head><title>m</title></head><body><main id="out">loading</main><script type="module" src="./app.mjs"></script></body></html>')
+  await writeFile(path.join(dir, "app.mjs"), 'import { label } from "./lib.mjs"\nlocalStorage.setItem("k", "v")\ndocument.getElementById("out").textContent = label + localStorage.getItem("k")')
+  await writeFile(path.join(dir, "lib.mjs"), 'export const label = "ready-"')
+  const plan = [{ viewport: viewportSpecs(["phone"])[0], scheme: "light" }]
+  const blocked = await runCheck({ chrome, url: toUrl(page, false), plan, fullPage: false })
+  assert.ok(blocked.consoleErrors.some((line) => /CORS|ERR_FAILED/.test(line)), JSON.stringify(blocked.consoleErrors))
+  const server = await serveLocal(page)
+  try {
+    const served = await runCheck({ chrome, url: server.url, plan, fullPage: false })
+    assert.deepEqual(served.consoleErrors, [])
+    assert.notEqual(served.shots[0].png, blocked.shots[0].png)
+  } finally {
+    await server.close()
+  }
 })
 
 test("applies to the pinned source: files, plugin registration, guidance; fails closed", async (t) => {

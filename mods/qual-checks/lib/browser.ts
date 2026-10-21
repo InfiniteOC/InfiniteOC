@@ -2,7 +2,9 @@
 // diff, axe-core and an overflow check. Detects an installed Chrome/Chromium/Edge; never installs anything.
 // ponytail: one browser per check, sequential captures; add a pool if checks ever need to be faster.
 import { spawn, spawnSync, type ChildProcess } from "node:child_process"
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, readFile, readFileSync, rmSync, statSync } from "node:fs"
+import http from "node:http"
+import type { AddressInfo } from "node:net"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
@@ -103,6 +105,71 @@ export function toUrl(target: string, network: boolean): string {
   return pathToFileURL(full).href
 }
 
+const TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8", ".cjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+  ".json": "application/json", ".map": "application/json", ".webmanifest": "application/manifest+json",
+  ".txt": "text/plain; charset=utf-8", ".xml": "application/xml", ".svg": "image/svg+xml", ".png": "image/png",
+  ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".avif": "image/avif",
+  ".ico": "image/x-icon", ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".otf": "font/otf",
+  ".wasm": "application/wasm", ".mp4": "video/mp4", ".webm": "video/webm", ".mp3": "audio/mpeg", ".wav": "audio/wav",
+}
+
+export interface LocalServer {
+  /** The page's http URL. */
+  url: string
+  /** `http://127.0.0.1:PORT`, to map messages back to file paths. */
+  origin: string
+  /** The served folder: the HTML file's own directory. */
+  root: string
+  close: () => Promise<void>
+}
+
+/**
+ * Serve an HTML file's folder on 127.0.0.1 for the length of one check. Under file:// Chrome blocks ES
+ * module scripts and fetch, so a page that works in any static server rendered broken. Only GET and
+ * HEAD, only files inside the folder, never dotfiles or dot-folders (.env, .git), no caching.
+ */
+export async function serveLocal(file: string): Promise<LocalServer> {
+  const root = path.dirname(path.resolve(file))
+  const server = http.createServer((req, res) => {
+    if (req.method !== "GET" && req.method !== "HEAD") return void res.writeHead(405).end()
+    let pathname: string
+    try {
+      pathname = decodeURIComponent(new URL(req.url ?? "/", "http://local").pathname)
+    } catch {
+      return void res.writeHead(400).end()
+    }
+    if (pathname.includes("\0") || pathname.split("/").some((part) => part.startsWith("."))) return void res.writeHead(404).end()
+    let full = path.join(root, pathname)
+    if (full !== root && !full.startsWith(root + path.sep)) return void res.writeHead(404).end()
+    try {
+      if (statSync(full).isDirectory()) full = path.join(full, "index.html")
+    } catch {}
+    readFile(full, (error, body) => {
+      if (error) return void res.writeHead(404).end()
+      res.writeHead(200, { "content-type": TYPES[path.extname(full).toLowerCase()] ?? "application/octet-stream", "cache-control": "no-store" })
+      res.end(req.method === "HEAD" ? undefined : body)
+    })
+  })
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(0, "127.0.0.1", () => resolve())
+  })
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  const relative = path.relative(root, path.resolve(file)).split(path.sep).map(encodeURIComponent).join("/")
+  return {
+    url: `${origin}/${relative}`,
+    origin,
+    root,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.close(() => resolve())
+        server.closeAllConnections?.()
+      }),
+  }
+}
+
 const WS: any = (globalThis as any).WebSocket
 
 class Cdp {
@@ -172,11 +239,18 @@ async function launch(chrome: string) {
     ...(process.platform === "linux" && process.getuid?.() === 0 ? ["--no-sandbox"] : []),
     "about:blank",
   ], { stdio: ["ignore", "ignore", "pipe"] })
-  const stop = () => {
-    child.kill("SIGKILL")
+  const remove = () => {
     try {
       rmSync(profile, { recursive: true, force: true })
     } catch {}
+  }
+  const stop = () => {
+    child.kill("SIGKILL")
+    remove()
+    // Chrome's helper processes can still write to the profile for a moment after the kill, which left
+    // profile folders behind; remove it again once the browser has exited.
+    if (child.exitCode === null && child.signalCode === null) child.once("exit", () => setTimeout(remove, 200))
+    else setTimeout(remove, 200)
   }
   const endpoint = await new Promise<string>((resolve, reject) => {
     let log = ""
