@@ -450,6 +450,13 @@ export const OFFENDERS = `(() => {
   return found.sort((a, b) => b.right - a.right).slice(0, 3).map((f) => f.at + " (" + f.width + "px wide, right edge at " + f.right + "px)")
 })()`
 
+// A data-entry page (it has a form) whose lists, tables and grids all hold fewer than two items.
+export const EMPTY_LISTS = `(() => {
+  if (!document.querySelector("form")) return false
+  const lists = [...document.querySelectorAll("ul, ol, tbody, [role=list], [role=grid], [role=table]")]
+  return lists.length > 0 && lists.every((list) => list.children.length < 2)
+})()`
+
 const dataUrl = (png: string) => `data:image/png;base64,${png}`
 const mimeOf = (file: string) => (/\.jpe?g$/i.test(file) ? "image/jpeg" : /\.webp$/i.test(file) ? "image/webp" : "image/png")
 
@@ -484,11 +491,17 @@ export interface CheckOptions {
   /** Previously saved PNG (base64) for a viewport/scheme label, to diff against. */
   baseline?: (label: string) => string | undefined
   mockup?: { file: string; base64: string }
+  /** localStorage entries set before the page's own scripts run, on every load. */
+  storage?: Record<string, string>
+  /** Script run after each load and before measuring (may be async), e.g. to add list items. */
+  setup?: string
 }
 export interface CheckResult {
   shots: Shot[]
   violations: Violation[]
   consoleErrors: string[]
+  /** A page with a form whose lists all had fewer than two items, so row checks had nothing to test. */
+  emptyLists?: boolean
   mockup?: { shot: Shot; diff: Diff }
 }
 
@@ -503,6 +516,10 @@ export async function runCheck(opts: CheckOptions): Promise<CheckResult> {
       else if (method === "Runtime.consoleAPICalled" && params.type === "error") consoleErrors.push(params.args.map((arg: { value?: unknown; description?: string }) => arg.value ?? arg.description).join(" "))
     })
     for (const domain of ["Page", "Runtime", "Log"]) await cdp.send(`${domain}.enable`)
+    if (opts.storage && Object.keys(opts.storage).length)
+      await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+        source: `try { if (/^(https?|file):$/.test(location.protocol)) for (const [k, v] of Object.entries(${JSON.stringify(opts.storage)})) localStorage.setItem(k, v) } catch {}`,
+      })
     const evaluate = async (expression: string) => {
       const result = await cdp.send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true })
       if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text)
@@ -512,12 +529,23 @@ export async function runCheck(opts: CheckOptions): Promise<CheckResult> {
       // Not mobile emulation: a page without a viewport meta tag would be laid out at 980px and its overflow at phone width would go unseen.
       await cdp.send("Emulation.setDeviceMetricsOverride", { width: viewport.width, height: height ?? viewport.height, deviceScaleFactor: 1, mobile: false })
       await cdp.send("Emulation.setEmulatedMedia", { media: "screen", features: [{ name: "prefers-color-scheme", value: scheme }] })
+      // A filled state starts the same way at every width: a setup that adds items would otherwise pile up.
+      const origin = /^https?:/i.test(opts.url) ? new URL(opts.url).origin : undefined
+      if (origin && (opts.setup || opts.storage))
+        await cdp.send("Storage.clearDataForOrigin", { origin, storageTypes: "local_storage,session_storage,indexeddb" }).catch(() => {})
       const loaded = cdp.waitFor("Page.loadEventFired", 20000)
       const nav = await cdp.send("Page.navigate", { url: opts.url })
       if (nav.errorText) throw new Error(`Could not load ${opts.url}: ${nav.errorText}`)
       if (!(await loaded)) throw new Error(`Timed out loading ${opts.url}`)
       // Fonts and a short settle for entry animations and client rendering.
       await evaluate("document.fonts ? document.fonts.ready.then(() => new Promise((r) => setTimeout(r, 400))) : new Promise((r) => setTimeout(r, 400))")
+      if (opts.setup) {
+        try {
+          await evaluate(`(async () => {\n${opts.setup}\n})().then(() => new Promise((r) => setTimeout(r, 300)))`)
+        } catch (error) {
+          throw new Error(`The setup script failed: ${(error instanceof Error ? error.message : String(error)).split("\n")[0]}`)
+        }
+      }
       const overflow: number = await evaluate("Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0) - window.innerWidth")
       const offenders: string[] | undefined = overflow > 1 ? await evaluate(OFFENDERS) : undefined
       const content: number = await evaluate("Math.ceil(Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0))")
@@ -528,9 +556,11 @@ export async function runCheck(opts: CheckOptions): Promise<CheckResult> {
 
     const shots: Shot[] = []
     const violations = new Map<string, Violation>()
+    let emptyLists: boolean | undefined
     for (const { viewport, scheme } of opts.plan) {
       const shot = await capture(viewport, scheme)
       shots.push(shot)
+      emptyLists ??= await evaluate(EMPTY_LISTS)
       let found: Array<{ id: string; impact: string; help: string; nodes: string[] }> = []
       if (opts.axeSource) {
         await evaluate(readFileSync(opts.axeSource, "utf8"))
@@ -566,7 +596,7 @@ export async function runCheck(opts: CheckOptions): Promise<CheckResult> {
       const shot = await capture({ name: `mockup-${width}px`, width, height: Math.min(size[1], MAX_HEIGHT), mobile: width < 500 }, "light", Math.min(size[1], MAX_HEIGHT))
       mockup = { shot, diff: await diffs(shot.png, opts.mockup.base64, mimeOf(opts.mockup.file)) }
     }
-    return { shots, violations: [...violations.values()], consoleErrors: [...new Set(consoleErrors)].slice(0, 8), mockup }
+    return { shots, violations: [...violations.values()], consoleErrors: [...new Set(consoleErrors)].slice(0, 8), mockup, emptyLists: emptyLists || undefined }
   } finally {
     cdp.close()
     stop()
@@ -580,6 +610,8 @@ export function formatReport(result: CheckResult, axe: "ran" | "missing" | "basi
   out.push(overflowing.length ? `Horizontal overflow (page wider than the viewport): ${overflowing.map((shot) => `${shot.label} by ${shot.overflow}px`).join(", ")}. Fix it.` : "No horizontal overflow at any width.")
   const culprits = overflowing.find((shot) => shot.offenders?.length)
   if (culprits) out.push(`  Sticking out at ${culprits.label}: ${culprits.offenders!.join("; ")}`)
+  if (result.emptyLists)
+    out.push("Lists on the page are empty, so row checks (row overflow, row action names) had nothing to test. Check a filled list too: pass storage (localStorage entries the app loads) or setup (a script that adds items).")
   if (result.consoleErrors.length) out.push(`Console errors:\n${result.consoleErrors.map((line) => `  ${line}`).join("\n")}`)
   const source = axe === "basic" ? "built-in checks; add axe-core as a devDependency for a full audit" : "axe-core"
   if (axe === "off") {}
