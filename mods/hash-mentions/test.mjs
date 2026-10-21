@@ -53,14 +53,18 @@ test("anchors are unique in the pinned upstream and apply in order", { skip: !ha
   const hash = /export function hashTriggerIndex[\s\S]*?\n}\n/.exec(display)?.[0]
   assert.ok(at && hash)
   assert.equal(hash.replaceAll("#", "@"), at.replace("mentionTriggerIndex", "hashTriggerIndex"))
-  assert.match(complete, /const triggerChar = displayCharAt\(props\.value, store\.index\)/)
+  // The trigger character is read from the input at the popup's stored editor offset.
+  assert.match(complete, /const triggerAt = \(\) => props\.input\(\)\.getTextRange\(store\.index, store\.index \+ 1\)/)
+  assert.match(complete, /const triggerChar = store\.visible === "reference" \? triggerAt\(\) : undefined/)
   assert.match(complete, /filesOnly \? fileSearch\.options : \[\]/)
   // Reference mode never falls through to slash commands, even at index 0.
   assert.match(complete, /store\.visible === "reference"\n          \? \[\]/)
-  assert.match(complete, /referenceMatch = createMemo\(\(\) => \{\n    if \(store\.visible !== "reference" \|\| displayCharAt\(props\.value, store\.index\) !== "@"\) return/)
-  assert.match(complete, /const prefix = displayCharAt\(props\.value, store\.index\) === "#" \? "#" : "@"/)
-  assert.match(complete, /const expandPrefix = displayCharAt\(props\.value, store\.index\) === "#" \? "#" : "@"/)
-  assert.match(complete, /const at = mentionTriggerIndex\(value, offset\)/)
+  assert.match(complete, /referenceMatch = createMemo\(\(\) => \{\n    if \(store\.visible !== "reference" \|\| triggerAt\(\) !== "@"\) return/)
+  assert.match(complete, /const prefix = triggerAt\(\) === "#" \? "#" : "@"/)
+  // Read before deleteRange removes the trigger from the input.
+  assert.match(complete, /const expandPrefix = triggerAt\(\) === "#" \? "#" : "@"\n    input\.deleteRange/)
+  assert.match(complete, /const at = mentionTriggerIndex\(beforeCursor, renderer\.widthMethod\)\n        const hash = hashTriggerIndex\(beforeCursor, renderer\.widthMethod\)/)
+  assert.doesNotMatch(complete, /displayCharAt/)
   assert.match(complete, /"No matching files" : "No matching skills, agents, or references"|"No matching files"\n      : "No matching skills, agents, or references"/)
 })
 

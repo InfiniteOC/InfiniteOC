@@ -41,7 +41,7 @@ test("fallback also takes over quota 429s that the runner would not retry", asyn
 })
 
 test("fallback only for rate limits and server errors", { skip }, () => {
-  for (const error of [{ status: 429 }, { status: 500 }, { status: 503 }, { type: "rate_limit_exceeded" }, { type: "overloaded_error" }]) assert.ok(lib.failsOver(error), JSON.stringify(error))
+  for (const error of [{ status: 429 }, { status: 500 }, { status: 503 }, { type: "rate_limit_exceeded" }, { type: "overloaded_error" }, { type: "provider.free-limit" }]) assert.ok(lib.failsOver(error), JSON.stringify(error))
   for (const error of [{ status: 401 }, { status: 400 }, { status: 404 }, { type: "invalid_request" }, {}]) assert.ok(!lib.failsOver(error), JSON.stringify(error))
 })
 
