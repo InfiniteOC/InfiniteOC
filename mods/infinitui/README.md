@@ -26,6 +26,7 @@ Nothing ever leaves you without a UI:
 | Go missing or `go build` fails | classic UI, with a startup notice saying why |
 | `INFINITEOC_TUI=classic` or `"tui": "classic"` in `~/.config/infiniteoc/settings.json` | classic UI |
 | `/classic` inside InfiniTUI | exits 75; the classic UI opens on the **same session** |
+| `/connect`, `/apps`, `/settings`, `/account` | the same, and the classic UI opens that dialog at once |
 | InfiniTUI panics | crash report in `~/.local/state/opencode/infiniteoc/infinitui-crash.log`, then the classic UI |
 | last-good fallback launch (no hooks run) | classic UI |
 
@@ -110,8 +111,10 @@ What you get beyond the classic UI:
   opendaemon notices, `INFINITEOC_NOTICE`, and `tui.toast.show` / `tui.session.select` / `tui.prompt.append` /
   `tui.command.execute` events from server plugins.
 
-Classic-UI features that only exist as OpenTUI code (`/apps`, `/account`, `/settings`' InfiniteOC dialog,
-`/health`, `/import`, `/find`, `/display`, `/voice`, tabs) are one `/classic` away.
+Classic-UI features that only exist as OpenTUI code are one `/classic` away (`/health`, `/import`, `/find`,
+`/display`, `/voice`, tabs). `/connect`, `/apps`, `/settings` and `/account` do that by themselves: InfiniTUI
+hands the session and the command over (second line of the hand-off file), and the classic UI runs the command
+once its plugins have registered it.
 
 State it shares with the classic UI: `~/.local/state/opencode/model.json` (recent/favourite models, effort per
 model) and `prompt-history.jsonl`. Its own preferences (theme, sidebar, thinking view) live in

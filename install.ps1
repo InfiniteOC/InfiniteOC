@@ -1,13 +1,9 @@
 # InfiniteOC installer for Windows PowerShell (5.1 and 7+).
 #
-# The repository is private: only people the owner invited can install it, and
-# cloning needs credentials. The GitHub CLI is the easiest source of them:
-#   gh auth login
-#   (gh api -H "Accept: application/vnd.github.raw" `
-#      /repos/InfiniteOC/InfiniteOC/contents/install.ps1) | iex   # read it first
+#   irm https://raw.githubusercontent.com/InfiniteOC/InfiniteOC/main/install.ps1 | iex   # read it first
 # or clone first and run the copy you can read:
-#   gh repo clone InfiniteOC/InfiniteOC "$HOME\.infiniteoc"; & "$HOME\.infiniteoc\install.ps1"
-# GH_TOKEN/GITHUB_TOKEN work with gh too. Nothing needs administrator: the
+#   git clone https://github.com/InfiniteOC/InfiniteOC.git "$HOME\.infiniteoc"; & "$HOME\.infiniteoc\install.ps1"
+# Nothing needs administrator: the
 # install directory, the command shims and the PATH entry are all per-user.
 # Read it before running it.
 #
@@ -96,9 +92,9 @@ elseif ($arch -eq "ARM64") { $arch = "arm64" }
 else { Die "unsupported architecture $arch; InfiniteOC runs on x64 and arm64" }
 $Target = "win32-$arch"
 
-# The repository is private, so cloning and updating need credentials. When the
-# GitHub CLI is installed and signed in (gh auth login), wire it into git's
-# credential helper so plain git clone/fetch authenticate; gh uses
+# A private fork or mirror (INFINITEOC_REPO) needs credentials to clone and update.
+# When the GitHub CLI is installed and signed in (gh auth login), wire it into
+# git's credential helper so plain git clone/fetch authenticate; gh uses
 # GH_TOKEN/GITHUB_TOKEN too.
 $gh = Get-Command gh -ErrorAction SilentlyContinue
 if ($gh) {
@@ -118,7 +114,7 @@ if ((Test-Path (Join-Path $Dir ".git")) -and (Test-Path $Dir)) {
   Die "$Dir exists and is not an InfiniteOC checkout; set INFINITEOC_DIR to another path"
 } else {
   $cloned = Step "Cloning $Repo into $Dir" "git" @("clone", "--quiet", "--branch", $Ref, $Repo, "`"$Dir`"")
-  if ($cloned -ne 0) { Die "clone failed: $Repo is private; run 'gh auth login' (then 'gh auth setup-git'), set GH_TOKEN, or set INFINITEOC_REPO to an SSH URL" }
+  if ($cloned -ne 0) { Die "clone failed: check the network; a private fork or mirror needs credentials ('gh auth login', GH_TOKEN, or an SSH URL in INFINITEOC_REPO)" }
 }
 
 # An install is not a development clone: nothing here is ever pushed to the InfiniteOC repository, even when

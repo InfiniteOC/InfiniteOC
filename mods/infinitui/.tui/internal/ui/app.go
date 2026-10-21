@@ -776,12 +776,20 @@ func (a *App) childForBlock(key string) string {
 	return str(parseObj(b.State.Metadata), "sessionID")
 }
 
-// Quit hook for main: whether to hand off to the classic UI.
-func (a *App) writeHandoff() {
+// toClassic quits into the classic UI on this session; command, when set, is a slash command it runs there.
+func (a *App) toClassic(command string) tea.Cmd {
+	a.writeHandoff(command)
+	a.exitCode = ExitClassic
+	a.quitting = true
+	return nil
+}
+
+// Quit hook for main: the session (first line) and the command (second line) the classic UI takes over.
+func (a *App) writeHandoff(command string) {
 	if a.opt.Handoff == "" {
 		return
 	}
-	_ = os.WriteFile(a.opt.Handoff, []byte(a.sessionID), 0o600)
+	_ = os.WriteFile(a.opt.Handoff, []byte(a.sessionID+"\n"+command), 0o600)
 }
 
 // dialogUpdate forwards to the open dialog and closes it when done, unless it opened another one.

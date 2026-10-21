@@ -53,7 +53,10 @@ export function infinituiRun(binary: string, options: InfinituiOptions): Promise
       settled = true
       for (const [signal, handler] of handlers) process.off(signal, handler)
       try {
-        handedOff = readFileSync(handoff, "utf8").trim() || undefined
+        const [session, command] = readFileSync(handoff, "utf8").split("\n").map((line) => line.trim())
+        handedOff = session || undefined
+        // The classic UI runs in this process and runs this slash command once it is registered.
+        if (command) process.env.INFINITEOC_CLASSIC_COMMAND = command
         unlinkSync(handoff)
       } catch {}
       resolve(code)

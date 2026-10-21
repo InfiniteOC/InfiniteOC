@@ -31,9 +31,9 @@ const url =
     ? `https://github.com/${slug}/releases/download/${tag}/infiniteoc-${target}.zip`
     : `https://github.com/${slug}/releases/latest/download/infiniteoc-${target}.zip`)
 
-// The repository is private, so a release asset needs credentials. The GitHub
-// CLI carries them (gh auth login); GH_TOKEN/GITHUB_TOKEN work through gh and
-// as a bearer header for the raw fetch/curl fallbacks.
+// Release assets of the public repository download without credentials; a private
+// fork or mirror needs them. The GitHub CLI carries them (gh auth login);
+// GH_TOKEN/GITHUB_TOKEN work through gh and as a bearer header for fetch/curl.
 const token = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
 const run = (command, argv) => {
   const result = spawnSync(command, argv, { encoding: "utf8" })
