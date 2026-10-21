@@ -1236,8 +1236,10 @@ export const Plugin = define({
         tool.description = [
           tool.description,
           "",
-          "Agents for steps:",
-          ...available.map((agent) => `- ${agent.id}: ${agent.description ?? "Use only when explicitly requested."}`),
+          // The subagent tool in the same request already describes each agent; repeat only the names then.
+          ...(event.tools.subagent
+            ? [`Agents for steps (described in the subagent tool): ${available.map((agent) => agent.id).join(", ")}.`]
+            : ["Agents for steps:", ...available.map((agent) => `- ${agent.id}: ${agent.description ?? "Use only when explicitly requested."}`)]),
           "",
           `Model tiers now: fast = ${current.models.fast}, strong = ${current.models.strong}, default = ${current.models.default}. At most ${current.maxParallel} steps run at once (Claude Code: ${current.claudeParallel}), ${current.maxSteps} steps per workflow after expanding each.`,
           ...(!current.fleet && C.findBinary()
