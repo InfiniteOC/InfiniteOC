@@ -119,7 +119,8 @@ launch rebuilds automatically (or run `node bin/infiniteoc.mjs rebuild`).
 Restart InfiniteOC and execute `/hello-ai`. Test actual behavior; do not call a
 source-text assertion functional proof. Generated files are recorded in
 `.runtime/opencode/infiniteoc-features.json`. The launcher fingerprints the
-framework and mod files, so later launches rebuild changed code. Never edit
+framework and mod files, so later launches rebuild changed code. A mod's own
+`README.md` and `test.mjs` are left out: never read them while building. Never edit
 `.runtime` or `.upstream` to implement persistent features.
 
 ## `/clearall`: closing is not deleting
