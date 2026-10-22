@@ -166,8 +166,13 @@ func (a *App) openPalette() tea.Cmd {
 	for _, f := range a.store.features {
 		items = append(items, PickItem{ID: "feature:" + f.ID, Title: f.Title, Detail: "/" + f.Slash, Category: "InfiniteOC", Value: f.ID, Keywords: f.Description})
 	}
+	classic := map[string]bool{}
+	for _, f := range a.visibleClassicFeatures() {
+		classic[f.Slash] = true
+		items = append(items, PickItem{ID: "classic:" + f.Slash, Title: f.Title, Detail: "/" + f.Slash, Category: nonEmpty(f.Category, "Mods"), Value: f.Slash, Keywords: strings.Join(f.Aliases, " ")})
+	}
 	for _, c := range a.store.commands {
-		if findLocal(c.Name) != nil || a.findFeature(c.Name) != nil {
+		if findLocal(c.Name) != nil || a.findFeature(c.Name) != nil || classic[c.Name] {
 			continue
 		}
 		items = append(items, PickItem{ID: "server:" + c.Name, Title: "/" + c.Name, Detail: firstLine(c.Description), Category: "Commands", Value: c.Name})
@@ -185,6 +190,8 @@ func (a *App) openPalette() tea.Cmd {
 			return c.run(a, "")
 		case strings.HasPrefix(it.ID, "feature:"):
 			return a.runFeature(it.Value.(string), "", "")
+		case strings.HasPrefix(it.ID, "classic:"):
+			return a.toClassic(it.Value.(string))
 		default:
 			a.prompt.SetValue("/" + it.Value.(string) + " ")
 			return a.refreshCompletionOff()

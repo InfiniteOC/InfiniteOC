@@ -38,9 +38,10 @@ export const patches = [
 `],
 ]
 
-// The classic UI runs a slash command InfiniTUI handed over (/connect, /apps, /settings, /account) once it is
-// registered; plugin commands appear after the plugins load. Started only for that dialog
-// (INFINITEOC_CLASSIC_RETURN=1), it exits when the dialog closes, without an epilogue, and InfiniTUI comes back.
+// The classic UI runs a slash command InfiniTUI handed over (/connect, /apps, /settings, /account, and mods' TUI
+// commands) once it is registered; plugin commands appear after the plugins load. Started only for that command
+// (INFINITEOC_CLASSIC_RETURN=1), it exits when its dialog closes or it finishes, without an epilogue, and InfiniTUI
+// comes back.
 export const CLASSIC_COMMAND = ["packages/tui/src/app.tsx", `  const paths = useTuiPaths()
   let highlighted = false
 `, `  const paths = useTuiPaths()
@@ -59,9 +60,10 @@ export const CLASSIC_COMMAND = ["packages/tui/src/app.tsx", `  const paths = use
     )
     if (!command) return
     handedRan = true
-    command.run()
-    // A command that opened no dialog leaves nothing to wait for.
-    if (handedReturn) setTimeout(() => !handedOpened && exit(), 3000)
+    // Mod commands (api.tui.command) return a promise: one that opened no dialog is done when it settles, and its
+    // toast stays readable for a moment before InfiniTUI comes back.
+    const ran = command.run() as unknown
+    if (handedReturn) void Promise.resolve(ran).finally(() => setTimeout(() => !handedOpened && exit(), 3000))
   })
   createEffect(() => {
     const open = dialog.stack.length > 0

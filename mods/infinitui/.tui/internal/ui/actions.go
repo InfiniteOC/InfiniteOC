@@ -708,6 +708,11 @@ func (a *App) submit(v string) tea.Cmd {
 			a.prompt.Reset()
 			return a.runFeature(f.ID, "", args)
 		}
+		if f := a.findClassicFeature(name); f != nil {
+			a.prompt.Remember(text)
+			a.prompt.Reset()
+			return a.toClassic(f.Slash)
+		}
 		if a.hasServerCommand(name) {
 			a.prompt.Remember(text)
 			a.prompt.Reset()
