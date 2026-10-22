@@ -15,15 +15,7 @@ import { loadMods } from "../src/mod-loader.mjs"
 import { scaffoldFeature, checkFeatures, setFeatureEnabled } from "../src/feature-scaffold.mjs"
 import { serve, enableWebUi } from "../src/serve.mjs"
 
-try {
-  const args = process.argv.slice(2)
-  const help = args[0] === "help" || args[0] === "--help"
-  // A bundle made by `infiniteoc host bundle` only runs the web host (node host.mjs).
-  if (!help && args[0] !== "host" && await exists(join(home, "HOST_ONLY"))) throw new Error(`This copy of InfiniteOC only runs the web host: node ${join(home, "host.mjs")} (or npm start). Install InfiniteOC normally to use it in a terminal.`)
-  // Help must still work when infiniteoc.json is broken.
-  const settings = help ? undefined : await config()
-  if (help) {
-    console.log(`InfiniteOC — source-backed OpenCode mod launcher
+const HELP = `InfiniteOC — source-backed OpenCode mod launcher
 
   infiniteoc setup               Fetch dependencies, apply mods, build isolated CLI
   infiniteoc rebuild [--clean]   Reapply mods from pristine source and rebuild (--clean: also reinstall dependencies, drop web UI caches)
@@ -61,7 +53,23 @@ On PATH:       npm link (in ${home}) installs infiniteoc and opendaemon
 Auto-update:   checks every 6h at launch; /settings → InfiniteOC Settings → Updates (auto, ask, off)
 Refused:       uninstall, upgrade (they act on stock OpenCode data)
 Configuration: ${home}/infiniteoc.json
-Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`)
+Mods are trusted local code, not sandboxed. Stock OpenCode is never patched.`
+// The launcher's own commands; everything else goes to OpenCode, which answers --help itself.
+const OWN = ["setup", "rebuild", "wizard", "team", "update", "remote", "serve", "web", "connect", "disconnect", "device", "new", "projects", "host", "graph", "bench", "mods", "mod", "doctor", "feature"]
+
+try {
+  const args = process.argv.slice(2)
+  const help = args[0] === "help" || args[0] === "--help"
+  // `infiniteoc rebuild --help` must explain rebuild, not start one (agents learn commands that way).
+  const ownHelp = !help && OWN.includes(args[0]) && args.slice(1, args.includes("--") ? args.indexOf("--") : undefined).some(arg => arg === "--help" || arg === "-h")
+  // A bundle made by `infiniteoc host bundle` only runs the web host (node host.mjs).
+  if (!help && !ownHelp && args[0] !== "host" && await exists(join(home, "HOST_ONLY"))) throw new Error(`This copy of InfiniteOC only runs the web host: node ${join(home, "host.mjs")} (or npm start). Install InfiniteOC normally to use it in a terminal.`)
+  // Help must still work when infiniteoc.json is broken.
+  const settings = help || ownHelp ? undefined : await config()
+  if (help) {
+    console.log(HELP)
+  } else if (ownHelp) {
+    console.log(HELP.split("\n").filter(line => line.startsWith(`  infiniteoc ${args[0]} `)).join("\n"))
   } else if (args[0] === "feature") {
     const repo = args.includes("--repo")
     const [, action, id, ...extra] = args.filter(arg => arg !== "--repo")
