@@ -110,10 +110,15 @@ export const throttled = (error: { status?: number; type?: string; message?: str
   exhausted(error) ||
   /rate.?limit|too many requests|overload|unavailable|capacity/i.test(`${error.type ?? ""} ${error.message ?? ""}`)
 
-/** A request-rate limit (429, "rate limit exceeded"): usually counted per account, not per model. */
+/** A request-rate limit (429, "rate limit exceeded"): usually counted per account, not per model. A spent allowance is not one. */
 export const rateLimit = (error: { status?: number; type?: string; message?: string }) =>
-  error.status === 429 || /rate.?limit|too many requests/i.test(`${error.type ?? ""} ${error.message ?? ""}`)
+  !exhausted(error) && (error.status === 429 || /rate.?limit|too many requests/i.test(`${error.type ?? ""} ${error.message ?? ""}`))
 
-/** An exhausted quota, balance or credit (seen: agentrouter 403 "pre-consume quota failed"). */
+/**
+ * An exhausted quota, balance, credit or free allowance. Seen: agentrouter 403 "pre-consume quota failed"; OpenCode
+ * Zen 429 provider.free-limit "Free usage limit reached" (retry-after about 8 hours, and per model: the other free
+ * models still answer).
+ */
 export const exhausted = (error: { status?: number; type?: string; message?: string }) =>
-  error.status === 402 || /quota|insufficient (balance|credit|funds)|credit balance|billing/i.test(`${error.type ?? ""} ${error.message ?? ""}`)
+  error.status === 402 ||
+  /quota|free.?limit|usage limit|insufficient (balance|credit|funds)|credit balance|billing/i.test(`${error.type ?? ""} ${error.message ?? ""}`)
