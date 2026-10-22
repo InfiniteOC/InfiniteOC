@@ -18,7 +18,9 @@ export { checkSocket, daemonPaths, socketLimit }
 const safeChmod = async (file, mode) => { if (!isWindows) await chmod(file, mode) }
 
 // The one ignore rule, shared with the launcher fingerprint: dependencies,
-// dotfiles (.git, .DS_Store, .opendaemon, .runtime, vim swaps) and editor/log litter.
+// dotfiles (.git, .DS_Store, .opendaemon, .runtime, vim swaps) and editor/log litter,
+// plus a mod's own README.md and test.mjs (at the tree root only): they never reach
+// the build, so editing them must not cost every install a rebuild.
 // Paths feed the hash relative to the tree root, so identical checkouts in
 // different directories share a fingerprint (portable installs, prebuilt
 // binaries). Note: this changes every fingerprint once; the next launch
@@ -26,6 +28,7 @@ const safeChmod = async (file, mode) => { if (!isWindows) await chmod(file, mode
 export async function digestTree(directory, hash, base = directory, cache = fileDigests) {
   for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
     if (/^(?:node_modules$|\.)|~$|^#.*#$|\.(?:log|tmp)$/.test(entry.name)) continue
+    if (directory === base && (entry.name === "README.md" || entry.name === "test.mjs")) continue
     const file = path.join(directory, entry.name)
     if (entry.isDirectory()) await digestTree(file, hash, base, cache)
     else if (entry.isFile()) hash.update(path.relative(base, file)).update("\0").update(await fileDigest(file, cache)).update("\n")

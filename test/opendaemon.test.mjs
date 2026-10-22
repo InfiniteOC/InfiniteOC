@@ -218,8 +218,15 @@ test("mods digest ignores OS/editor litter but tracks real edits", async t => {
   const before = await modsDigest(base)
   for (const name of [".DS_Store", ".x.swp", "x~", "#x#"]) await writeFile(path.join(base, "mods/test", name), "litter")
   assert.equal(await modsDigest(base), before)
+  // A mod's own README.md and test.mjs never reach the build; a README deeper in the mod may be shipped content.
+  for (const name of ["README.md", "test.mjs"]) await writeFile(path.join(base, "mods/test", name), "docs and tests")
+  assert.equal(await modsDigest(base), before)
+  await mkdir(path.join(base, "mods/test/docs"))
+  await writeFile(path.join(base, "mods/test/docs/README.md"), "shipped")
+  const nested = await modsDigest(base)
+  assert.notEqual(nested, before)
   await writeFile(path.join(base, "mods/test/index.mjs"), "edited")
-  assert.notEqual(await modsDigest(base), before)
+  assert.notEqual(await modsDigest(base), nested)
 })
 test("file digests come from the stat cache when unchanged and still catch same-size edits", async t => {
   const dir = await mkdtemp(path.join(tmpdir(), "iod-digest-"))
