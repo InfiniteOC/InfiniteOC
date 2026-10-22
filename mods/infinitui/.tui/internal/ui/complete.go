@@ -125,6 +125,13 @@ func (c *completion) build(a *App) {
 			seen[f.Slash] = true
 			pool = append(pool, compItem{label: "/" + f.Slash, detail: f.Title, insert: "/" + f.Slash, kind: "command"})
 		}
+		for _, f := range a.visibleClassicFeatures() {
+			if seen[f.Slash] {
+				continue
+			}
+			seen[f.Slash] = true
+			pool = append(pool, compItem{label: "/" + f.Slash, detail: f.Title, insert: "/" + f.Slash, kind: "command"})
+		}
 		for _, sc := range a.store.commands {
 			if seen[sc.Name] {
 				continue
