@@ -88,7 +88,7 @@ first version took 45 s. Where the time went, and what changed:
 | Cost | Measured | Change |
 | --- | --- | --- |
 | Git snapshots | each model step captured the work tree twice (8 git processes; `ls-files --others` walks it all): ~80% of the server's time per step, 758 ms per tool round trip at 16 parallel | read-only steps (agents that cannot edit: explore, researcher, reviewer) skip them; `session/runner/step.ts` patch. 200 instant steps: 16.5 s → 3.7 s |
-| Provider throttling | the free DeepSeek endpoint answered 12 of 16 parallel requests with 503; the retry backoff turned 3 s into 17-40 s | per-model limits learned from 429/5xx/overload (`pool.ts`): halved once per burst, +1 per `cap` successes; a 5-minute pause for an exhausted quota; a rate limit (429, "rate limit exceeded") also pauses the provider's other pool members, since the free OpenCode models share one |
+| Provider throttling | the free DeepSeek endpoint answered 12 of 16 parallel requests with 503; the retry backoff turned 3 s into 17-40 s | per-model limits learned from 429/5xx/overload (`pool.ts`): halved once per burst, +1 per `cap` successes; a 5-minute pause for an exhausted quota or free allowance (the step moves to another member or a free model with its own allowance); a rate limit (429, "rate limit exceeded") also pauses the provider's other pool members, since the free OpenCode models share one |
 | Failed items | a rate limit sent as an error is final: the item failed, and with it everything after the group | a pooled fan-out item that fails is queued again (twice at most) and placed with what was learned (in a measured run 5 of 34 moved to Claude Code); fan-out items are best effort (`optional` unless `optional: false`) |
 | Slow or failing models | 9 models at 16 parallel: 2.8 s to 100 s, changing within the hour | a tier can be a pool (`"a/x, b/y"`): each step goes to the member expected to finish it first, from learned step times (kept for a day in `model-speeds.json`), queue-aware so a full fast member beats an idle slow one; a throttled step moves to another member at once |
 | Stragglers | median step 2.5 s, slowest 16.8 s | a read-only fan-out item running 2.5 × its siblings' median (at least 4 s) gets a backup run on another member; the first to finish wins. A 30 s straggler: 30 s → 4.1 s |
@@ -136,6 +136,11 @@ Delegation goes through workflows by default rather than by exception:
   with nowhere to go (and for a fleet orchestrator) the retry waits `Pool.rateLimitDelay`: 5 s doubling to 60 s,
   ±20%, never under the provider's retry-after, about 7 minutes over the 10 retries. The model and its same-provider
   pool members pause that long, so new steps do not start into the limit.
+- **A spent allowance moves the step.** OpenCode Zen's free limit ("Free usage limit reached", a 429 of type
+  `provider.free-limit` that lasts hours) and other quotas are final upstream and per model, not a rate limit. The
+  step moves to another pool member or, without a pool, to a free model with an allowance of its own (`FREE_POOL`
+  in `settings.ts`, the ones available); the run's waiting steps on that model may start there too, and the model
+  pauses for 5 minutes. Before this, every step of a workflow on a spent free model failed after one request.
 
 For speed: up to 8 steps run at once by default (`maxParallel`, up to 64), search/summarize steps run on the fast model, and the
 guidance tells the agent to start with `wait: true` when the result is the only thing it needs next, which returns
