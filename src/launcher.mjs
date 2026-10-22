@@ -434,6 +434,9 @@ export async function launch(args, settings, options = {}) {
     await watching
     const crash = isCrash(code, { tui: !!tty }) ? await writeCrashReport({ home, code, args: context.args, env: context.env, socket: context.env.INFINITEOC_DAEMON_SOCKET, manifest: prepared.manifest, startedAt }).catch(() => undefined) : undefined
     if (tty && code > 128 && ![129, 130, 143].includes(code)) {
+      // InfiniTUI (or a classic dialog it opened) notices within 100 ms that its parent died and restores the terminal
+      // itself; leaving the alternate screen moves the cursor back, so it must be done before this restores and prints.
+      await new Promise(resolve => setTimeout(resolve, 300))
       spawnSync("stty", [tty], { stdio: ["inherit", "ignore", "ignore"] })
       // Main screen, cursor on, mouse/focus/paste/color-scheme reporting off, kitty keyboard flags popped, modifyOtherKeys off, any synchronized frame ended.
       process.stdout.write("\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1004l\x1b[?2004l\x1b[<u\x1b[>4;0m\x1b[?2031l\x1b[?2026l")

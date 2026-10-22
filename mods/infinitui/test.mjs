@@ -61,6 +61,9 @@ test("anchors are unique in the pinned upstream", { skip: !existsSync(upstream) 
   // Started for one dialog, it leaves when the dialog closes and prints no epilogue.
   assert.match(app, /else if \(handedOpened\) exit\(\)/)
   assert.match(app, /result\.epilogue && process\.env\.INFINITEOC_CLASSIC_RETURN !== "1"/)
+  // It also leaves if the process that started it (and holds the server) dies; onCleanup is already imported.
+  assert.match(app, /process\.kill\(handedParent, 0\)/)
+  assert.match(app, /\bonCleanup,/)
 })
 
 test("wantsInfinitui: interactive launches only, with a classic opt-out", async (t) => {
@@ -111,13 +114,14 @@ test("infinituiRun passes the server and args, returns the exit code, and falls 
   const { dir, launch } = await loadLaunch(t)
   const out = path.join(dir, "out.txt")
   const fake = path.join(dir, "fake-tui")
-  await writeFile(fake, `#!/bin/sh\necho "$INFINITUI_SERVER_URL $INFINITUI_SERVER_PASSWORD \${OPENCODE_PASSWORD:-none} $*" > "${out}"\nexit 3\n`)
+  await writeFile(fake, `#!/bin/sh\necho "$INFINITUI_SERVER_URL $INFINITUI_SERVER_PASSWORD \${OPENCODE_PASSWORD:-none} $INFINITUI_PARENT_PID $*" > "${out}"\nexit 3\n`)
   await chmod(fake, 0o755)
   process.env.OPENCODE_PASSWORD = "leak"
   t.after(() => delete process.env.OPENCODE_PASSWORD)
   const code = await launch.infinituiRun(fake, { url: "http://127.0.0.1:9", password: "pw", version: "x", continue: true, prompt: "hi there", auto: true })
   assert.equal(code, 3)
-  assert.equal((await readFile(out, "utf8")).trim(), "http://127.0.0.1:9 pw none --continue --prompt hi there --auto")
+  // The TUI watches this process (the server's lease holder) and quits if it dies.
+  assert.equal((await readFile(out, "utf8")).trim(), `http://127.0.0.1:9 pw none ${process.pid} --continue --prompt hi there --auto`)
   assert.equal(launch.infinituiHandoff(), undefined)
   assert.equal(await launch.infinituiRun(path.join(dir, "missing"), { url: "u", version: "x" }), launch.INFINITUI_FALLBACK)
   // /classic: the TUI names its session in the hand-off file before exiting 75.
@@ -138,14 +142,14 @@ test("/connect and the other classic-only dialogs run in a classic client of the
   const tui = path.join(dir, "tui")
   await writeFile(tui, `#!/bin/sh\necho "$*" >> "${runs}"\nif [ "$(wc -l < "${runs}")" -eq 1 ]; then printf 'ses_handed\\nconnect' > "$INFINITUI_HANDOFF"; exit 75; fi\nexit 4\n`)
   const classic = path.join(dir, "classic")
-  await writeFile(classic, `#!/bin/sh\necho "$* | $INFINITEOC_CLASSIC_COMMAND $INFINITEOC_CLASSIC_RETURN $OPENCODE_PASSWORD \${INFINITEOC_GO_TUI:-none}" > "${seen}"\n`)
+  await writeFile(classic, `#!/bin/sh\necho "$* | $INFINITEOC_CLASSIC_COMMAND $INFINITEOC_CLASSIC_RETURN $OPENCODE_PASSWORD \${INFINITEOC_GO_TUI:-none} $INFINITEOC_CLASSIC_PARENT" > "${seen}"\n`)
   await chmod(tui, 0o755)
   await chmod(classic, 0o755)
   process.env.INFINITEOC_GO_TUI = tui
   t.after(() => delete process.env.INFINITEOC_GO_TUI)
   const code = await launch.infinituiRun(tui, { url: "http://127.0.0.1:9", password: "pw", version: "x", continue: true, classic: [classic] })
   assert.equal(code, 4)
-  assert.equal((await readFile(seen, "utf8")).trim(), "--server http://127.0.0.1:9 --session ses_handed | connect 1 pw none")
+  assert.equal((await readFile(seen, "utf8")).trim(), `--server http://127.0.0.1:9 --session ses_handed | connect 1 pw none ${process.pid}`)
   // InfiniTUI comes back on the handed-over session, not with --continue again.
   assert.deepEqual((await readFile(runs, "utf8")).trim().split("\n"), ["--continue", "--session ses_handed"])
   assert.equal(process.env.INFINITEOC_CLASSIC_COMMAND, undefined)

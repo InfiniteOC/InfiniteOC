@@ -59,6 +59,7 @@ function classicDialog(command: string, session: string | undefined, options: In
     ...process.env,
     INFINITEOC_CLASSIC_COMMAND: command,
     INFINITEOC_CLASSIC_RETURN: "1",
+    INFINITEOC_CLASSIC_PARENT: String(process.pid),
   }
   delete env.INFINITEOC_GO_TUI
   if (options.password) env.OPENCODE_PASSWORD = options.password
@@ -102,6 +103,8 @@ function runOnce(binary: string, options: InfinituiOptions): Promise<number> {
   }
   const handoff = path.join(tmpdir(), `infinitui-handoff-${process.pid}`)
   env.INFINITUI_HANDOFF = handoff
+  // The TUI quits by itself if this process dies without stopping it (SIGKILL, a crash): the server is gone too.
+  env.INFINITUI_PARENT_PID = String(process.pid)
   delete env.INFINITEOC_GO_TUI
   // The password reaches the TUI only through INFINITUI_SERVER_PASSWORD, which it drops on start.
   delete env.OPENCODE_PASSWORD

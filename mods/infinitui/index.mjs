@@ -69,6 +69,21 @@ export const CLASSIC_COMMAND = ["packages/tui/src/app.tsx", `  const paths = use
     if (open) handedOpened = true
     else if (handedOpened) exit()
   })
+  // The process that started this dialog holds the server: if it dies (SIGKILL, a crash), the terminal is the shell's.
+  const handedParent = Number(process.env.INFINITEOC_CLASSIC_PARENT)
+  delete process.env.INFINITEOC_CLASSIC_PARENT
+  if (handedReturn && handedParent > 0) {
+    const parentWatch = setInterval(() => {
+      try {
+        process.kill(handedParent, 0)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") return
+        clearInterval(parentWatch)
+        exit()
+      }
+    }, 100)
+    onCleanup(() => clearInterval(parentWatch))
+  }
 `]
 export const QUIET_EPILOGUE = ["packages/tui/src/app.tsx", `    if (result.epilogue) process.stdout.write(result.epilogue + "\\n")`, `    // InfiniteOC infinitui: a classic UI started for one dialog hands the terminal straight back to InfiniTUI.
     if (result.epilogue && process.env.INFINITEOC_CLASSIC_RETURN !== "1") process.stdout.write(result.epilogue + "\\n")`]
