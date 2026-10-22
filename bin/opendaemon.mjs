@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { daemonPaths, startDaemon, ensureDaemon, checkSocket } from "../src/opendaemon.mjs"
+import { daemonPaths, startDaemon, ensureDaemon, stopDaemon, checkSocket } from "../src/opendaemon.mjs"
 import { daemonRequest } from "../src/daemon-client.mjs"
 import { readFile } from "node:fs/promises"
 
@@ -22,18 +22,6 @@ function summary(status) {
     "recent events:",
     ...status.events.slice(-5).map(event => `  ${line(event)}`),
   ].join("\n")
-}
-async function stop(socket) {
-  let pid
-  try { ({ pid } = await daemonRequest(socket, "GET", "/status")) } catch (error) { if (gone(error)) return; throw error }
-  // Signal exactly the daemon's own pid; 0, -1 and 1 would hit a process group, everything or init.
-  if (!Number.isInteger(pid) || pid <= 1) throw new Error("opendaemon reported an invalid pid")
-  process.kill(pid, "SIGTERM")
-  for (const deadline = Date.now() + 5000; Date.now() < deadline;) {
-    await sleep(100)
-    try { await daemonRequest(socket, "GET", "/status", undefined, 1000) } catch (error) { if (gone(error)) return pid }
-  }
-  throw new Error(`opendaemon (pid ${pid}) did not stop within 5s`)
 }
 
 try {
@@ -91,8 +79,8 @@ cannot automatically undo side effects.`)
       args.unshift(process.env.INFINITEOC_UI_CLIENT)
     }
     if (command === "status") show(await daemonRequest(socket, "GET", "/status"))
-    else if (command === "stop") { const pid = await stop(socket); console.log(pid ? `opendaemon stopped (pid ${pid})` : "opendaemon is not running") }
-    else if (command === "restart") { await stop(socket); show(await daemonRequest((await ensureDaemon(base)).socket, "GET", "/status")) }
+    else if (command === "stop") { const pid = await stopDaemon(socket); console.log(pid ? `opendaemon stopped (pid ${pid})` : "opendaemon is not running") }
+    else if (command === "restart") { await stopDaemon(socket); show(await daemonRequest((await ensureDaemon(base)).socket, "GET", "/status")) }
     else if (command === "reload") console.log(JSON.stringify(await daemonRequest(socket, "POST", "/reload", {}), null, 2))
     else if (command === "notify") console.log(JSON.stringify(await daemonRequest(socket, "POST", "/message", { action: "notify", text: args.join(" ") }), null, 2))
     else if (command === "close-all-tabs") console.log(JSON.stringify(await daemonRequest(socket, "POST", "/message", { action: "close-all-tabs" }), null, 2))

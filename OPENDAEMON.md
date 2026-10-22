@@ -29,8 +29,10 @@ opendaemon start | stop | restart | serve
 
 `stop` sends SIGTERM to the pid the daemon reports (only that pid) and waits for
 its socket to close; `restart` is stop plus start. Both end only the daemon: UIs
-and agents keep running and reconnect, and temporary overlays are dropped.
-`serve` runs in the foreground for diagnostics/service managers. `--home PATH`
+and agents keep running and reconnect, and temporary overlays are dropped. After an
+update changes the daemon's own code (`src/`, `bin/opendaemon.mjs`), the next launch
+replaces a running daemon while no UI is connected; with UIs open it waits for a later
+launch. `serve` runs in the foreground for diagnostics/service managers. `--home PATH`
 selects another installation and takes precedence over the
 `INFINITEOC_DAEMON_SOCKET` that launcher-started UIs inherit. No systemd unit is
 installed.

@@ -5,7 +5,7 @@ import { existsSync } from "node:fs"
 import path from "node:path"
 import { tmpdir } from "node:os"
 import { createHash } from "node:crypto"
-import { startDaemon, ensureDaemon, modsDigest, daemonPaths, socketLimit, fileDigest, digestCache, digestTree } from "../src/opendaemon.mjs"
+import { startDaemon, ensureDaemon, stopDaemon, daemonCode, modsDigest, daemonPaths, socketLimit, fileDigest, digestCache, digestTree } from "../src/opendaemon.mjs"
 import { installDaemonTool } from "../src/opendaemon-tool.mjs"
 import { safeError } from "../src/tui-features.mjs"
 import { daemonRequest } from "../src/daemon-client.mjs"
@@ -271,6 +271,38 @@ test("a persisted digest cache keeps only files still present and reports change
   await digestTree(dir, h1, dir, new Map())
   await digestTree(dir, h2, dir, again)
   assert.equal(h1.digest("hex"), h2.digest("hex"))
+})
+// A stand-in daemon on the socket that reports the given code digest and UI clients, and dies on SIGTERM.
+async function fakeDaemon(t, socket, code, clients) {
+  const { spawn } = await import("node:child_process")
+  const program = `require("node:http").createServer((_, res) => res.end(JSON.stringify({ pid: process.pid, code: ${JSON.stringify(code)}, clients: ${JSON.stringify(clients)} }))).listen(${JSON.stringify(socket)}, () => console.log("ready"))`
+  const child = spawn(process.execPath, ["-e", program], { stdio: ["ignore", "pipe", "inherit"] })
+  t.after(() => child.kill("SIGKILL"))
+  await new Promise(resolve => child.stdout.once("data", resolve))
+  return child
+}
+test("a daemon started before an update is replaced while idle, kept while a UI uses it", { skip: process.platform === "win32" && "unix socket stand-in" }, async t => {
+  const base = await makeBase()
+  const paths = daemonPaths(base)
+  await mkdir(paths.directory, { recursive: true, mode: 0o700 })
+  t.after(async () => { await stopDaemon(paths.socket).catch(() => {}); await rm(base, { recursive: true, force: true }) })
+  const current = await daemonCode()
+  // Current code, or old code with a UI connected: kept.
+  for (const [code, clients] of [[current, {}], ["old", { ui: { seenAt: Date.now() } }]]) {
+    const fake = await fakeDaemon(t, paths.socket, code, clients)
+    await ensureDaemon(base)
+    assert.equal((await daemonRequest(paths.socket, "GET", "/status")).pid, fake.pid)
+    fake.kill("SIGKILL")
+    await new Promise(resolve => fake.once("exit", resolve))
+    await rm(paths.socket, { force: true })
+  }
+  // Old code and no UI: stopped, and a daemon running this checkout's code takes its place.
+  const fake = await fakeDaemon(t, paths.socket, "old", {})
+  await ensureDaemon(base)
+  const status = await daemonRequest(paths.socket, "GET", "/status")
+  assert.notEqual(status.pid, fake.pid)
+  assert.equal(status.code, current)
+  assert.equal(fake.exitCode ?? fake.signalCode, "SIGTERM")
 })
 test("ensureDaemon fails fast when the spawned daemon exits during startup", async t => {
   const base = await mkdtemp(path.join(tmpdir(), "iod-")) // no infiniteoc.json: serve exits at once
