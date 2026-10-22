@@ -172,6 +172,18 @@ test("help works with a broken infiniteoc.json; other commands name the file", a
   assert.ok(mods.stderr.startsWith(`[InfiniteOC] ${path.join(base, "infiniteoc.json")}: `), mods.stderr)
 })
 
+test("--help and -h on InfiniteOC's own commands print their usage and do nothing else", async t => {
+  // A broken infiniteoc.json: a command that went past the help check would fail on it.
+  const base = await install(t, "{ broken")
+  const own = ["setup", "rebuild", "wizard", "team", "update", "remote", "serve", "web", "connect", "disconnect", "device", "new", "projects", "host", "graph", "bench", "mods", "mod", "doctor", "feature"]
+  for (const args of [...own.map(command => [command, "--help"]), ["rebuild", "-h"], ["update", "-h"], ["connect", "github", "--help"]]) {
+    const result = cli(base, args)
+    assert.equal(result.status, 0, `${args.join(" ")}: ${result.stderr}`)
+    const lines = result.stdout.trimEnd().split("\n")
+    assert.ok(lines.every(line => line.startsWith(`  infiniteoc ${args[0]} `)), `${args.join(" ")}: ${result.stdout}`)
+  }
+})
+
 test("uninstall, upgrade and update are refused before anything is prepared", async t => {
   const base = await install(t)
   // The pinned effect parser runs the subcommand after any of its global settings, in each of these spellings.
