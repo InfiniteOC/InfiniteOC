@@ -28,6 +28,7 @@ Nothing ever leaves you without a UI:
 | `/classic` inside InfiniTUI | exits 75; the classic UI opens on the **same session** |
 | `/connect`, `/apps`, `/settings`, `/account` | the dialog opens in a classic client of the same server; when it closes, InfiniTUI comes back on the same session (running work goes on) |
 | InfiniTUI panics | crash report in `~/.local/state/opencode/infiniteoc/infinitui-crash.log`, then the classic UI |
+| the process that started it dies (SIGKILL, a crash) | InfiniTUI, or the classic dialog it opened, quits within 100 ms and gives the terminal back; the launcher then prints the crash report |
 | last-good fallback launch (no hooks run) | classic UI |
 
 `INFINITEOC_TUI=infinitui` forces it on even when settings say classic.

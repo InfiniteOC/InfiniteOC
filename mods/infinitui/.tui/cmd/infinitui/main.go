@@ -111,7 +111,10 @@ func run() (code int) {
 		Animations: os.Getenv("INFINITEOC_BATTERY") != "1" && os.Getenv("INFINITUI_NO_ANIMATIONS") == "",
 	})
 
-	p := tea.NewProgram(app)
+	ctx, stop := context.WithCancelCause(context.Background())
+	defer stop(nil)
+	watchParent(stop)
+	p := tea.NewProgram(app, tea.WithContext(ctx))
 	events := make(chan api.Event, 4096)
 	go client.Stream(app.Context(), events)
 	go pump(app.Context(), events, p)
@@ -124,6 +127,10 @@ func run() (code int) {
 	if _, err := p.Run(); err != nil {
 		if errors.Is(err, tea.ErrProgramPanic) {
 			return crashed(err.Error(), nil)
+		}
+		// Nobody is left to read an exit code or a message; the launcher reports why that process ended.
+		if context.Cause(ctx) == errParentGone {
+			return 1
 		}
 		fmt.Fprintln(os.Stderr, "infinitui:", err)
 		return 1
