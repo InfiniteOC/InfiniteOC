@@ -620,9 +620,14 @@ func (a *App) renderHome(h int) string {
 	block = append(block, where)
 
 	var recent []string
-	for _, ss := range a.recentSessions() {
-		cap := keycaps(fmt.Sprintf("alt+%d", len(recent)+1), false)
-		recent = append(recent, cap+"  "+s.Text.Render(ansi.Truncate(ss.DisplayTitle(), 44, "…"))+s.Subtle.Render("  "+relTime(time.UnixMilli(ss.Time.Updated))))
+	sessions := a.recentSessions()
+	for i, ss := range sessions {
+		cap := keycaps(fmt.Sprintf("alt+%d", i+1), false)
+		mark, title := "  ", s.Text.Render(ansi.Truncate(ss.DisplayTitle(), 44, "…"))
+		if a.homePick == i+1 {
+			mark, title = s.Key.Render("▸ "), s.Key.Render(ansi.Truncate(ss.DisplayTitle(), 44, "…"))
+		}
+		recent = append(recent, mark+cap+"  "+title+s.Subtle.Render("  "+relTime(time.UnixMilli(ss.Time.Updated))))
 	}
 	// Left-align the list as one block so it centres as a unit.
 	rw := 0
@@ -636,8 +641,10 @@ func (a *App) renderHome(h int) string {
 		tip := homeTips[int(a.started.UnixNano()/1e6)%len(homeTips)]
 		block = append(block, "", s.Subtle.Render("tip · ")+s.Muted.Render(tip))
 	}
+	first := -1
 	if len(recent) > 0 && h >= 22 {
-		block = append(block, "", s.Subtle.Render("pick up where you left off · ")+s.Key.Render("ctrl+l"))
+		block = append(block, "", s.Subtle.Render("pick up where you left off · ")+s.Key.Render("↓")+s.Subtle.Render(" or ")+s.Key.Render("ctrl+l"))
+		first = len(block)
 		block = append(block, recent...)
 	}
 
@@ -646,6 +653,11 @@ func (a *App) renderHome(h int) string {
 		maxW = max(maxW, ansi.StringWidth(l))
 	}
 	top := max(0, (h-len(block))/2)
+	// The listed sessions open on a click, or with ↓ and enter.
+	a.homeRows = map[int]string{}
+	for i := 0; first >= 0 && i < len(recent); i++ {
+		a.homeRows[top+first+i] = sessions[i].ID
+	}
 	out := make([]string, 0, h)
 	for i := 0; i < top; i++ {
 		out = append(out, "")
