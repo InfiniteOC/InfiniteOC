@@ -44,6 +44,7 @@ Nothing ever leaves you without a UI:
 | `/` | commands: local ones, server commands, and InfiniteOC views |
 | `@` / `#` | mention agents, skills, references and files / files only (mods/hash-mentions semantics) |
 | `!cmd` | run a shell command in the session |
+| `ctrl+v`, or paste / drag in a file | attach an image or PDF: a clipboard image, or a pasted path or `file://` URL of one (several at once too) becomes an `[Image 1]` chip, sent inline like the classic UI does (20 MB per paste) |
 | `esc` | interrupt; inside a subagent view, back to the parent |
 | `esc esc` | timeline: jump to, rewind to (restores files) or fork from any prompt |
 | `ctrl+c` | clear the prompt → interrupt → (twice) exit |
@@ -80,7 +81,8 @@ What you get beyond the classic UI:
 - Finished turns glow green for a moment (`╰─ ✓ 26s · …`), failures are red cards on the thread, written files show
   as framed code blocks (click to copy), shell output that is a diff keeps its colours, and a new session's title
   types itself into the header when the server names it. The home screen rotates tips and opens recent
-  sessions with `alt+1`…`alt+3`. Reduced motion (`INFINITUI_NO_ANIMATIONS=1`, or on battery via prov-kit) turns
+  sessions with `alt+1`…`alt+3`, a click, or `↓` and `enter` (right Alt, AltGr on many layouts, counts too; Windows
+  Terminal keeps `ctrl+alt+1`…`9` for its tabs, so there AltGr+digit never arrives). Reduced motion (`INFINITUI_NO_ANIMATIONS=1`, or on battery via prov-kit) turns
   every animation into an instant change.
 - Runs of read-only tool calls (reads, searches, listings, fetches) fold into one "Explored · 3 files, 2 searches"
   row; click it to list them. Edits, shell commands and subagents stay on their own rows, with inline

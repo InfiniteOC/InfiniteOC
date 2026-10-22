@@ -89,6 +89,8 @@ type App struct {
 	fadeStart    time.Time
 	lightTerm    bool           // the terminal reported a light background
 	outlineRows  map[int]string // sidebar row -> prompt message ID
+	homeRows     map[int]string // home screen row (from the transcript top) -> recent session ID
+	homePick     int            // recent session picked with ↓ on the home screen, 1-based; 0 is the prompt
 	titleTarget  string         // session title being typed into the header
 	titleShown   int
 	titleSession string
@@ -324,11 +326,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.dialog != nil {
 			cmd := a.dialogUpdate(m)
 			cmds = append(cmds, cmd)
+		} else if a.perm == nil && m.Content == "" {
+			cmds = append(cmds, readClipboard(false))
 		} else if a.perm == nil {
-			text := strings.ReplaceAll(m.Content, "\r\n", "\n")
-			a.prompt.Paste(text)
+			a.pasteText(strings.ReplaceAll(m.Content, "\r\n", "\n"))
 			cmds = append(cmds, a.refreshCompletion())
 		}
+		a.dirty = true
+	case clipboardMsg:
+		cmds = append(cmds, a.clipboardResult(m))
 		a.dirty = true
 	case tea.MouseWheelMsg:
 		if a.dialog != nil {
@@ -509,6 +515,8 @@ func (a *App) treeRoot() string {
 // handleKey is the keyboard router: dialog > permission > form > leader > global > completion > prompt.
 func (a *App) handleKey(k tea.KeyPressMsg) tea.Cmd {
 	ks := k.String()
+	pick := a.homePick // any key but ↑/↓ on the home screen puts the focus back on the prompt
+	a.homePick = 0
 	if a.dialog != nil {
 		if ks == "ctrl+c" && a.dialog.Closable() {
 			a.dialog = nil
@@ -554,6 +562,8 @@ func (a *App) handleKey(k tea.KeyPressMsg) tea.Cmd {
 		}
 	case "ctrl+p":
 		return a.openPalette()
+	case "ctrl+v":
+		return readClipboard(true)
 	case "ctrl+f":
 		return a.toggleFleet()
 	case "ctrl+o":
@@ -623,11 +633,20 @@ func (a *App) handleKey(k tea.KeyPressMsg) tea.Cmd {
 	}
 
 	if a.home() && a.prompt.Value() == "" {
-		switch ks {
-		case "alt+1", "alt+2", "alt+3":
-			if r := a.recentSessions(); int(ks[4]-'1') < len(r) {
-				return a.openSession(r[ks[4]-'1'].ID, false)
-			}
+		recent := a.recentSessions()
+		if i := recentKey(k); i >= 0 && i < len(recent) {
+			return a.openSession(recent[i].ID, false)
+		}
+		// ↓ walks the listed sessions, enter opens one: a way in where the terminal keeps alt+N for itself.
+		switch {
+		case ks == "down" && len(a.homeRows) > 0:
+			a.homePick = min(pick+1, len(a.homeRows))
+			return nil
+		case ks == "up" && pick > 0:
+			a.homePick = pick - 1
+			return nil
+		case ks == "enter" && pick > 0 && pick <= len(recent):
+			return a.openSession(recent[pick-1].ID, false)
 		}
 	}
 	if a.prompt.Value() == "" {
@@ -670,6 +689,21 @@ func (a *App) handleKey(k tea.KeyPressMsg) tea.Cmd {
 	before := a.prompt.Value()
 	cmd := a.prompt.Update(k)
 	return tea.Batch(cmd, a.refreshCompletion(), a.warmOnTyping(before))
+}
+
+// recentKey maps alt+1…alt+3 to 0…2 (-1 for any other key) by modifier and key code rather than by name: right
+// Alt is AltGr on many layouts (Polish, German) and arrives as ctrl+alt, and layouts without digits on the top
+// row report the digit as the base key.
+func recentKey(k tea.KeyPressMsg) int {
+	if k.Mod&tea.ModAlt == 0 || k.Mod&(tea.ModShift|tea.ModMeta|tea.ModSuper|tea.ModHyper) != 0 {
+		return -1
+	}
+	for _, c := range []rune{k.Code, k.BaseCode} {
+		if c >= '1' && c <= '3' {
+			return int(c - '1')
+		}
+	}
+	return -1
 }
 
 func (a *App) leaderKey(ks string) tea.Cmd {
