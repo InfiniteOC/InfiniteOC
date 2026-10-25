@@ -1,0 +1,54 @@
+name: iOS app
+
+on:
+  push:
+    paths: [ios/**, .github/workflows/ios.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write # to publish the pre-release with the .ipa
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build for iPhone, unsigned
+        run: |
+          set -o pipefail
+          xcodebuild -project InfiniteOC.xcodeproj -scheme InfiniteOC -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build | grep -E "error|warning: .*\.swift|BUILD" || true
+          test -d build/Build/Products/Release-iphoneos/InfiniteOC.app
+
+      - name: Package InfiniteOC.ipa
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/InfiniteOC.app Payload/
+          zip -qry InfiniteOC.ipa Payload
+          ls -lh InfiniteOC.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: InfiniteOC-ipa
+          path: ios/InfiniteOC.ipa
+
+      # A pre-release under one moving tag: never "latest", which the installer's prebuilt binaries use.
+      - name: Publish the pre-release
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/ios-app'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete ios-latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create ios-latest InfiniteOC.ipa --prerelease --latest=false --target "$GITHUB_SHA" \
+            --title "InfiniteOC for iPhone (build ${{ github.run_number }})" \
+            --notes "Unsigned. Sign and install it with your own Apple ID (Sideloadly, AltStore or Feather), then add a computer running \`infiniteoc serve\`."
