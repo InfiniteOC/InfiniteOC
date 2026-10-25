@@ -34,4 +34,9 @@ an HTTPS reverse proxy (an `https://` address works too).
 `.github/workflows/ios.yml` builds an unsigned `InfiniteOC.ipa` on every push that touches `ios/` and publishes it
 as the `ios-latest` pre-release. Install it with your own Apple ID through Sideloadly, AltStore or Feather.
 
+On Linux with [xtool](https://xtool.sh) (an iOS SDK from your own `Xcode.xip`, `xtool setup`):
+`cd ios && xtool dev build --configuration release --ipa --sign` writes `xtool/InfiniteOC.ipa` from `Package.swift` and
+`xtool.yml`. With Swift 6.4, xtool 1.23's swiftbuild toolset needs the compiler named: add
+`"path": "/path/to/swiftc"` under `swiftCompiler` in `~/.swiftpm/swift-sdks/darwin.artifactbundle/toolset-swb.json`.
+
 Locally on a Mac: `brew install xcodegen && cd ios && xcodegen generate && open InfiniteOC.xcodeproj`.

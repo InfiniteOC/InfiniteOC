@@ -94,7 +94,7 @@ private struct EmptyServers: View {
     var add: () -> Void
     var body: some View {
         VStack(spacing: 18) {
-            Image("Mark")
+            Theme.mark
                 .resizable()
                 .interpolation(.none)
                 .frame(width: 96, height: 96)

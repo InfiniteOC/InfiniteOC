@@ -1,0 +1,5 @@
+version: 1
+bundleID: dev.infiniteoc.app
+product: InfiniteOC
+infoPath: Support/Info.plist
+iconPath: InfiniteOC/Assets.xcassets/AppIcon.appiconset/icon-1024.png

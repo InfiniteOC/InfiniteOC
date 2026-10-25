@@ -18,6 +18,16 @@ enum Theme {
 
     static let gradient = LinearGradient(colors: [purple, pink], startPoint: .leading, endPoint: .trailing)
 
+    /// The "OC" mark (Resources/mark.png): in the app bundle for Xcode builds, the package's bundle for xtool builds.
+    static var mark: Image {
+        #if SWIFT_PACKAGE
+        let bundle = Bundle.module
+        #else
+        let bundle = Bundle.main
+        #endif
+        return UIImage(named: "mark", in: bundle, with: nil).map(Image.init(uiImage:)) ?? Image(systemName: "infinity")
+    }
+
     static let mono = Font.system(.footnote, design: .monospaced)
     static let monoSmall = Font.system(.caption, design: .monospaced)
 }

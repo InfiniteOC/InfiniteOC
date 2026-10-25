@@ -2,3 +2,7 @@
 build/
 Payload/
 *.ipa
+.build/
+.swiftpm/
+.bsp/
+xtool/

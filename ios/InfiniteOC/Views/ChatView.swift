@@ -59,7 +59,7 @@ struct ChatView: View {
                 if chat.loading { ProgressView() }
                 else if chat.messages.isEmpty && chat.orphanLive.isEmpty {
                     VStack(spacing: 8) {
-                        Image("Mark").resizable().interpolation(.none).frame(width: 56, height: 56)
+                        Theme.mark.resizable().interpolation(.none).frame(width: 56, height: 56)
                             .clipShape(RoundedRectangle(cornerRadius: 13)).opacity(0.85)
                         Text("What should it build?").font(.headline).foregroundStyle(Theme.text)
                         Text("Type a prompt, or / for commands like /goal.").font(.footnote).foregroundStyle(Theme.dim)
