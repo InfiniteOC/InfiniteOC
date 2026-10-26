@@ -26,7 +26,10 @@ Nothing ever leaves you without a UI:
 | Go missing or `go build` fails | classic UI, with a startup notice saying why |
 | `INFINITEOC_TUI=classic` or `"tui": "classic"` in `~/.config/infiniteoc/settings.json` | classic UI |
 | `/classic` inside InfiniTUI | exits 75; the classic UI opens on the **same session** |
+| `/connect`, `/apps`, `/settings`, `/account` | the dialog opens in a classic client of the same server; when it closes, InfiniTUI comes back on the same session (running work goes on) |
+| a mod's TUI command (`/clearall`, `/health`, your `infiniteoc feature new` ones) | listed in InfiniTUI's completion and command palette; it runs in a classic client of the same server the same way, and InfiniTUI comes back when its dialog closes or, without one, 3 s after it finishes |
 | InfiniTUI panics | crash report in `~/.local/state/opencode/infiniteoc/infinitui-crash.log`, then the classic UI |
+| the process that started it dies (SIGKILL, a crash) | InfiniTUI, or the classic dialog it opened, quits within 100 ms and gives the terminal back; the launcher then prints the crash report |
 | last-good fallback launch (no hooks run) | classic UI |
 
 `INFINITEOC_TUI=infinitui` forces it on even when settings say classic.
@@ -41,6 +44,7 @@ Nothing ever leaves you without a UI:
 | `/` | commands: local ones, server commands, and InfiniteOC views |
 | `@` / `#` | mention agents, skills, references and files / files only (mods/hash-mentions semantics) |
 | `!cmd` | run a shell command in the session |
+| `ctrl+v`, or paste / drag in a file | attach an image or PDF: a clipboard image, or a pasted path or `file://` URL of one (several at once too) becomes an `[Image 1]` chip, sent inline like the classic UI does (20 MB per paste) |
 | `esc` | interrupt; inside a subagent view, back to the parent |
 | `esc esc` | timeline: jump to, rewind to (restores files) or fork from any prompt |
 | `ctrl+c` | clear the prompt → interrupt → (twice) exit |
@@ -77,7 +81,8 @@ What you get beyond the classic UI:
 - Finished turns glow green for a moment (`╰─ ✓ 26s · …`), failures are red cards on the thread, written files show
   as framed code blocks (click to copy), shell output that is a diff keeps its colours, and a new session's title
   types itself into the header when the server names it. The home screen rotates tips and opens recent
-  sessions with `alt+1`…`alt+3`. Reduced motion (`INFINITUI_NO_ANIMATIONS=1`, or on battery via prov-kit) turns
+  sessions with `alt+1`…`alt+3`, a click, or `↓` and `enter` (right Alt, AltGr on many layouts, counts too; Windows
+  Terminal keeps `ctrl+alt+1`…`9` for its tabs, so there AltGr+digit never arrives). Reduced motion (`INFINITUI_NO_ANIMATIONS=1`, or on battery via prov-kit) turns
   every animation into an instant change.
 - Runs of read-only tool calls (reads, searches, listings, fetches) fold into one "Explored · 3 files, 2 searches"
   row; click it to list them. Edits, shell commands and subagents stay on their own rows, with inline
@@ -110,8 +115,12 @@ What you get beyond the classic UI:
   opendaemon notices, `INFINITEOC_NOTICE`, and `tui.toast.show` / `tui.session.select` / `tui.prompt.append` /
   `tui.command.execute` events from server plugins.
 
-Classic-UI features that only exist as OpenTUI code (`/apps`, `/account`, `/settings`' InfiniteOC dialog,
-`/health`, `/import`, `/find`, `/display`, `/voice`, tabs) are one `/classic` away.
+Classic-UI features that only exist as OpenTUI code are one `/classic` away (`/health`, `/import`, `/find`,
+`/display`, `/voice`, tabs). `/connect`, `/apps`, `/settings` and `/account` make the trip by themselves: InfiniTUI
+hands the session and the command over (second line of the hand-off file), the launching process starts the
+classic UI as a client of its server (`--server`), which runs the command once its plugins have registered it and
+exits when the dialog closes, and InfiniTUI starts again on that session. The launching process keeps the server's
+lease throughout, so a running task is not interrupted.
 
 State it shares with the classic UI: `~/.local/state/opencode/model.json` (recent/favourite models, effort per
 model) and `prompt-history.jsonl`. Its own preferences (theme, sidebar, thinking view) live in

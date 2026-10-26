@@ -473,7 +473,7 @@ func (a *App) openHelp() tea.Cmd {
 		title string
 		keys  [][2]string
 	}{
-		{"Prompt", [][2]string{{"enter", "send (while busy: steer the running agent)"}, {"shift+enter · alt+enter · ctrl+j", "newline (or end a line with \\)"}, {"↑ ↓", "prompt history"}, {"ctrl+r", "search history"}, {"/", "commands"}, {"@ · #", "mention agents, skills, files · files only"}, {"!", "run a shell command"}, {"ctrl+x e", "edit in $EDITOR"}}},
+		{"Prompt", [][2]string{{"enter", "send (while busy: steer the running agent)"}, {"shift+enter · alt+enter · ctrl+j", "newline (or end a line with \\)"}, {"↑ ↓", "prompt history"}, {"ctrl+r", "search history"}, {"/", "commands"}, {"@ · #", "mention agents, skills, files · files only"}, {"!", "run a shell command"}, {"ctrl+v", "paste, or attach the clipboard image (or paste / drag in an image or PDF path)"}, {"ctrl+x e", "edit in $EDITOR"}}},
 		{"Agent", [][2]string{{"esc", "interrupt"}, {"esc esc", "timeline: jump, rewind, fork"}, {"shift+tab", "next agent"}, {"ctrl+t", "next effort level"}, {"ctrl+x v", "effort slider (/effort)"}, {"f2", "models"}, {"ctrl+b", "background the running tool"}}},
 		{"View", [][2]string{{"ctrl+o", "expand all tool output"}, {"click", "expand one block · open a subagent"}, {"pgup pgdn · shift+↑↓ · wheel", "scroll"}, {"home end", "top / bottom (empty prompt)"}, {"ctrl+x →  ctrl+x ←", "into subagent · back"}}},
 		{"App", [][2]string{{"ctrl+p", "command palette"}, {"ctrl+l", "sessions"}, {"ctrl+n", "new session"}, {"ctrl+y", "copy last response"}, {"ctrl+x", "leader: n l m a v u r c y e t g s x q"}, {"ctrl+c ctrl+c · ctrl+d", "exit"}}},
@@ -551,7 +551,7 @@ func (a *App) openStatus() tea.Cmd {
 	}
 	section("MCP servers", s.Text.Render(fmt.Sprintf("%d/%d", ok, len(a.store.mcp))))
 	if len(a.store.mcp) == 0 {
-		lines = append(lines, s.Subtle.Render("none configured · /classic → /apps adds some"))
+		lines = append(lines, s.Subtle.Render("none configured · /apps adds some"))
 	}
 	for _, m := range a.store.mcp {
 		c := s.Muted

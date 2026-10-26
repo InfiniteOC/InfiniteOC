@@ -54,6 +54,10 @@ func (a *App) mouseDown(m tea.Mouse) {
 		a.pendingCmds = append(a.pendingCmds, cmd)
 		return
 	}
+	if id, ok := a.homeRows[m.Y-a.layout().transcriptTop]; ok && a.home() && m.X < a.mainWidth() {
+		a.pendingCmds = append(a.pendingCmds, a.openSession(id, false))
+		return
+	}
 	p, inside := a.transcriptPoint(m)
 	a.sel = selection{}
 	if !inside {

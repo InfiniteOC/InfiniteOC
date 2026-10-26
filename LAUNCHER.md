@@ -4,21 +4,19 @@ Everything here lives in `src/` and `bin/`; none of it patches OpenCode.
 
 ## Install
 
-The repository is private and invite-only, so installing needs credentials. Sign the
-[GitHub CLI](https://cli.github.com) in once (`gh auth login`); `install.sh`/`install.ps1` then run
-`gh auth setup-git` so git can clone it. A `GH_TOKEN`/`GITHUB_TOKEN`, a git credential helper, or
-`INFINITEOC_REPO` set to an SSH URL also work. Fetch the script with gh so you can read it:
-
 ```sh
-gh api -H "Accept: application/vnd.github.raw" /repos/InfiniteOC/InfiniteOC/contents/install.sh | sh   # read it first
-brew tap InfiniteOC/infiniteoc && brew install --HEAD infiniteoc   # private tap, see Formula/ (run gh auth setup-git first)
+curl -fsSL https://raw.githubusercontent.com/InfiniteOC/InfiniteOC/main/install.sh | sh   # read it first
 ```
 
 ```powershell
-(gh api -H "Accept: application/vnd.github.raw" /repos/InfiniteOC/InfiniteOC/contents/install.ps1) | iex   # Windows PowerShell, read it first
+irm https://raw.githubusercontent.com/InfiniteOC/InfiniteOC/main/install.ps1 | iex   # Windows PowerShell, read it first
 ```
 
-Or clone first and run the copy you can read (`gh repo clone InfiniteOC/InfiniteOC ~/.infiniteoc && sh ~/.infiniteoc/install.sh`).
+Or clone first and run the copy you can read
+(`git clone https://github.com/InfiniteOC/InfiniteOC.git ~/.infiniteoc && sh ~/.infiniteoc/install.sh`). A private fork
+or mirror works through `INFINITEOC_REPO`; the installers then use the GitHub CLI's credentials when it is signed in
+(`gh auth login`), a `GH_TOKEN`, a git credential helper, or an SSH URL. `Formula/` holds a Homebrew formula for a
+tap you create.
 
 `install.sh` clones (or fast-forwards) into `~/.infiniteoc`, links `infiniteoc` and `opendaemon` into
 `~/.local/bin` and runs the first build. On Windows, run `install.sh` from Git Bash

@@ -36,7 +36,7 @@ import * as D from "./dag.ts"
 import * as M from "./mailbox.ts"
 import * as Models from "./models.ts"
 import * as Pool from "./pool.ts"
-import { KINDS, type Settings } from "./settings.ts"
+import { FREE_POOL, KINDS, type Settings } from "./settings.ts"
 import * as Store from "./store.ts"
 
 export const TOOL = "workflow"
@@ -145,6 +145,8 @@ type Run = {
   readOnly: Set<string>
   /** Picks the model of a step added after the start (a swarm's tasks); returns an error message or undefined. */
   place: (step: D.StepSpec, state: D.StepState) => string | undefined
+  /** Available free models with an allowance of their own: where a step goes when its model's allowance is spent. */
+  spare: string[]
   /** A swarm: its planner's step grows into tasks, and workers add more with swarm_add. */
   swarm?: { goal: string; edits: boolean; size: number; worker: string; contract: string; next: number; added: Map<string, number>; owners: Map<string, { title: string; files: string[] }> }
 }
@@ -440,9 +442,12 @@ export const Plugin = define({
         const activity: C.Activity = (state.activity = { tools: 0 })
         const inbox = M.take(run.wf, step.id, run.members)
         const prompt = `${C.preamble(run.settings.claudeMode)}\n\n${D.stepPrompt({ workflow: run.wf, step, inbox, messaging: false, maxOutputChars: run.settings.maxOutputChars, file: fileFor(step), fast: run.settings.fleet })}`
-        const child = spawn(bin, C.args(Models.parseRef(state.model!).id, run.settings.claudeMode), { cwd: location.directory, env: C.env(process.env), stdio: ["pipe", "pipe", "pipe"] })
+        const exe = C.command(bin)
+        const child = spawn(exe.file, C.args(Models.parseRef(state.model!).id, run.settings.claudeMode), { cwd: location.directory, env: C.env(process.env), stdio: ["pipe", "pipe", "pipe"], shell: exe.shell })
         const key = `${run.wf.id}/${step.id}`
-        kills.set(key, () => child.kill("SIGTERM"))
+        // Through cmd.exe the CLI is a grandchild: stop the whole tree.
+        const stop = () => (exe.shell && child.pid ? void spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" }) : void child.kill("SIGTERM"))
+        kills.set(key, stop)
         let pending = ""
         let stderr = ""
         let outcome: { result: string } | { error: string } | undefined
@@ -465,7 +470,7 @@ export const Plugin = define({
           else resume(Effect.fail(new Error(outcome?.error ?? (stderr.trim() || `claude exited with code ${code}`))))
         })
         child.stdin.end(prompt)
-        return Effect.sync(() => child.kill("SIGTERM"))
+        return Effect.sync(stop)
       })
 
     // Child sessions of each running step, "<workflowID>/<stepID>": a step with a backup run has two.
@@ -888,6 +893,9 @@ export const Plugin = define({
               .map((agent) => agent.id as string),
           ),
           place,
+          spare: FREE_POOL.split(",")
+            .map((ref) => ref.trim())
+            .filter((ref) => available.some((model) => `${model.providerID}/${model.id}` === ref)),
           ...(swarm ? { swarm: { ...swarm, contract: "", next: 0, added: new Map(), owners: new Map() } } : {}),
         }
         runs.set(workflow.id, run)
@@ -1319,9 +1327,17 @@ export const Plugin = define({
         if (rated)
           for (const sibling of state.pool ?? [])
             if (sibling !== from && sibling.split("/")[0] === from.split("/")[0]) Pool.limited(limits, sibling, counts.get(sibling) ?? 1, now, wait)
-        // Not retried (a quota is final): the step runner moves a pooled step to another member itself.
-        if (!event.decision.retry) return
-        const others = state.pool?.filter((model) => model !== from && !C.isClaude(model)) ?? []
+        // A spent allowance (a quota, the free tier's daily limit) is final, so upstream does not retry it, but only
+        // on this model: the step moves to another pool member or, without a pool, to a free model with an allowance
+        // of its own, and the run's waiting steps on this model may start there too. Other errors that are not
+        // retried (a bad request) end the step.
+        const spent = Pool.exhausted(event.error)
+        if (!event.decision.retry && !spent) return
+        const members = state.pool?.length ? state.pool : spent ? entry.run.spare : []
+        if (spent && !state.pool?.length && members.length)
+          for (const other of Object.values(entry.run.wf.state))
+            if (other.status === "pending" && other.model === from && !other.pool?.length) other.pool = [from, ...members.filter((model) => model !== from)]
+        const others = members.filter((model) => model !== from && !C.isClaude(model))
         const to = others.length ? Pool.pick(others, (model) => counts.get(model) ?? 0, limits, now) : undefined
         if (!to) return backOff()
         yield* ctx.session.switchModel({ sessionID: event.sessionID, model: Model.Ref.parse(to) })

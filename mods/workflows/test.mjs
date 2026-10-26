@@ -689,6 +689,9 @@ test("pool: learned limits and speeds, soonest-finish pick, one cut per burst", 
   // A request-rate limit (per account: pauses the provider's other members) versus a capacity error (per model).
   assert.ok(P.rateLimit({ message: "Rate limit exceeded. Please try again later." }) && P.rateLimit({ status: 429 }))
   assert.ok(!P.rateLimit({ status: 503, message: "Upstream request failed: Endpoint is unavailable." }))
+  // OpenCode Zen's spent free allowance is a 429 too, but per model and for hours: a quota, not a rate limit.
+  const free = { status: 429, type: "provider.free-limit", message: "Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models." }
+  assert.ok(P.throttled(free) && P.exhausted(free) && !P.rateLimit(free))
   P.limited(limits, "q", 4, 0)
   P.limited(limits, "q", 4, 100, P.QUOTA_PAUSE_MS)
   assert.equal(P.room(limits, "q", 0, 60_000), 0)
@@ -793,6 +796,10 @@ test("Claude Code workers: lean read-only argv, own login, stream-json activity 
   assert.equal(bypass[bypass.indexOf("--permission-mode") + 1], "bypassPermissions")
   assert.match(C.preamble("auto"), /change only the files your task owns/)
   assert.match(C.preamble(), /read-only/)
+  // An npm install on Windows is a .cmd shim: it runs through cmd.exe, its path quoted.
+  assert.deepEqual(C.command("C:\\Users\\Jan Kowalski\\AppData\\Roaming\\npm\\claude.CMD"), { file: '"C:\\Users\\Jan Kowalski\\AppData\\Roaming\\npm\\claude.CMD"', shell: true })
+  assert.deepEqual(C.command("/usr/local/bin/claude"), { file: "/usr/local/bin/claude", shell: false })
+  for (const arg of [...argv, ...auto, ...bypass]) assert.match(arg, /^[\w,-]+$/, "plain tokens need no quoting for cmd.exe")
 })
 
 test("parseRef and formatRef round-trip and reject malformed references", () => {

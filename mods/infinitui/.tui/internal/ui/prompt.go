@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -22,8 +23,8 @@ import (
 // mention is a completion the user inserted; it becomes an attachment on submit.
 type mention struct {
 	text  string // as it appears in the prompt, e.g. "@src/main.go"
-	kind  string // file | agent | skill | reference
-	value string // absolute path, agent ID or skill ID
+	kind  string // file | agent | skill | reference | data
+	value string // absolute path, agent ID, skill ID, or a data: URI (an attached image or PDF)
 	name  string
 }
 
@@ -135,7 +136,7 @@ func (p *Prompt) View() string {
 	return strings.Join(lines, "\n")
 }
 
-var chipRe = regexp.MustCompile(`\[pasted #\d+ · \d+ lines\]`)
+var chipRe = regexp.MustCompile(`\[(?:pasted #\d+ · \d+ lines|Image \d+|PDF \d+)\]`)
 
 // colorize paints one visual line of the composer.
 func (p *Prompt) colorize(line string, first bool) string {
@@ -242,6 +243,28 @@ func (p *Prompt) Paste(text string) {
 	p.ta.InsertString(chip)
 }
 
+var attachChipRe = regexp.MustCompile(`^\[(?:Image|PDF) (\d+)\]$`)
+
+// Attach inserts an [Image N] or [PDF N] chip that sends the file inline with the prompt.
+func (p *Prompt) Attach(att attachment) {
+	kind := "Image"
+	if att.mime == "application/pdf" {
+		kind = "PDF"
+	}
+	n := 1
+	for _, m := range p.mentions {
+		if g := attachChipRe.FindStringSubmatch(m.text); g != nil && strings.HasPrefix(m.text, "["+kind) {
+			var i int
+			fmt.Sscan(g[1], &i)
+			n = max(n, i+1)
+		}
+	}
+	chip := fmt.Sprintf("[%s %d]", kind, n)
+	p.ta.InsertString(chip + " ")
+	p.mentions = append(p.mentions, mention{text: chip, kind: "data", name: att.name,
+		value: "data:" + att.mime + ";base64," + base64.StdEncoding.EncodeToString(att.data)})
+}
+
 // Expand replaces paste chips with their text.
 func (p *Prompt) Expand(text string) string {
 	for chip, body := range p.pastes {
@@ -324,6 +347,8 @@ func (p *Prompt) Build(text string) api.Prompt {
 		switch m.kind {
 		case "file", "reference":
 			out.Files = append(out.Files, api.PromptFile{URI: fileURI(m.value), Name: m.name, Mention: ref})
+		case "data":
+			out.Files = append(out.Files, api.PromptFile{URI: m.value, Name: m.name, Mention: ref})
 		case "agent":
 			out.Agents = append(out.Agents, api.PromptAgent{Name: m.value, Mention: ref})
 		case "skill":

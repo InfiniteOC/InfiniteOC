@@ -20,7 +20,6 @@
     "./mods/lean-context/index.mjs",
     "./mods/fast-boot/index.mjs",
     "./mods/lazy-catalog/index.mjs",
-    "./mods/inline-run/index.mjs",
     "./mods/win-utf8/index.mjs",
     "./mods/yolo/index.mjs",
     "./mods/accounts/index.mjs",
@@ -40,7 +39,8 @@
     "./mods/infinitokensave/index.mjs",
     "./mods/infinitui/index.mjs",
     "./mods/fastlane/index.mjs",
-    "./mods/webui/index.mjs"
+    "./mods/webui/index.mjs",
+    "./mods/server-lease/index.mjs"
   ],
   "options": {
     "reducedMotion": false,

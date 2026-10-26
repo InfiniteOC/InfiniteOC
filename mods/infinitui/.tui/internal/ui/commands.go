@@ -90,11 +90,13 @@ func init() {
 		}},
 		{name: "editor", title: "Write the prompt in $EDITOR", key: "ctrl+x e", category: "System", run: func(a *App, _ string) tea.Cmd { return a.openEditor() }},
 		{name: "classic", title: "Switch to the classic OpenTUI interface", category: "System", run: func(a *App, _ string) tea.Cmd {
-			a.writeHandoff()
-			a.exitCode = ExitClassic
-			a.quitting = true
-			return nil
+			return a.toClassic("")
 		}},
+		// Dialogs only the classic UI has: it opens on this session and runs the command there.
+		{name: "connect", title: "Sign in to an AI provider (opens in the classic interface)", category: "System", run: func(a *App, _ string) tea.Cmd { return a.toClassic("connect") }},
+		{name: "apps", title: "Connect apps: GitHub, Google, Notion, … (opens in the classic interface)", category: "System", run: func(a *App, _ string) tea.Cmd { return a.toClassic("apps") }},
+		{name: "settings", title: "InfiniteOC settings (opens in the classic interface)", category: "System", run: func(a *App, _ string) tea.Cmd { return a.toClassic("settings") }},
+		{name: "account", title: "Switch provider accounts (opens in the classic interface)", category: "System", run: func(a *App, _ string) tea.Cmd { return a.toClassic("account") }},
 		{name: "exit", aliases: []string{"quit", "q"}, title: "Exit", key: "ctrl+d", category: "System", run: func(a *App, _ string) tea.Cmd {
 			a.quitting = true
 			return nil
@@ -164,8 +166,13 @@ func (a *App) openPalette() tea.Cmd {
 	for _, f := range a.store.features {
 		items = append(items, PickItem{ID: "feature:" + f.ID, Title: f.Title, Detail: "/" + f.Slash, Category: "InfiniteOC", Value: f.ID, Keywords: f.Description})
 	}
+	classic := map[string]bool{}
+	for _, f := range a.visibleClassicFeatures() {
+		classic[f.Slash] = true
+		items = append(items, PickItem{ID: "classic:" + f.Slash, Title: f.Title, Detail: "/" + f.Slash, Category: nonEmpty(f.Category, "Mods"), Value: f.Slash, Keywords: strings.Join(f.Aliases, " ")})
+	}
 	for _, c := range a.store.commands {
-		if findLocal(c.Name) != nil || a.findFeature(c.Name) != nil {
+		if findLocal(c.Name) != nil || a.findFeature(c.Name) != nil || classic[c.Name] {
 			continue
 		}
 		items = append(items, PickItem{ID: "server:" + c.Name, Title: "/" + c.Name, Detail: firstLine(c.Description), Category: "Commands", Value: c.Name})
@@ -183,6 +190,8 @@ func (a *App) openPalette() tea.Cmd {
 			return c.run(a, "")
 		case strings.HasPrefix(it.ID, "feature:"):
 			return a.runFeature(it.Value.(string), "", "")
+		case strings.HasPrefix(it.ID, "classic:"):
+			return a.toClassic(it.Value.(string))
 		default:
 			a.prompt.SetValue("/" + it.Value.(string) + " ")
 			return a.refreshCompletionOff()

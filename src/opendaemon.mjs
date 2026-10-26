@@ -18,7 +18,9 @@ export { checkSocket, daemonPaths, socketLimit }
 const safeChmod = async (file, mode) => { if (!isWindows) await chmod(file, mode) }
 
 // The one ignore rule, shared with the launcher fingerprint: dependencies,
-// dotfiles (.git, .DS_Store, .opendaemon, .runtime, vim swaps) and editor/log litter.
+// dotfiles (.git, .DS_Store, .opendaemon, .runtime, vim swaps) and editor/log litter,
+// plus a mod's own README.md and test.mjs (at the tree root only): they never reach
+// the build, so editing them must not cost every install a rebuild.
 // Paths feed the hash relative to the tree root, so identical checkouts in
 // different directories share a fingerprint (portable installs, prebuilt
 // binaries). Note: this changes every fingerprint once; the next launch
@@ -26,6 +28,7 @@ const safeChmod = async (file, mode) => { if (!isWindows) await chmod(file, mode
 export async function digestTree(directory, hash, base = directory, cache = fileDigests) {
   for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
     if (/^(?:node_modules$|\.)|~$|^#.*#$|\.(?:log|tmp)$/.test(entry.name)) continue
+    if (directory === base && (entry.name === "README.md" || entry.name === "test.mjs")) continue
     const file = path.join(directory, entry.name)
     if (entry.isDirectory()) await digestTree(file, hash, base, cache)
     else if (entry.isFile()) hash.update(path.relative(base, file)).update("\0").update(await fileDigest(file, cache)).update("\n")
@@ -55,6 +58,32 @@ export function digestCache(entries = {}) {
     get changed() { return changed || used.size !== previous.size },
     toJSON: () => Object.fromEntries(used),
   }
+}
+/** Identity of the daemon's own code: a daemon started before an update keeps running the old code until it restarts. */
+const codeRoot = fileURLToPath(new URL("..", import.meta.url))
+export async function daemonCode(root = codeRoot) {
+  // Sizes and mtimes, not contents: every launch checks this, and an update rewrites each file it changes.
+  const files = [...(await readdir(path.join(root, "src"), { recursive: true })).map(file => path.join("src", file)), path.join("bin", "opendaemon.mjs")].sort()
+  const hash = createHash("sha256")
+  for (const file of files) {
+    const info = await stat(path.join(root, file)).catch(() => undefined)
+    if (info?.isFile()) hash.update(`${file}\0${info.size}\0${info.mtimeMs}\n`)
+  }
+  return hash.digest("hex")
+}
+const gone = error => error.syscall === "connect" && ["ENOENT", "ECONNREFUSED"].includes(error.code)
+/** Stops the daemon behind `socket` (SIGTERM to the pid it reports) and waits up to 5 s; returns that pid, or undefined if none ran. */
+export async function stopDaemon(socket) {
+  let pid
+  try { ({ pid } = await daemonRequest(socket, "GET", "/status")) } catch (error) { if (gone(error)) return; throw error }
+  // Signal exactly the daemon's own pid; 0, -1 and 1 would hit a process group, everything or init.
+  if (!Number.isInteger(pid) || pid <= 1) throw new Error("opendaemon reported an invalid pid")
+  process.kill(pid, "SIGTERM")
+  for (const deadline = Date.now() + 5000; Date.now() < deadline;) {
+    await new Promise(resolve => setTimeout(resolve, 100))
+    try { await daemonRequest(socket, "GET", "/status", undefined, 1000) } catch (error) { if (gone(error)) return pid }
+  }
+  throw new Error(`opendaemon (pid ${pid}) did not stop within 5s`)
 }
 export async function modsDigest(base) {
   const raw = await readFile(path.join(base, "infiniteoc.json"), "utf8")
@@ -96,7 +125,7 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
   // A raised flag outlives the daemon: `opendaemon restart` compiles nothing, only a rebuild does.
   const restartFile = path.join(paths.directory, "restart.json")
   const saved = await readFile(restartFile, "utf8").then(JSON.parse).catch(() => null)
-  const state = { pid: process.pid, startedAt: new Date().toISOString(), autoReload, dev: false, revision: null, phase: "starting", restartRequired: Boolean(saved), restartReason: saved?.reason ?? null, job: null, events: [], clients: {}, messages: [] }
+  const state = { pid: process.pid, code: await daemonCode(), startedAt: new Date().toISOString(), autoReload, dev: false, revision: null, phase: "starting", restartRequired: Boolean(saved), restartReason: saved?.reason ?? null, job: null, events: [], clients: {}, messages: [] }
   const temporary = new Map()
   let temporaryBusy = false
   // `flagged` is the mod digest restartRequired last accounted for, so a rebuild-cleared flag is not re-raised for the same files.
@@ -313,7 +342,12 @@ export async function startDaemon(base, { interval = 1000, compiler, temporaryCo
 export async function ensureDaemon(base) {
   const paths = daemonPaths(base)
   checkSocket(paths.socket)
-  try { await daemonRequest(paths.socket, "GET", "/status"); return paths } catch (error) { if (!["ENOENT", "ECONNREFUSED"].includes(error.code)) throw error }
+  try {
+    const status = await daemonRequest(paths.socket, "GET", "/status")
+    // Started before an update: replace it while no UI uses it (UIs reconnect, but would lose temporary overlays).
+    if (status.code === await daemonCode() || Object.keys(status.clients ?? {}).length > 0) return paths
+    try { await stopDaemon(paths.socket) } catch { return paths }
+  } catch (error) { if (!["ENOENT", "ECONNREFUSED"].includes(error.code)) throw error }
   await mkdir(paths.directory, { recursive: true, mode: 0o700 })
   // cwd: base, so the detached daemon never pins the user's project directory.
   // windowsHide: no console popup on Windows; still user-local, no service registration.

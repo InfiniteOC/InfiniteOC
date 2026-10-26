@@ -22,6 +22,12 @@ export function findBinary(pathVar = process.env.PATH ?? "") {
     }
 }
 
+/**
+ * How to spawn the binary: an npm install on Windows is a claude.cmd shim, which only runs through cmd.exe (Node
+ * refuses to spawn it without a shell). The arguments from args() are plain tokens, so only the path is quoted.
+ */
+export const command = (bin: string) => (/\.cmd$/i.test(bin) ? { file: `"${bin}"`, shell: true } : { file: bin, shell: false })
+
 export type Mode = "readonly" | "auto" | "bypass"
 
 /**
