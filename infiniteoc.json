@@ -40,7 +40,9 @@
     "./mods/infinitui/index.mjs",
     "./mods/fastlane/index.mjs",
     "./mods/webui/index.mjs",
-    "./mods/server-lease/index.mjs"
+    "./mods/server-lease/index.mjs",
+    "./mods/mcp-direct/index.mjs",
+    "./mods/context-cap/index.mjs"
   ],
   "options": {
     "reducedMotion": false,

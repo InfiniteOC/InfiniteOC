@@ -49,7 +49,7 @@ function inside(root: string, input: string | undefined) {
   return full
 }
 
-const Viewports = Schema.Array(Schema.Union([Schema.String, Schema.Number]))
+const Viewports = Schema.Array(Schema.Union([Schema.String, Schema.Finite]))
 
 export const Plugin = define({
   id: "infiniteoc.quality",
@@ -202,7 +202,7 @@ export const Plugin = define({
           input: Schema.Struct({
             file: Schema.String.annotate({ description: "Source file to mutate (not a test file)" }),
             test_command: Schema.String.annotate({ description: "Command that runs the relevant tests" }),
-            line: Schema.optionalKey(Schema.Number).annotate({ description: "1-based line to mutate. Default: the first line with a condition." }),
+            line: Schema.optionalKey(Schema.Finite).annotate({ description: "1-based line to mutate. Default: the first line with a condition." }),
           }),
           execute: (input, context) =>
             Effect.gen(function* () {
@@ -237,8 +237,8 @@ export const Plugin = define({
           description: "Run the project's benchmark command (best of several runs) and compare wall time with the stored baseline; warns on regression. The command comes from `command`, or `bench.command` in .infiniteoc/quality.json. The first call (or save_baseline) stores the baseline: call it before a performance-sensitive change and again after.",
           input: Schema.Struct({
             command: Schema.optionalKey(Schema.String).annotate({ description: "Benchmark command. Default: bench.command in .infiniteoc/quality.json." }),
-            runs: Schema.optionalKey(Schema.Number).annotate({ description: "Runs to take the best of. Default 3." }),
-            tolerance_pct: Schema.optionalKey(Schema.Number).annotate({ description: "Slowdown that counts as a regression. Default 15." }),
+            runs: Schema.optionalKey(Schema.Finite).annotate({ description: "Runs to take the best of. Default 3." }),
+            tolerance_pct: Schema.optionalKey(Schema.Finite).annotate({ description: "Slowdown that counts as a regression. Default 15." }),
             save_baseline: Schema.optionalKey(Schema.Boolean).annotate({ description: "Store this result as the new baseline." }),
           }),
           execute: (input, context) =>

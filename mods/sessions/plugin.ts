@@ -16,8 +16,8 @@ const Input = Schema.Struct({
   session: Schema.optionalKey(Schema.String).annotate({ description: "read: a session id (or its unique prefix); list shows them." }),
   project: Schema.optionalKey(Schema.String).annotate({ description: "list: only sessions of this project worktree (absolute path)." }),
   query: Schema.optionalKey(Schema.String).annotate({ description: "list: filter by title/directory. search: the text to find (required there)." }),
-  limit: Schema.optionalKey(Schema.Number).annotate({ description: "Max items (default 50, at most 200; search at most 100)." }),
-  offset: Schema.optionalKey(Schema.Number).annotate({ description: "read: skip this many messages first." }),
+  limit: Schema.optionalKey(Schema.Finite).annotate({ description: "Max items (default 50, at most 200; search at most 100)." }),
+  offset: Schema.optionalKey(Schema.Finite).annotate({ description: "read: skip this many messages first." }),
   types: Schema.optionalKey(Schema.Array(Schema.String)).annotate({ description: "read: only these message types, e.g. [\"user\", \"assistant\"]." }),
 })
 
