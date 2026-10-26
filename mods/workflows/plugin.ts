@@ -99,14 +99,14 @@ export const Input = Schema.Struct({
     description: "swarm: the whole task, self-contained (the planner starts with no context): what to build or find, paths, constraints, what done looks like.",
   }),
   edits: Schema.optionalKey(Schema.Boolean).annotate({ description: "swarm: true when the agents must change files (build, fix, refactor); default false (search and report)." }),
-  size: Schema.optionalKey(Schema.Number).annotate({ description: "swarm: the most agents the planner splits the goal into (2-64). Leave unset for the configured size." }),
+  size: Schema.optionalKey(Schema.Finite).annotate({ description: "swarm: the most agents the planner splits the goal into (2-64). Leave unset for the configured size." }),
   name: Schema.optionalKey(Schema.String).annotate({ description: "start: a short name for the workflow." }),
   steps: Schema.optionalKey(Schema.Array(Step)).annotate({ description: "start: the steps." }),
   wait: Schema.optionalKey(Schema.Boolean).annotate({
     description:
       "start: block until it finishes and return the results. status: block until something changes (a step finishes, a message for you, the end) or timeout passes. Default false; you are notified when it finishes anyway.",
   }),
-  timeout: Schema.optionalKey(Schema.Number).annotate({
+  timeout: Schema.optionalKey(Schema.Finite).annotate({
     description: `status with wait: most seconds to wait (default ${D.DEFAULT_STATUS_WAIT_SECONDS}, at most ${D.MAX_STATUS_WAIT_SECONDS}).`,
   }),
   workflowID: Schema.optionalKey(Schema.String).annotate({ description: "status, result, cancel: the workflow. status without it lists them." }),
@@ -125,7 +125,7 @@ const SwarmAddInput = Schema.Struct({
 })
 const ReadInput = Schema.Struct({
   workflowID: Schema.optionalKey(Schema.String).annotate({ description: "Limit to one workflow (starting agent only)." }),
-  wait: Schema.optionalKey(Schema.Number).annotate({
+  wait: Schema.optionalKey(Schema.Finite).annotate({
     description: `Seconds to wait for a message when none is unread (0-${MAX_WAIT_SECONDS}). Use only when you cannot continue without a reply.`,
   }),
 })

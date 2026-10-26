@@ -18,7 +18,7 @@ import { VIEWER } from "./infiniteoc-agent-display-viewer.js"
 
 export const TOOL = lib.TOOL
 
-const num = (description: string) => Schema.optionalKey(Schema.Number).annotate({ description })
+const num = (description: string) => Schema.optionalKey(Schema.Finite).annotate({ description })
 const str = (description: string) => Schema.optionalKey(Schema.String).annotate({ description })
 // One input op: the fields of `win`, and each item of `steps`.
 const OpFields = {

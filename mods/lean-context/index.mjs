@@ -23,7 +23,9 @@ const brief = (text: string) => {
 const entries = (skills: ReadonlyArray<Summary>) =>
   skills.map((skill) => \`- \${skill.id}\${(skill.name as string) === skill.id ? "" : \` (\${skill.name})\`}: \${brief(skill.description)}\`)`]
 
-export const CODEMODE_BUDGET = ["const INLINE_BUDGET = 2_000", "const INLINE_BUDGET = 500"]
+// 0: namespace lines only (`rea (116 tools, none shown)`); search(...) inside execute finds a tool, which large MCP
+// namespaces needed anyway. Pinned tools still show.
+export const CODEMODE_BUDGET = ["const INLINE_BUDGET = 2_000", "const INLINE_BUDGET = 0"]
 
 export const patches = [
   [`${core}/skill/instructions.ts`, ...SKILL_ENTRIES],

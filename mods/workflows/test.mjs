@@ -462,7 +462,7 @@ test("plugin: /goal sees running workflows, step ends and messages for main; sta
   assert.match(source, /const plan = D\.statusWait\(\{ previous: checks\.get\(slot\), key, live: live\(\), wait: input\.action === "status" && input\.wait === true, timeout: input\.timeout, now: Date\.now\(\) \}\)/)
   assert.match(source, /if \(plan && key === from\) return D\.unchangedText\(list, Date\.now\(\) - plan\.since, plan\.waited\)/)
   assert.match(source, /checks\.set\(`\$\{context\.sessionID\}:\$\{workflow\.id\}`, \{ key: D\.progressKey\(\[workflow\]\), at: Date\.now\(\) \}\)/)
-  assert.match(source, /timeout: Schema\.optionalKey\(Schema\.Number\)/)
+  assert.match(source, /timeout: Schema\.optionalKey\(Schema\.Finite\)/)
   // The guidance: start, keep working or end the turn, check only for a reason.
   const guidance = source.slice(source.indexOf("export const GUIDANCE"), source.indexOf("const Step ="))
   assert.match(guidance, /end your turn/)

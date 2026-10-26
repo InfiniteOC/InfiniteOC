@@ -37,7 +37,7 @@ export async function fetchMention(url: string) {
 const dataUri = (text: string) => `data:text/plain;base64,${Buffer.from(text).toString("base64")}`
 
 const field = (description: string) => Schema.optionalKey(Schema.String).annotate({ description })
-const count = (description: string) => Schema.optionalKey(Schema.Number).annotate({ description })
+const count = (description: string) => Schema.optionalKey(Schema.Finite).annotate({ description })
 
 export const Plugin = define({
   id: "infiniteoc.ctx",

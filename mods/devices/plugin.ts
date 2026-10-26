@@ -19,7 +19,7 @@ const Input = Schema.Struct({
   directory: Schema.optionalKey(Schema.String).annotate({ description: "open: an absolute directory on the device to work in." }),
   title: Schema.optionalKey(Schema.String).annotate({ description: "open: a title for the new session." }),
   text: Schema.optionalKey(Schema.String).annotate({ description: "prompt: the work to send the device." }),
-  limit: Schema.optionalKey(Schema.Number).annotate({ description: "sessions/read: max items (default 50)." }),
+  limit: Schema.optionalKey(Schema.Finite).annotate({ description: "sessions/read: max items (default 50)." }),
 })
 
 export const Plugin = define({
