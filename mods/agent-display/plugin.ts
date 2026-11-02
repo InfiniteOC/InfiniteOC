@@ -1,7 +1,7 @@
 // InfiniteOC agent display: the agent's own isolated screen (Xvfb, never the
 // user's :0/Wayland session). Written to packages/core/src/plugin/infiniteoc-agent-display.ts
 // by mods/agent-display next to infiniteoc-agent-display-lib.ts (the pure helpers).
-import { ToolFailure } from "@opencode/ai"
+import { ToolFailure } from "@opencode/ai/effect"
 import { define } from "@opencode/plugin/effect/plugin"
 import { TuiEvent } from "@opencode/schema/tui-event"
 import { Effect, Schema } from "effect"

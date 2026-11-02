@@ -78,9 +78,9 @@ class WordmarkRenderable extends TextRenderable {
     this.requestRender()
   }
 
-  override render(buffer: OptimizedBuffer, deltaTime: number) {
-    if (!this.visible || this.isDestroyed || !Number.isFinite(this.width) || this.width <= 0 || this.height <= 0) return
-    if (this.elapsed === undefined) return super.render(buffer, deltaTime)
+  // OpenTUI paints a renderable through renderSelf (as upstream masked-text.ts does).
+  protected override renderSelf(buffer: OptimizedBuffer, deltaTime = 0) {
+    if (this.elapsed === undefined || this.width <= 0 || this.height <= 0) return super.renderSelf(buffer)
     // The first live frame must not inherit idle time from before the intro started, and a
     // stalled boot frame slows the wipe instead of skipping it (like ui/animation.ts's clamp).
     const elapsed = (this.elapsed += this.fresh ? 0 : Math.min(deltaTime, 50))
@@ -91,14 +91,23 @@ class WordmarkRenderable extends TextRenderable {
       this.elapsed = undefined
       this.live = false
     }
-    if (!wipe && (pass < 0 || pass >= 1)) return super.render(buffer, deltaTime)
+    if (!wipe && (pass < 0 || pass >= 1)) return super.renderSelf(buffer)
 
     if (!this.scratch)
-      this.scratch = OptimizedBuffer.create(this.width, this.height, this._ctx.widthMethod, { respectAlpha: true })
+      this.scratch = OptimizedBuffer.create(this.width, this.height, this._ctx.widthMethod, {
+        owner: this._ctx.nativeScene,
+        respectAlpha: true,
+      })
     if (this.scratch.width !== this.width || this.scratch.height !== this.height) this.scratch.resize(this.width, this.height)
     this.scratch.clear(TRANSPARENT)
-    this.scratch.drawTextBuffer(this.textBufferView, 0, 0)
-    const characters = this.scratch.buffers.char
+    this.drawToBuffer(this.scratch, 0, 0)
+    // Raw cell planes are readable only inside withBuffers.
+    this.scratch.withBuffers((cells) => this.shadeCells(cells.char, elapsed, wipe, pass))
+    this.scratch.colorMatrix(this.matrix, this.mask, 1, wipe ? TargetChannel.Both : TargetChannel.FG)
+    buffer.drawFrameBuffer(this.screenX, this.screenY, this.scratch)
+  }
+
+  private shadeCells(characters: Uint32Array, elapsed: number, wipe: boolean, pass: number) {
     let end = 0
     for (let row = 0; row < this.height; row++) {
       let column = this.width
@@ -125,16 +134,12 @@ class WordmarkRenderable extends TextRenderable {
       this.mask[cell * 3 + 1] = row
       this.mask[cell * 3 + 2] = strength
     }
-    this.scratch.colorMatrix(this.matrix, this.mask, 1, wipe ? TargetChannel.Both : TargetChannel.FG)
-    buffer.drawFrameBuffer(this.screenX, this.screenY, this.scratch)
-    this.markClean()
-    this._ctx.addToHitGrid(this.screenX, this.screenY, this.width, this.height, this.num)
   }
 
-  override destroy() {
+  protected override destroySelf() {
     this.scratch?.destroy()
     this.scratch = undefined
-    super.destroy()
+    super.destroySelf()
   }
 }
 

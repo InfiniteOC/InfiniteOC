@@ -271,28 +271,11 @@ export async function prepare(settings, force = false, { clean = false } = {}) {
       // user's stock background service is never replaced and --server keeps working.
       const connectionFile = join(root, "packages/cli/src/services/server-connection.ts")
       const connection = await readFile(connectionFile, "utf8")
-      const anchor = 'if (args.standalone || (yield* ServiceConfig.read()).disabled === true)'
+      const anchor = 'if (standalone || (yield* ServiceConfig.read()).disabled === true)'
       if (!connection.includes(anchor)) throw new Error("Incompatible upstream server-connection anchor")
       await writeFile(connectionFile, connection.replace(anchor,
-        'if (args.standalone || process.env.INFINITEOC === "1" || (yield* ServiceConfig.read()).disabled === true)'))
-      // A short-lived private server otherwise answers agent.list before built-ins activate.
-      const agentFile = join(root, "packages/server/src/handlers/agent.ts")
-      const agentSource = await readFile(agentFile, "utf8")
-      const agentAnchor = 'return yield* response(Agent.Service.use((agent) => agent.list()))'
-      if (!agentSource.includes(agentAnchor)) throw new Error("Incompatible upstream agent-handler anchor")
-      await writeFile(agentFile, agentSource.replace('import { Agent } from "@opencode/core/agent"',
-        'import { Agent } from "@opencode/core/agent"\nimport { Plugin } from "@opencode/core/plugin"')
-        .replace(agentAnchor, 'yield* Plugin.awaitActivation\n        ' + agentAnchor))
-      // Provider/model registries must also be populated before initial UI sync.
-      for (const [handler, service] of [["model", "Model"], ["provider", "Provider"]]) {
-        const file = join(root, `packages/server/src/handlers/${handler}.ts`)
-        const source = await readFile(file, "utf8")
-        const anchor = `const ${handler}s = yield* ${service}.Service`
-        if (!source.includes(anchor)) throw new Error(`Incompatible upstream ${handler}-handler anchor`)
-        await writeFile(file, source.replace(`import { ${service} } from "@opencode/core/${handler}"`,
-          `import { ${service} } from "@opencode/core/${handler}"\nimport { Plugin } from "@opencode/core/plugin"`)
-          .replaceAll(anchor, `yield* Plugin.awaitActivation\n          ${anchor}`))
-      }
+        'if (standalone || process.env.INFINITEOC === "1" || (yield* ServiceConfig.read()).disabled === true)'))
+      // The agent, model and provider handlers wait for plugin activation themselves (awaitPlugins, since v2.2).
       const result = await applyMods(mods, root, settings.options)
       await installDaemonTool(root)
       await installExportTool(root)

@@ -5,7 +5,7 @@
 //   before a request:   persona and ask-first instructions
 //   commands:           /loop /queue /timebox /plan /askfirst /why /macro /auto
 // Pure decisions live in infiniteoc-auto-logic.ts (tested); files and processes in infiniteoc-auto-project.ts.
-import { SystemPart, type Message } from "@opencode/ai"
+import { SystemPart, type Message } from "@opencode/ai/effect"
 import { define } from "@opencode/plugin/effect/plugin"
 import { Model } from "@opencode/schema/model"
 import type { Session } from "@opencode/schema/session"

@@ -1,7 +1,7 @@
 // InfiniTokenSave: lossless rewriting of each request's tool outputs (see infinitokensave-lib.ts).
 // Written to packages/core/src/plugin/infinitokensave.ts by mods/infinitokensave. It runs on the agent
 // loop, compaction and side generations alike, so all of them send the same prefix and share the cache.
-import { Message } from "@opencode/ai"
+import { Message } from "@opencode/ai/effect"
 import { define } from "@opencode/plugin/effect/plugin"
 import { Effect } from "effect"
 import { shrinkRequest } from "./infinitokensave-lib.js"

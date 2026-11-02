@@ -15,7 +15,7 @@ import { Bus } from "../bus.js"
 import { Job } from "../job.js"
 import { Session as SessionService } from "../session.js"
 import * as Background from "../infiniteoc/background.js"
-import { SystemPart } from "@opencode/ai"
+import { SystemPart } from "@opencode/ai/effect"
 import * as Store from "./infiniteoc-goal-store.js"
 import type { GoalRecord } from "./infiniteoc-goal-store.js"
 

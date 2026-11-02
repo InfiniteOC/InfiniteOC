@@ -4,7 +4,7 @@
 // skill body below. A fixed level sits in the system prompt (the same on every turn, so it stays in the
 // provider's cached prefix). In auto mode the block goes just before the turn's user message and is
 // never persisted: it stays put across one turn's steps and costs nothing on chat turns.
-import { Message, SystemPart } from "@opencode/ai"
+import { Message, SystemPart } from "@opencode/ai/effect"
 import { define } from "@opencode/plugin/effect/plugin"
 import { TuiEvent } from "@opencode/schema/tui-event"
 import { Effect } from "effect"

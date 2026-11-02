@@ -87,8 +87,8 @@ export const CLASSIC_COMMAND = ["packages/tui/src/app.tsx", `  const paths = use
     onCleanup(() => clearInterval(parentWatch))
   }
 `]
-export const QUIET_EPILOGUE = ["packages/tui/src/app.tsx", `    if (result.epilogue) process.stdout.write(result.epilogue + "\\n")`, `    // InfiniteOC infinitui: a classic UI started for one dialog hands the terminal straight back to InfiniTUI.
-    if (result.epilogue && process.env.INFINITEOC_CLASSIC_RETURN !== "1") process.stdout.write(result.epilogue + "\\n")`]
+export const QUIET_EPILOGUE = ["packages/tui/src/app.tsx", `    if (text) process.stdout.write(text + "\\n")`, `    // InfiniteOC infinitui: a classic UI started for one dialog hands the terminal straight back to InfiniTUI.
+    if (text && process.env.INFINITEOC_CLASSIC_RETURN !== "1") process.stdout.write(text + "\\n")`]
 
 const modDir = path.dirname(fileURLToPath(import.meta.url))
 

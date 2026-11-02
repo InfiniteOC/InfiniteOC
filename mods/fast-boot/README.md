@@ -15,16 +15,10 @@ Measured with interleaved runs of the same build with and without this mod
 
 ## Changes
 
-- **`models-dev.ts`: decode the catalog once per launch.** The models.dev cache
-  is about 7 MB of JSON with over 9,000 models. Upstream read and decoded it
-  twice per launch: once to populate providers, and again in the boot-time
-  refresh, which needs only the entry's age and digest. The service now
-  remembers the age and digest of the entry it last read or wrote, and the
-  refresh loop starts after populate. Startup needs the catalog anyway, so this
-  adds no work. If populate fails, the refresh loop still runs. The cache
-  format, TTL, fetch and Refreshed events are unchanged. If another process
-  refreshes the cache, this one may fetch once more than before, and it then
-  picks up the newer catalog instead of keeping its older in-memory copy.
+Until OpenCode 2.2 this mod also kept the boot-time models.dev refresh from
+decoding the ~7 MB catalog a second time. Upstream now reads a small `:meta`
+cache row for that check, so `models-dev.ts` is no longer patched.
+
 - **`tool/runtime.ts`: convert each Effect tool schema once.** Converting an
   input schema to JSON Schema is costly. Upstream repeated it for every tool on
   each registration, each tool-state fold, each step's tool snapshot and each
@@ -36,11 +30,9 @@ Measured with interleaved runs of the same build with and without this mod
   still reports it.
 - **`integration.ts`: reuse unchanged integration entries.** Every provider
   snapshot (several per step) lists all ~230 integrations. Each list validated
-  every entry through `Info.make` and sorted them with `localeCompare`. An entry
-  is reused while its state entry, connections and statuses are unchanged, and
-  credentials, env and statuses are still read on every call. The sort uses one
-  `Intl.Collator`, which gives the same order as `localeCompare` with no
-  arguments.
+  every entry through `Info.make`. An entry is reused while its state entry,
+  connections and statuses are unchanged, and credentials, env and statuses are
+  still read on every call. (OpenCode 2.2 caches the sorted order itself.)
 - **`util/wildcard.ts`: compile each permission pattern once.** Permission
   checks match the same few patterns against every tool call, and against
   every skill when the skill catalog is built on each step. Each check used to

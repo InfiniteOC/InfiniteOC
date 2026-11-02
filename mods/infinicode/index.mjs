@@ -95,7 +95,7 @@ export default {
       return replace(source, "  DiffViewer,\n]", "  DiffViewer,\n  InfiniteocInfinicode,\n]", "builtins list end")
     })
     await api.patch(`${TUI}/component/prompt/metadata.tsx`, (source) => {
-      source = replace(source, "      variant: props.variant,\n    })\n  })", '      variant: props.variant === "infinicode" ? "InfiniCode" : props.variant,\n    })\n  })', "metadata layout variant")
+      source = replace(source, "      variant: props.variant,\n      limit: props.limit?.text,\n", '      variant: props.variant === "infinicode" ? "InfiniCode" : props.variant,\n      limit: props.limit?.text,\n', "metadata layout variant")
       return replace(source, "                    fg={fade(theme.text.feedback.warning.base, props.variantAlpha)}",
         '                    fg={fade(variant() === "InfiniCode" ? theme.hue.interactive["200"] : theme.text.feedback.warning.base, props.variantAlpha)}',
         "metadata variant color")

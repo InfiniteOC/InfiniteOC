@@ -62,7 +62,7 @@ test("anchors are unique in the pinned upstream", { skip: !existsSync(upstream) 
   assert.match(app, /else if \(handedOpened\) exit\(\)/)
   // A mod command that opened no dialog: it is waited for, not cut off by a fixed timer.
   assert.match(app, /Promise\.resolve\(ran\)\.finally\(\(\) => setTimeout\(\(\) => !handedOpened && exit\(\), 3000\)\)/)
-  assert.match(app, /result\.epilogue && process\.env\.INFINITEOC_CLASSIC_RETURN !== "1"/)
+  assert.match(app, /text && process\.env\.INFINITEOC_CLASSIC_RETURN !== "1"/)
   // It also leaves if the process that started it (and holds the server) dies; onCleanup is already imported.
   assert.match(app, /process\.kill\(handedParent, 0\)/)
   assert.match(app, /\bonCleanup,/)

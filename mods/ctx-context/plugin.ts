@@ -5,7 +5,7 @@
 // source (infiniteoc-ctx-instruction.ts, cache-stable), and request slimming: smaller tool images and
 // only the recent screenshots resent. Persistence and lookups live in infiniteoc-ctx-store.ts and
 // infiniteoc-ctx-knowledge.ts (pure, tested).
-import { Message, ToolFailure } from "@opencode/ai"
+import { Message, ToolFailure } from "@opencode/ai/effect"
 import { define } from "@opencode/plugin/effect/plugin"
 import { TuiEvent } from "@opencode/schema/tui-event"
 import { Effect, Schema } from "effect"

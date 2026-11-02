@@ -110,7 +110,7 @@ test("wordmark data and resume hints point at InfiniteOC", async () => {
     assert.equal(new Set(word.map(line => [...line].length)).size, 1)
   }
   assert.ok([...logo.left[0]].length + 1 + [...logo.right[0]].length < 44, "fits the upstream wide-logo breakpoint")
-  assert.match(files.get("packages/tui/src/util/presentation.ts"), /infiniteoc -s \$\{input\.sessionID\}/)
+  assert.match(files.get("packages/tui/src/util/presentation.ts"), /infiniteoc -s \$\{input\.session\.sessionID\}/)
   assert.match(files.get("packages/tui/src/mini/splash.ts"), /`infiniteoc mini -s \$\{meta\.session_id\}`/)
   const toast = files.get("packages/tui/src/ui/toast.tsx")
   assert.equal(toast.match(/<FadeInText /g).length, 3)

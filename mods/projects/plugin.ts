@@ -2,7 +2,7 @@
 // mods/projects. create makes a project in the managed folder (asking first, like any write outside the
 // session's directory) and moves the session into it; open moves to an existing one; list shows them.
 // Moving uses upstream's own session move (the session_move tool's path): it lands at the next safe boundary.
-import { ToolFailure } from "@opencode/ai"
+import { ToolFailure } from "@opencode/ai/effect"
 import { define } from "@opencode/plugin/effect/plugin"
 import { Effect, Schema } from "effect"
 import { spawnSync } from "node:child_process"

@@ -52,10 +52,7 @@ async function bootstrapped(base) {
 async function buildable(base) {
   await bootstrapped(base)
   const sources = {
-    "cli/src/services/server-connection.ts": "if (args.standalone || (yield* ServiceConfig.read()).disabled === true) {}",
-    "server/src/handlers/agent.ts": "return yield* response(Agent.Service.use((agent) => agent.list()))",
-    "server/src/handlers/model.ts": "const models = yield* Model.Service",
-    "server/src/handlers/provider.ts": "const providers = yield* Provider.Service",
+    "cli/src/services/server-connection.ts": "if (standalone || (yield* ServiceConfig.read()).disabled === true) {}",
     "core/src/tool/plugin/opencode.ts": 'import { Effect, Schema } from "effect"\n    yield* ctx.session.hook("generate", hook)\n    yield* ctx.tool\n        draft.add({\n          name: "session_rename",',
   }
   for (const [file, text] of Object.entries(sources)) {

@@ -16,7 +16,10 @@ export const patches = [
   ["packages/app/public/oc-theme-preload.js", 'var themeId = localStorage.getItem(key) || "oc-2"', 'var themeId = localStorage.getItem(key) || "infiniteoc"'],
   // Shown in the theme picker before the theme file has loaded.
   ["packages/ui/src/theme/context.tsx", '  "oc-2": "OpenCode",\n', '  "oc-2": "OpenCode",\n  infiniteoc: "InfiniteOC",\n'],
-  ["packages/app/index.html", "<title>OpenCode</title>", "<title>InfiniteOC</title>"],
+  ["packages/app/index.html", "<title data-sm>OpenCode</title>", "<title data-sm>InfiniteOC</title>"],
+  // The MetaProvider replaces the pre-load title with these once the app renders.
+  ["packages/app/src/app.tsx", "      <Title>OpenCode</Title>", "      <Title>InfiniteOC</Title>"],
+  ["packages/app/src/session/route.tsx", "<Title>{`${value} · OpenCode`}</Title>", "<Title>{`${value} · InfiniteOC`}</Title>"],
   // The sign-in screen's wordmark is InfiniteOC's (packages/ui wordmark.tsx below); so is its label.
   ["packages/app/src/servers/connect/screen.tsx", '<div class="server-connect-brand" role="img" aria-label="OpenCode">', '<div class="server-connect-brand" role="img" aria-label="InfiniteOC">'],
   // Installed as an app (PWA): its name.

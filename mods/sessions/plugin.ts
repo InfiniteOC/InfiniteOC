@@ -2,7 +2,7 @@
 // packages/core/src/plugin/infiniteoc-sessions.ts by mods/sessions.
 // Read-only by construction: list, read and search never write, delete or prompt. Every call is visible in
 // the transcript, which is the audit trail.
-import { ToolFailure } from "@opencode/ai"
+import { ToolFailure } from "@opencode/ai/effect"
 import { define } from "@opencode/plugin/effect/plugin"
 import { Effect, Schema } from "effect"
 import * as Sessions from "./infiniteoc-sessions-lib.mjs"

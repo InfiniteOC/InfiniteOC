@@ -1,7 +1,7 @@
 // InfiniteOCTX: pages old, bulky tool outputs out of each request and returns them word for word through
 // the recall tool. Written to packages/core/src/plugin/infiniteoctx.ts by mods/infiniteoctx; the
 // decisions are in infiniteoctx-lib.ts and the per-session store in infiniteoctx-store.ts (both pure).
-import { Message, ToolFailure } from "@opencode/ai"
+import { Message, ToolFailure } from "@opencode/ai/effect"
 import { define } from "@opencode/plugin/effect/plugin"
 import { Effect, Schema } from "effect"
 import { POLICY } from "./infiniteoctx-config.js"

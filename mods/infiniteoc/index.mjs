@@ -165,20 +165,25 @@ export default {
       (await readFile(new URL("./ponytail.ts", import.meta.url), "utf8")).replace('"__PONYTAIL_SKILL__"', () => JSON.stringify(ponytail)))
     await api.patch("packages/core/src/plugin/internal.ts", (source) => {
       source = replace(source, 'import { PlanPlugin } from "./plan.js"', 'import { PlanPlugin } from "./plan.js"\nimport * as InfiniteocGoal from "./infiniteoc-goal.js"\nimport * as InfiniteocFrontend from "./infiniteoc-frontend.js"\nimport * as InfiniteocPonytail from "./infiniteoc-ponytail.js"')
-      return replace(source, "  PlanPlugin.Plugin,\n", "  PlanPlugin.Plugin,\n  InfiniteocGoal.Plugin,\n  InfiniteocFrontend.Plugin,\n  InfiniteocPonytail.Plugin,\n")
+      source = replace(source, "  PlanPlugin.Plugin,\n", "  PlanPlugin.Plugin,\n  InfiniteocGoal.Plugin,\n  InfiniteocFrontend.Plugin,\n  InfiniteocPonytail.Plugin,\n")
+      // Upstream's /goal (v2.2.1+) registers the same command name later and would replace ours, which
+      // auto-loop, prov-kit and workflows build on. Without its plugin upstream's goal footer stays empty.
+      source = replace(source, 'import { GoalPlugin } from "./goal.js"\n', "// GoalPlugin (./goal.js) is off: InfiniteOC's /goal replaces it\n")
+      return replace(source, "  GoalPlugin.Plugin,\n", "  // GoalPlugin.Plugin: replaced by InfiniteOC's /goal (mods/infiniteoc)\n")
     })
     // /goal in the TUI: the word glows while typed, an indicator shows the active goal under the
     // prompt, and the start message is shown as "/goal <text>" instead of the full protocol.
     const tui = (name) => readFile(new URL(`./tui/${name}`, import.meta.url), "utf8")
     await api.write("packages/tui/src/component/prompt/goal-word.ts", await tui("goal-word.ts"))
-    await api.write("packages/tui/src/feature-plugins/prompt/goal.tsx", await tui("goal-status.tsx"))
+    // Its own file: upstream's prompt/goal.tsx (since v2.2.1) backs its footer and stays.
+    await api.write("packages/tui/src/feature-plugins/prompt/infiniteoc-goal.tsx", await tui("goal-status.tsx"))
     await api.patch("packages/tui/src/component/prompt/index.tsx", (source) => {
       source = replace(source, 'import { useTheme, useThemes } from "../../context/theme"', 'import { useTheme, useThemes } from "../../context/theme"\nimport { createGoalWord } from "./goal-word"')
       // After the store is declared: the memos inside run immediately.
       return replace(source, "  function syncExtmarksWithPromptParts() {\n", "  createGoalWord(() => input, () => store.prompt.text, syntax, theme, animationsEnabled)\n\n  function syncExtmarksWithPromptParts() {\n")
     })
     await api.patch("packages/tui/src/plugin/builtins.ts", (source) => {
-      source = replace(source, 'import PromptBtw from "../feature-plugins/prompt/btw"', 'import PromptBtw from "../feature-plugins/prompt/btw"\nimport PromptGoal from "../feature-plugins/prompt/goal"')
+      source = replace(source, 'import PromptBtw from "../feature-plugins/prompt/btw"', 'import PromptBtw from "../feature-plugins/prompt/btw"\nimport PromptGoal from "../feature-plugins/prompt/infiniteoc-goal"')
       return replace(source, "  PromptBtw,\n", "  PromptBtw,\n  PromptGoal,\n")
     })
     await api.patch("packages/tui/src/routes/session/index.tsx", (source) =>
@@ -200,7 +205,7 @@ export default {
     await api.patch("packages/tui/src/logo.ts", (source) => replace(source, upstreamWordmark, wordmark))
     // Resume hints must reopen InfiniteOC, not the stock OpenCode install.
     await api.patch("packages/tui/src/util/presentation.ts", (source) =>
-      replace(source, "${bold}opencode -s ${input.sessionID}", "${bold}infiniteoc -s ${input.sessionID}"))
+      replace(source, "`opencode -s ${input.session.sessionID}`", "`infiniteoc -s ${input.session.sessionID}`"))
     await api.patch("packages/tui/src/mini/splash.ts", (source) =>
       replace(source, "const command = `opencode mini -s ${meta.session_id}`", "const command = `infiniteoc mini -s ${meta.session_id}`"))
     await api.patch("packages/tui/src/feature-plugins/system/stats.tsx", (source) =>

@@ -1,7 +1,7 @@
 // InfiniteOC prov-kit server plugin: /budget, model routing, provider fallback, offline mode, Docker
 // awareness and the free_port / env_diff tools. Written to packages/core/src/plugin/infiniteoc-prov.ts
 // by mods/prov-kit next to infiniteoc-prov-lib.ts (the pure helpers; see lib.ts).
-import { SystemPart } from "@opencode/ai"
+import { SystemPart } from "@opencode/ai/effect"
 import { define } from "@opencode/plugin/effect/plugin"
 import { Model } from "@opencode/schema/model"
 import type { Session } from "@opencode/schema/session"
