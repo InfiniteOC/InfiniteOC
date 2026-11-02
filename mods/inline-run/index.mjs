@@ -19,17 +19,18 @@ export const RUN_IMPORT = [`import { Effect, Option } from "effect"
 import { Commands } from "../commands"
 import { Runtime } from "../../framework/runtime"
 import { ServerConnection } from "../../services/server-connection"`, `import { Deferred, Effect, Exit, Fiber, Option } from "effect"
-import { Commands } from "../commands"
+import { Commands, Server as ServerFlag } from "../commands"
 import { Runtime } from "../../framework/runtime"
 import { ServerProcess } from "../../server-process"
 import { ServerConnection } from "../../services/server-connection"`]
-export const RUN = [`    const server = yield* ServerConnection.resolve({
-      server: Option.getOrUndefined(input.server),
-      standalone: input.standalone,
-    })
+export const RUN = [`    const server = yield* ServerConnection.resolve().pipe(
+      Effect.tapError((error) => Effect.logError("run could not resolve its server", { cause: error })),
+      Effect.catch((error) => Effect.sync(() => reportRunError(input, error.message))),
+    )
+    if (!server) return
     yield* Effect.promise(() =>`, `    // InfiniteOC inline-run: this run's private server starts in this process instead of a child process.
     const inline =
-      process.env.INFINITEOC === "1" && Option.isNone(input.server) && process.env.INFINITEOC_RUN_SUBPROCESS !== "1"
+      process.env.INFINITEOC === "1" && Option.isNone(yield* Effect.serviceOption(ServerFlag).pipe(Effect.map(Option.flatten))) && process.env.INFINITEOC_RUN_SUBPROCESS !== "1"
     const ready = inline ? yield* Deferred.make<ServerConnection.Resolved>() : undefined
     const serving = ready
       ? yield* (
@@ -50,10 +51,11 @@ export const RUN = [`    const server = yield* ServerConnection.resolve({
             Deferred.await(ready),
             Fiber.join(serving).pipe(Effect.andThen(Effect.fail(new Error("The InfiniteOC server stopped before it was ready")))),
           )
-        : yield* ServerConnection.resolve({
-            server: Option.getOrUndefined(input.server),
-            standalone: input.standalone,
-          })
+        : yield* ServerConnection.resolve().pipe(
+            Effect.tapError((error) => Effect.logError("run could not resolve its server", { cause: error })),
+            Effect.catch((error) => Effect.sync(() => reportRunError(input, error.message))),
+          )
+    if (!server) return
     yield* Effect.promise(() =>`]
 // The server stops when the run ends, however it ends.
 export const RUN_END = [`        auto: input.auto || input.yolo || input.dangerouslySkipPermissions,

@@ -33,7 +33,8 @@ async function patchedCeiling(cap) {
   const constants = ["RESERVE_MIN", "RESERVE_SHARE"].map((name) => source.match(new RegExp(`^const ${name} = .*$`, "m"))[0]).join("\n")
   const start = source.indexOf("// InfiniteOC context-cap")
   const body = source.slice(start, source.indexOf("\n}\n", source.indexOf("const windowCeiling", start)) + 3)
-  return new Function(`${constants.replaceAll("_000", "000")}\n${module.stripTypeScriptTypes(body)}\nreturn calculateCeiling`)()
+  const inputWindow = source.match(/^const inputWindow = [\s\S]*?\n\n/m)[0]
+  return new Function(`${constants.replaceAll("_000", "000")}\n${module.stripTypeScriptTypes(inputWindow + body)}\nreturn calculateCeiling`)()
 }
 
 test("compaction starts at the cap on large windows and unchanged below it", { skip }, async () => {
@@ -43,5 +44,6 @@ test("compaction starts at the cap on large windows and unchanged below it", { s
   assert.equal(at({ input: 0, context: 1_000_000 }, undefined), 200_000, "1M window: cap")
   assert.equal(at({ input: 0, context: 128_000 }, undefined), 108_800, "128k window: upstream's 85%")
   assert.equal(at({ input: 0, context: 1_000_000 }, 900_000), 100_000, "a configured buffer that compacts sooner still wins")
+  assert.equal(at({ input: 0, context: 1_000_000 }, "90%"), 100_000, "so does a percentage buffer")
   assert.equal(at({ input: 0, context: 0 }, undefined), 200_000, "unknown window: the cap")
 })

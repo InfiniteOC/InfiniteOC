@@ -9,7 +9,7 @@ export const patches = [
   [`${tui}/plugin/builtins.ts`, "  Merman,\n", "  TuiNav,\n  Merman,\n"],
   [`${tui}/routes/session/index.tsx`, 'import { DialogMessage } from "./dialog-message"', 'import { DialogMessage } from "./dialog-message"\nimport { loaderJump, registerJump } from "../../feature-plugins/tnav/jump"'],
   [`${tui}/routes/session/index.tsx`, "  function toBottom() {", "  onCleanup(\n    registerJump(\n      route.sessionID,\n      loaderJump({\n        has: (id) => !!data.session.message.get(route.sessionID, id),\n        more: () => data.session.message.more(route.sessionID),\n        size: () => data.session.message.list(route.sessionID).length,\n        loadMore: () => data.session.message.loadMore(route.sessionID),\n        jump: jumpToMessage,\n      }),\n    ),\n  )\n\n  function toBottom() {"],
-  [`${tui}/routes/session/dialog-message.tsx`, 'import { projectedPromptInput } from "../../prompt/codec"', 'import { projectedPromptInput } from "../../prompt/codec"\nimport { useBookmarks } from "../../feature-plugins/tnav/marks"'],
+  [`${tui}/routes/session/dialog-message.tsx`, 'import { DialogFork } from "./dialog-fork"', 'import { DialogFork } from "./dialog-fork"\nimport { useBookmarks } from "../../feature-plugins/tnav/marks"'],
   [`${tui}/routes/session/dialog-message.tsx`, "  const message = createMemo(() => data.session.message.get(props.sessionID, props.messageID))\n", "  const message = createMemo(() => data.session.message.get(props.sessionID, props.messageID))\n  const bookmarks = useBookmarks()\n"],
   [
     `${tui}/routes/session/dialog-message.tsx`,

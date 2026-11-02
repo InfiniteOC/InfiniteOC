@@ -178,7 +178,7 @@ test("applies after mods/infiniteoc: plugin before /goal, guidance, battery defa
   assert.match(internal, /  InfiniteocProv\.Plugin,\n  InfiniteocGoal\.Plugin,\n  InfiniteocFrontend\.Plugin,/)
   assert.match(files.get("packages/core/src/infiniteoc/guidance.ts"), /infiniteocGuidance\.build\.push\(.*free_port[\s\S]*\/\/ infiniteoc:guidance-extensions\n$/)
   assert.match(files.get("packages/tui/src/config/index.tsx"), /animations: input\.animations \?\? \(process\.env\.INFINITEOC_BATTERY === "1" \? false : undefined\) \?\? true,/)
-  assert.deepEqual(commands.map((command) => command.slash).sort(), ["envdiff", "local", "serve", "usage"])
+  assert.deepEqual(commands.map((command) => command.slash).sort(), ["envdiff", "local", "serve", "spend"])
   for (const command of commands) assert.match(command.source, /export (async )?function run\(/)
   assert.equal(files.get("packages/tui/src/infiniteoc-features/prov-lib.ts"), files.get("packages/core/src/plugin/infiniteoc-prov-lib.ts"))
   const [, beforeLaunch] = hooks.find(([event]) => event === "beforeLaunch")

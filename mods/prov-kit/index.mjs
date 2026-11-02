@@ -44,7 +44,7 @@ export default {
       replace(source, "    animations: input.animations ?? ", '    animations: input.animations ?? (process.env.INFINITEOC_BATTERY === "1" ? false : undefined) ?? '))
     await api.write("packages/tui/src/infiniteoc-features/prov-lib.ts", lib)
     for (const [id, title, slash, category, file] of [
-      ["usage", "Spend by day, project and provider", "usage", "Providers", "usage.tsx"],
+      ["usage", "Spend by day, project and provider", "spend", "Providers", "usage.tsx"],
       ["serve", "Dev servers: start, list, logs, stop", "serve", "Providers", "serve.tsx"],
       ["local", "Set up Ollama or LM Studio as a provider", "local", "Providers", "local.tsx"],
       ["envdiff", "Compare .env.example with .env (names only)", "envdiff", "Providers", "envdiff.tsx"],

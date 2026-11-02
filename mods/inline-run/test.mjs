@@ -30,7 +30,7 @@ test("anchors are unique in the pinned upstream and leave the webui mod's anchor
 test("inline only under InfiniteOC, never with --server, and INFINITEOC_RUN_SUBPROCESS=1 opts out", () => {
   const condition = /const inline =\s*([^\n]+)/.exec(RUN[1])[1]
   assert.match(condition, /process\.env\.INFINITEOC === "1"/)
-  assert.match(condition, /Option\.isNone\(input\.server\)/)
+  assert.match(condition, /Option\.isNone\(yield\* Effect\.serviceOption\(ServerFlag\)/)
   assert.match(condition, /process\.env\.INFINITEOC_RUN_SUBPROCESS !== "1"/)
 })
 

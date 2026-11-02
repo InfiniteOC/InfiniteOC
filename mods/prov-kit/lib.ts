@@ -220,7 +220,7 @@ export const dockerNote = (services: ComposeService[]) => {
     : undefined
 }
 
-// ---- /usage ----
+// ---- /spend ----
 
 export type UsageRow = { day: string; project: string; provider: string; cost: number }
 export type Usage = { total: number; days: [string, number][]; projects: [string, number][]; providers: [string, number][] }

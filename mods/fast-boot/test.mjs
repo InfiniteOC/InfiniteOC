@@ -10,9 +10,9 @@ import mod, { CONVERTED, PROJECTED, WILDCARD, patches } from "./index.mjs"
 const upstream = path.resolve(import.meta.dirname, "../../.upstream")
 const hasUpstream = existsSync(upstream)
 const canStrip = typeof module.stripTypeScriptTypes === "function"
-const files = ["packages/core/src/models-dev.ts", "packages/core/src/tool/runtime.ts", "packages/core/src/integration.ts", "packages/core/src/util/wildcard.ts"]
+const files = ["packages/core/src/tool/runtime.ts", "packages/core/src/integration.ts", "packages/core/src/util/wildcard.ts"]
 
-test("patches only the catalog, tool schema conversion, integration listing and wildcard matching", async () => {
+test("patches only tool schema conversion, integration listing and wildcard matching", async () => {
   const patched = []
   await mod.setup({
     async write() { throw new Error("unexpected write") },
@@ -22,7 +22,7 @@ test("patches only the catalog, tool schema conversion, integration listing and 
     on: () => {},
   })
   assert.deepEqual([...new Set(patched.map(([target]) => target))], files)
-  assert.equal(patched.length, 8)
+  assert.equal(patched.length, 4)
 })
 
 test("anchors are unique in the pinned upstream and apply in order", { skip: hasUpstream ? false : "run `node bin/infiniteoc.mjs setup` first" }, async () => {
@@ -31,25 +31,11 @@ test("anchors are unique in the pinned upstream and apply in order", { skip: has
     assert.equal(sources[file].split(before).length, 2, `${file}: anchor not unique: ${before.trim().split("\n")[0]}`)
     sources[file] = sources[file].replace(before, () => after)
   }
-  const source = sources[files[0]]
-  // The refresh check reads the remembered entry first, and every successful read or write records it.
-  assert.match(source, /const stored = known \?\? \(yield\* loadFromCache\(\)\)/)
-  assert.match(source, /known = \{ updatedAt: cached\.value\.updatedAt, digest: cached\.value\.digest \}/)
-  assert.match(source, /Effect\.tap\(\(\) => Effect\.sync\(\(\) => \(known = entry\)\)\)/)
-  // The boot refresh waits for populate, and a populate failure does not stop the refresh loop.
-  assert.match(source, /cachedGet\.pipe\(\s*Effect\.ignoreCause,\s*Effect\.andThen\(refresh\(\)/)
-  assert.equal(source.split("let known").length, 2)
   // Only Effect schemas are memoized; Standard Schema vendors are asked on every call, as upstream does.
-  const runtime = sources[files[1]]
+  const runtime = sources[files[0]]
   assert.match(runtime, /if \(isStandardSchema\(schema\)\) return standardJsonSchema\(schema, "input"\)/)
   assert.match(runtime, /if \(isStandardSchema\(schema\)\) return standardJsonSchema\(schema, "output"\)/)
   assert.equal(runtime.split("converted(schema,").length - 1, 2)
-})
-
-test("the refresh still decodes the cache when this process has not read it", () => {
-  // refresh(force) called before any populate (tests, `models --refresh`) must see the stored entry.
-  const [, , after] = patches.find(([, before]) => before.includes("const stored = yield* loadFromCache()"))
-  assert.match(after, /known \?\? \(yield\* loadFromCache\(\)\)/)
 })
 
 test("Effect tool schemas convert once per schema and direction, and every caller gets a copy", { skip: canStrip ? false : "needs module.stripTypeScriptTypes" }, async () => {
@@ -111,7 +97,7 @@ export function make(statuses: Map<string, unknown>) {
   const statusKey = (id: string, connection: any) => \`\${id}:\${connection.type}:\${connection.id ?? connection.name}\`
   const project = (entry: Entry, connections: any[]) => (built++, { id: entry.ref.id, connections: connections.map((c) => ({ ...c, status: statuses.get(statusKey(entry.ref.id, c)) })) })
 ${inserted}
-  return { projected, collator, built: () => built }
+  return { projected, built: () => built }
 }`)
   const statuses = new Map()
   const it = make(statuses)
@@ -131,7 +117,4 @@ ${inserted}
   assert.deepEqual(failed.connections[0].status, { type: "error", message: "expired" })
   assert.equal(it.projected(entry, [{ type: "credential", id: "c1", label: "home", method: "key" }]), failed)
   assert.notEqual(it.projected({ ref: { id: "acme", name: "Acme" } }, [{ type: "credential", id: "c1", label: "home", method: "key" }]), failed)
-  // The collator orders names exactly like localeCompare without arguments.
-  const names = ["zeta", "Alpha", "alpha", "Ölkraft", "beta", "Beta", "10x", "2x", "éclair", "eclair", "_under", "Zeta"]
-  assert.deepEqual(names.toSorted((a, b) => it.collator.compare(a, b)), names.toSorted((a, b) => a.localeCompare(b)))
 })

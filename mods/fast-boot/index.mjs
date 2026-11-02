@@ -1,56 +1,7 @@
 const core = "packages/core/src"
 
-// Startup reads the models.dev catalog (about 7 MB of JSON, over 9,000 models) from the
-// local cache. Upstream reads and decodes it twice per launch: once to populate providers
-// and once more in the boot-time refresh, which only needs the entry's age and digest.
-// The process now remembers the age and digest of the entry it last read or wrote, and
-// the refresh loop starts after populate, so a launch decodes the catalog once.
-export const KNOWN = [`      const loadFromCache = Effect.fnUntraced(function* () {
-        const value = yield* kv.get(key)
-        const cached = Schema.decodeUnknownOption(Cache)(value)
-        if (Option.isSome(cached))
-          return {
-            catalog: cached.value.body as Record<string, SourceProvider>,
-            updatedAt: cached.value.updatedAt,
-            digest: cached.value.digest,
-          }
-        if (value !== undefined) yield* kv.remove(key)
-      })`, `      // InfiniteOC fast-boot: age and digest of the cache entry this process last read or wrote.
-      // The refresh check needs only these, so it does not decode the catalog a second time.
-      let known: { readonly updatedAt: number; readonly digest?: string } | undefined
-      const loadFromCache = Effect.fnUntraced(function* () {
-        const value = yield* kv.get(key)
-        const cached = Schema.decodeUnknownOption(Cache)(value)
-        if (Option.isSome(cached)) {
-          known = { updatedAt: cached.value.updatedAt, digest: cached.value.digest }
-          return {
-            catalog: cached.value.body as Record<string, SourceProvider>,
-            updatedAt: cached.value.updatedAt,
-            digest: cached.value.digest,
-          }
-        }
-        if (value !== undefined) yield* kv.remove(key)
-      })`]
-
-export const WRITE = [`      const writeCache = Effect.fn("ModelsDev.writeCache")(function* (text: string, digest = bodyDigest(text)) {
-        yield* kv.set(key, { updatedAt: Date.now(), digest, body: text }).pipe(`, `      const writeCache = Effect.fn("ModelsDev.writeCache")(function* (text: string, digest = bodyDigest(text)) {
-        const entry = { updatedAt: Date.now(), digest }
-        yield* kv.set(key, { ...entry, body: text }).pipe(
-          Effect.tap(() => Effect.sync(() => (known = entry))),`]
-
-export const REFRESH = [`              const stored = yield* loadFromCache()
-              if (!force && stored && Date.now() - stored.updatedAt < Duration.toMillis(ttl)) return`, `              const stored = known ?? (yield* loadFromCache())
-              if (!force && stored && Date.now() - stored.updatedAt < Duration.toMillis(ttl)) return`]
-
-export const BOOT = [`        yield* Effect.forkScoped(refresh().pipe(Effect.repeat(Schedule.spaced(ttl)), Effect.ignore))`, `        // InfiniteOC fast-boot: populate first (startup needs the catalog anyway), so the first refresh
-        // checks the age populate recorded instead of reading and decoding the catalog again.
-        yield* Effect.forkScoped(
-          cachedGet.pipe(
-            Effect.ignoreCause,
-            Effect.andThen(refresh().pipe(Effect.repeat(Schedule.spaced(ttl)))),
-            Effect.ignore,
-          ),
-        )`]
+// models-dev.ts is no longer patched: since OpenCode 2.2 the refresh check reads a small `:meta` cache row
+// instead of decoding the ~7 MB catalog a second time, which is what this mod used to add.
 
 // Converting a tool's Effect input schema to JSON Schema is costly, and upstream repeats it for every
 // tool on each registration, each tool-state fold, each step's tool snapshot and each call's input
@@ -98,9 +49,8 @@ const outputJsonSchema = (schema: Tool.ValueSchema<any>): JsonSchema.JsonSchema 
 ${CONVERTED}`]
 
 // Every provider snapshot (several per step) lists all ~230 integrations, and each list validated every
-// one through Info.make and sorted them with String#localeCompare. An Info is now reused while its state
-// entry, connections and statuses are unchanged; credentials, env and statuses are still read on every
-// call. The sort uses one Intl.Collator, which orders exactly as localeCompare with no arguments.
+// one through Info.make. An Info is now reused while its state entry, connections and statuses are
+// unchanged; credentials, env and statuses are still read on every call. (Upstream 2.2 caches the sort.)
 export const PROJECTED = [`    const project = (entry: Entry, connections: IntegrationConnection.Info[]): Info =>
       Info.make({
         id: entry.ref.id,
@@ -136,14 +86,9 @@ export const PROJECTED = [`    const project = (entry: Entry, connections: Integ
       projections.set(entry, { key, statuses: current, info })
       return info
     }
-    const collator = new Intl.Collator()
 `]
 
-export const LIST = [`        return Array.from(state.get().integrations.values(), (entry) =>
-          project(entry, resolveConnections(entry, saved.get(entry.ref.id) ?? [])),
-        ).toSorted((a, b) => a.name.localeCompare(b.name))`, `        return Array.from(state.get().integrations.values(), (entry) =>
-          projected(entry, resolveConnections(entry, saved.get(entry.ref.id) ?? [])),
-        ).toSorted((a, b) => collator.compare(a.name, b.name))`]
+export const LIST = [`        return sortedEntries().map((entry) => project(entry, resolveConnections(entry, saved.get(entry.ref.id) ?? [])))`, `        return sortedEntries().map((entry) => projected(entry, resolveConnections(entry, saved.get(entry.ref.id) ?? [])))`]
 
 // Permission checks match the same few patterns against every tool call, and against every skill when
 // the skill catalog is built on each step; each check compiled a new RegExp. Compiled patterns are kept
@@ -182,10 +127,6 @@ export function match(input: string, pattern: string) {
 }`]
 
 export const patches = [
-  [`${core}/models-dev.ts`, ...KNOWN],
-  [`${core}/models-dev.ts`, ...WRITE],
-  [`${core}/models-dev.ts`, ...REFRESH],
-  [`${core}/models-dev.ts`, ...BOOT],
   [`${core}/tool/runtime.ts`, ...SCHEMAS],
   [`${core}/integration.ts`, ...PROJECTED],
   [`${core}/integration.ts`, ...LIST],

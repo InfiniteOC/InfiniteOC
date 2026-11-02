@@ -3,7 +3,7 @@
 // A low effort that "auto" picked for one turn gets the contract as a trailing note instead, so a
 // tier change between turns does not change the cached system prompt.
 // Written to packages/core/src/plugin/infiniteoc-effort.ts by mods/effort.
-import { Message } from "@opencode/ai"
+import { Message } from "@opencode/ai/effect"
 import { define } from "@opencode/plugin/effect/plugin"
 import { Effect } from "effect"
 import { lastAuto } from "../infiniteoc/auto-effort.js"

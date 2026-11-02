@@ -12,7 +12,7 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-c084fc"></a>
   <img alt="Node 22+" src="https://img.shields.io/badge/node-22%2B-f472b6">
   <img alt="Platforms" src="https://img.shields.io/badge/macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-555">
-  <img alt="OpenCode 2.1.2" src="https://img.shields.io/badge/OpenCode-2.1.2-a78bfa">
+  <img alt="OpenCode 2.2.5" src="https://img.shields.io/badge/OpenCode-2.2.5-a78bfa">
 </p>
 
 <p align="center">

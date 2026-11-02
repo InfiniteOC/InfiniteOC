@@ -13,25 +13,27 @@ export function capFrom(options = {}) {
   return value
 }
 
-export const CEILING = ["packages/core/src/session/compaction.ts", `const calculateCeiling = (limit: SessionContext.Loaded["model"]["limit"], buffer: number | undefined) => {
-  // Unknown limits are reported as 0. An unknown input limit falls back to the context window; with no window at
-  // all, only a provider rejection can limit the request.
-  const window = limit.input || limit.context
+export const CEILING = ["packages/core/src/session/compaction.ts", `const calculateCeiling = (limit: SessionContext.Loaded["model"]["limit"], buffer: Settings["buffer"]) => {
+  // With no window at all, only a provider rejection can limit the request.
+  const window = inputWindow(limit)
   if (window <= 0) return Number.POSITIVE_INFINITY
-  if (buffer !== undefined) return window - buffer
+  const tokens = typeof buffer === "string" ? Math.round((window * Number.parseFloat(buffer)) / 100) : buffer
+  // A buffer that leaves no room, such as one set for a larger model, is ignored.
+  if (tokens !== undefined && tokens < window) return window - tokens
   return window - Math.max(Math.floor(window * RESERVE_SHARE), window >= 2 * RESERVE_MIN ? RESERVE_MIN : 0)
 }`]
 
 export const ceiling = (cap) => [CEILING[0], CEILING[1], `// InfiniteOC context-cap: automatic compaction starts at ${cap.toLocaleString("en-US")} tokens at the latest.
 const CONTEXT_CAP = ${cap}
-const calculateCeiling = (limit: SessionContext.Loaded["model"]["limit"], buffer: number | undefined) =>
+const calculateCeiling = (limit: SessionContext.Loaded["model"]["limit"], buffer: Settings["buffer"]) =>
   Math.min(windowCeiling(limit, buffer), CONTEXT_CAP)
-const windowCeiling = (limit: SessionContext.Loaded["model"]["limit"], buffer: number | undefined) => {
-  // Unknown limits are reported as 0. An unknown input limit falls back to the context window; with no window at
-  // all, only a provider rejection can limit the request.
-  const window = limit.input || limit.context
+const windowCeiling = (limit: SessionContext.Loaded["model"]["limit"], buffer: Settings["buffer"]) => {
+  // With no window at all, only a provider rejection can limit the request.
+  const window = inputWindow(limit)
   if (window <= 0) return Number.POSITIVE_INFINITY
-  if (buffer !== undefined) return window - buffer
+  const tokens = typeof buffer === "string" ? Math.round((window * Number.parseFloat(buffer)) / 100) : buffer
+  // A buffer that leaves no room, such as one set for a larger model, is ignored.
+  if (tokens !== undefined && tokens < window) return window - tokens
   return window - Math.max(Math.floor(window * RESERVE_SHARE), window >= 2 * RESERVE_MIN ? RESERVE_MIN : 0)
 }`]
 

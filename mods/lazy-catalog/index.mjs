@@ -26,13 +26,10 @@ export function lazyModels<T extends object>(target: T, build: () => readonly Mo
   }
 }
 `]
-export const NORMALIZE_OPEN = [`    const models: Model.Info[] = []
-    for (const model of Object.values(item.models)) {`, `    const build = () => {
-    const models: Model.Info[] = []
-    for (const model of Object.values(item.models)) {`]
-export const NORMALIZE_CLOSE = [`    providers.push({ info, models, environment: [...item.env] })`, `    return models
-    }
-    providers.push(lazyModels({ info, environment: [...item.env] }, build))`]
+// Since OpenCode 2.2 each model is decoded up front (the provider's package and baseURL come from its
+// models), so what stays lazy is building the Model.Info entries, their variants and modes.
+export const NORMALIZE_OPEN = [`    const models = sources.flatMap((source) => {`, `    const build = () => sources.flatMap((source) => {`]
+export const NORMALIZE_CLOSE = [`    return [{ info, models, environment: [...item.env] }]`, `    return [lazyModels({ info, environment: [...item.env] }, build)]`]
 
 // plugin/models-dev.ts: the filtered snapshot and the provider registration stay lazy.
 export const SNAPSHOTS = [`    .map((provider) => ({

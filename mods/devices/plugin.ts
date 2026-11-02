@@ -2,7 +2,7 @@
 // packages/core/src/plugin/infiniteoc-devices.ts by mods/devices.
 // Pairing is the user's CLI job (`infiniteoc device add`); this tool only uses paired devices. Reads (list,
 // sessions, read) run silently; open/prompt execute remotely and ask first, like any remote execution.
-import { ToolFailure } from "@opencode/ai"
+import { ToolFailure } from "@opencode/ai/effect"
 import { define } from "@opencode/plugin/effect/plugin"
 import { Effect, Schema } from "effect"
 import { Permission } from "../permission.js"

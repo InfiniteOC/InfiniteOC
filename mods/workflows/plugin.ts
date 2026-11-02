@@ -13,7 +13,7 @@
 import { spawn, spawnSync } from "node:child_process"
 import { readFileSync } from "node:fs"
 import path from "node:path"
-import { SystemPart, ToolFailure } from "@opencode/ai"
+import { SystemPart, ToolFailure } from "@opencode/ai/effect"
 import { Tool } from "@opencode/schema/tool"
 import { define } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
